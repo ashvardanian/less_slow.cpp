@@ -355,23 +355,22 @@ BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
 
 /**
  *  @brief  Quick-Sort helper function for array partitioning, reused by both
- * recursive and iterative implementations.
+ *          recursive and iterative implementations.
  */
 template <typename element_type_>
 struct quick_sort_partition {
     using element_t = element_type_;
 
-    std::size_t operator()(element_t *arr, std::size_t low, std::size_t high) noexcept {
+    inline std::ptrdiff_t operator()(element_t *arr, std::ptrdiff_t const low, std::ptrdiff_t const high) noexcept {
         element_t pivot = arr[high];
-        std::ptrdiff_t i = static_cast<std::ptrdiff_t>(low) - 1;
-        std::ptrdiff_t j_last = static_cast<std::ptrdiff_t>(high) - 1;
-        for (std::ptrdiff_t j = low; j <= j_last; j++) {
-            if (arr[j] >= pivot) continue;
+        std::ptrdiff_t i = low - 1;
+        for (std::ptrdiff_t j = low; j <= high - 1; j++) {
+            if (arr[j] > pivot) continue;
             i++;
             std::swap(arr[i], arr[j]);
         }
         std::swap(arr[i + 1], arr[high]);
-        return static_cast<std::size_t>(i + 1);
+        return i + 1;
     }
 };
 
@@ -379,13 +378,13 @@ struct quick_sort_partition {
  *  @brief  Quick-Sort implementation as a C++ function object, using recursion.
  *          Note, recursion and @b inlining are not compatible.
  */
-template <typename element_type_> //
+template <typename element_type_>
 struct quick_sort_recurse {
     using element_t = element_type_;
     using quick_sort_partition_t = quick_sort_partition<element_t>;
     using quick_sort_recurse_t = quick_sort_recurse<element_t>;
 
-    void operator()(element_t *arr, std::size_t low, std::size_t high) noexcept {
+    void operator()(element_t *arr, std::ptrdiff_t low, std::ptrdiff_t high) noexcept {
         if (low >= high) return;
         auto pivot = quick_sort_partition_t {}(arr, low, high);
         quick_sort_recurse_t {}(arr, low, pivot - 1);
@@ -395,9 +394,9 @@ struct quick_sort_recurse {
 
 /**
  *  @brief  Quick-Sort implementation as a C++ function object, with iterative
- * deepening using a "stack" data-structure. Note, this implementation can be
- * inlined, but can't be @b `noexcept`, due to a potential memory allocation in
- * the `std::vector::resize` function.
+ *  deepening using a "stack" data-structure. Note, this implementation can be
+ *  inlined, but can't be @b `noexcept`, due to a potential memory allocation in
+ *  the `std::vector::resize` function.
  *
  *  Fun fact: The `std::vector` is actually a better choice for a "stack" than
  *  the `std::stack`, as the latter builds on top of a `std::deque`, which is
@@ -405,14 +404,15 @@ struct quick_sort_recurse {
  *  with additional bookkeeping. In our logic we never need to pop from the middle
  *  or from the front, so a `std::vector` is a better choice.
  */
-template <typename element_type_> //
+
+template <typename element_type_>
 struct quick_sort_iterate {
     using element_t = element_type_;
     using quick_sort_partition_t = quick_sort_partition<element_t>;
 
-    std::vector<std::size_t> stack;
+    std::vector<std::ptrdiff_t> stack;
 
-    inline void operator()(element_t *arr, std::size_t low, std::size_t high) noexcept(false) {
+    void operator()(element_t *arr, std::ptrdiff_t low, std::ptrdiff_t high) noexcept(false) {
 
         stack.resize((high - low + 1) * 2);
         std::ptrdiff_t top = -1;
@@ -449,19 +449,25 @@ static void recursion_cost(bm::State &state) {
     std::vector<element_t> arr(length_);
     for (auto _ : state) {
         for (std::size_t i = 0; i != length_; ++i) arr[i] = length_ - i;
-        sorter(arr.data(), 0, length_ - 1);
+        sorter(arr.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
     }
 }
 
 using recursive_sort_i32s = quick_sort_recurse<std::int32_t>;
 using iterative_sort_i32s = quick_sort_iterate<std::int32_t>;
 
-BENCHMARK_TEMPLATE(recursion_cost, recursive_sort_i32s, 1024);
-BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 1024);
-BENCHMARK_TEMPLATE(recursion_cost, recursive_sort_i32s, 1024 * 1024);
-BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 1024 * 1024);
-BENCHMARK_TEMPLATE(recursion_cost, recursive_sort_i32s, 1024 * 1024 * 1024);
-BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 1024 * 1024 * 1024);
+BENCHMARK_TEMPLATE(recursion_cost, recursive_sort_i32s, 16);
+BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 16);
+BENCHMARK_TEMPLATE(recursion_cost, recursive_sort_i32s, 256);
+BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 256);
+BENCHMARK_TEMPLATE(recursion_cost, recursive_sort_i32s, 4096);
+BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 4096);
+
+/**
+ *  If you try pushing the size further, the program will likely @b crash due
+ *  to @b stack_overflow. The recursive version is limited by the stack size, while
+ *  the iterative version can handle much larger inputs.
+ */
 
 #pragma endregion // Recursion
 
