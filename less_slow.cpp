@@ -562,6 +562,8 @@ static void f64_sin_maclaurin(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin);
 
 /**
+ *  Result: latency reduction from @b 31 ns down to @b 21 ns.
+ *
  *  The `std::pow` function is highly generic and not optimized for small,
  *  constant integer exponents. We can implement a specialized version for
  *  faster @b and slightly more accurate results.
@@ -580,6 +582,8 @@ static void f64_sin_maclaurin_powless(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin_powless);
 
 /**
+ *  Result: latency reduction to @b 2 ns - a @b 15x speedup over the standard!
+ *
  *  We can force the compiler to bypass IEEE-754 compliance checks using
  *  "fast-math" attributes, enabling aggressive floating-point optimizations.
  *
@@ -620,6 +624,8 @@ FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin_with_fast_math);
 
 /**
+ *  Result: latency of @b 0.8 ns - almost @b 40x faster than the standard!
+ *
  *  Advanced libraries like SimSIMD and SLEEF can achieve even better
  *  performance through SIMD-optimized implementations, sometimes trading
  *  accuracy or the breadth of the input range for speed.
@@ -1125,13 +1131,15 @@ std::string read_file_contents(std::string const &path) {
  *  @brief  Fetches the cache line size using OS-specific APIs.
  *          Supports Linux, macOS, and Windows.
  *
- *  A simpler approach can be to use the @b `std::hardware_destructive_interference_size`
- *  on C++ 17 and newer, if the `__cpp_lib_hardware_interference_size` feature-macro is defined.
- *  But this will be incorrect, if the compilation platform is different from the runtime platform.
+ *  It's easier to use the @b `std::hardware_destructive_interference_size`
+ *  in C++ 17 and newer, if the `__cpp_lib_hardware_interference_size` feature
+ *  macro is defined. But this will be incorrect, if the compilation platform
+ *  is different from the runtime platform.
  *
- *  A more advanced approach would be to use hardware-specific instructions, like the `cpuid` on x86,
- *  and infer the cache line size from the returned bitmasks. That's however, not only different on
- *  Arm, but also differs between Intel and AMD!
+ *  A more advanced approach would be to use hardware-specific instructions,
+ *  like the @b `cpuid` on x86, and infer the cache line size from the returned
+ *  bitmasks. That's however, not only different on Arm, but also differs
+ *  between Intel and AMD!
  */
 std::size_t fetch_cache_line_width() {
 
@@ -1283,8 +1291,8 @@ std::size_t parse_size_string(std::string const &str) {
 #pragma endregion // - Numerics
 
 /**
- *  Designing efficient kernels is only the first step; composing them into full
- *  programs without losing performance is the real challenge.
+ *  Designing efficient kernels is only the first step; composing them
+ *  into full programs without losing performance is the real challenge.
  *
  *  Consider a hypothetical numeric processing pipeline:
  *
@@ -1765,7 +1773,7 @@ BENCHMARK(pipeline_virtual_functions);
  *    allocations frequently overlap and can overwhelm allocators, forcing them
  *    to fall back on expensive heuristics.
  *
- *  - @b Data_Packing Overhead: This approach inevitably leads to passing data
+ *  - @b Data_Packing_Overhead: This approach inevitably leads to passing data
  *    using `std::any`, arrays of strings, or even JSON objects. CPUs will spend
  *    more time chasing pointers and repacking values than performing meaningful
  *    computations.

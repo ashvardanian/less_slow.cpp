@@ -1,11 +1,11 @@
-Much of modern code suffers from common pitfalls: bugs, security vulnerabilities, and performance bottlenecks.
+Much of modern code suffers from common pitfalls: bugs, security vulnerabilities, and __performance bottlenecks__.
 University curricula often teach outdated concepts, while bootcamps oversimplify crucial software development principles.
 This repository provides practical examples of writing efficient C and C++ code.
 
 ![Less Slow C++](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/less_slow.cpp.jpg?raw=true)
 
-Even when an example seems over-engineered, it doesn’t make it less relevant or impractical.
-The patterns discussed here often appear implicitly in large-scale software, even if most developers don’t consciously recognize them.
+Even when an example seems over-engineered, it doesn't make it less relevant or impractical.
+The patterns discussed here often appear implicitly in large-scale software, even if most developers don't consciously recognize them.
 
 This is why some developers gravitate toward costly abstractions like multiple inheritance with dynamic polymorphism (e.g., `virtual` functions in C++) or using dynamic memory allocation inside loops.
 They rarely design benchmarks representing real-world projects with 100K+ lines of code.
@@ -13,12 +13,32 @@ They rarely scale workloads across hundreds of cores, as required in modern clou
 They rarely interface with specialized hardware accelerators that have distinct address spaces.
 
 But we're not here to be average — we're here to be better.
-We want to know the cost of unaligned memory accesses, branch prediction, CPU cache misses and the latency of different cache levels, the frequency scaling policy levels, the cost of polymorphysm and asynchronous programming, and the trade-offs between accuracy and efficiency in numerical computations.
+We want to know the cost of unaligned memory accesses, branch prediction, CPU cache misses and the latency of different cache levels, the frequency scaling policy levels, the cost of polymorphism and asynchronous programming, and the trade-offs between accuracy and efficiency in numerical computations.
 Let's dig deeper into writing __less slow__, more efficient software.
 
-## Quick Start
+## Contents
 
-> [Jump to reading](#basics) 🔗
+All of material is organized into a single readable `.cpp` source code file with multiple sections.
+
+- Can random input generation be 100x more expensive than the algorithm itself?
+- Is it better to use a recursive or iterative algorithm?
+- How expensive is STL math and how to avoid it?
+- After `-O3`, which compilation flags can give you another 2x speedup?
+- How and where to write SIMD assembly and where the compiler does it better?
+- What's the cost of mis-aligned memory accesses and how to avoid them?
+- How expensive are coroutines and asynchronous programming?
+- How do the compare to ranges, callbacks, and lambdas?
+- What extra features do modern benchmarking tools provide?
+
+Highlights include:
+
+- 4x faster logic with `std::ranges`, compared to `std::function`.
+- 40x faster computing of $sine$ compared to `std::sin`.
+- 100x cheaper random inputs?!
+
+To continue reading, jump to `less_slow.cpp` and start reading the code and comments.
+
+## Reproducing the Benchmarks
 
 If you are familiar with C++ and want to go through code and measurements as you read, you can clone the repository and execute the following commands.
 
@@ -59,52 +79,6 @@ Alternatively, use the Linux `perf` tool for performance counter collection:
 ```sh
 sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF build_release/less_slow --benchmark_enable_random_interleaving=true --benchmark_filter=super_sort
 ```
-
-## Basics
-
-### How to Benchmark and Randomness
-
-```cpp
-static void i32_addition(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
-    for (auto _ : state)
-        c = a + b;
-}
-```
-
-### Parallelism and Computational Complexity
-
-### Recursion and Branch Prediction
-
-## Numerics
-
-### Accuracy vs Efficiency of Standard Libraries
-
-[![Meme IEEE 754 vs GCC](assets/meme-ieee764-vs-gnu-compiler-cover.png)](https://ashvardanian.com/posts/google-benchmark/)
-
-### Expensive Integer Operations
-
-### CPU Ports
-
-### Compute vs Memory Bounds with Matrix Multiplications
-
-### Alignment of Memory Accesses
-
-### Non Uniform Memory Access
-
-## Abstractions
-
-### Virtual Functions and Polymorphism
-
-### Ranges and Iterators
-
-### Coroutines and Asynchronous Programming
-
-C++20 introduces coroutines, or pre-emptive multitasking, which allows you to write asynchronous code in a synchronous manner.
-Unlike a function, a coroutine can be paused and resumed at `co_await` and `co_yield` points.
-In high-level languages the implementation of coroutines is universally bad and prohibitively expensive.
-In C++, they are much better, but still have a cost.
-
 
 ## Further Reading
 
