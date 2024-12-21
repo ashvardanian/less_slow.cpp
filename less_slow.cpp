@@ -2,19 +2,36 @@
  *  @brief  Low-level microbenchmarks designed for educational purposes.
  *  @file   less_slow.cpp
  *  @author Ash Vardanian
+ *
+ *  This project is designed to encourage a @b performance-oriented mindset to
+ *  programming and software @b design. That spirit is hard to quantify, unlike
+ *  the number of lines of code, the number of the solved problems on IOI or
+ *  LeetCode, or the number of years of experience. Still, in my view, it has
+ *  a higher impact on our daily work than any of the above.
+ *
+ *  Knowing the limits of digital computers, and developing intuition for the
+ *  various layers of abstraction, from the hardware to the software, is a key
+ *  skill for any engineer.
+ *
+ *  The code is written in C++17 and C++20, focused on GCC and Clang compilers,
+ *  and tested on x86_64 and ARM64 architectures. Those same principles apply
+ *  far beyond the C++ language and reflect the more fundamental constraints,
+ *  so parts of the project have been reproduced in other languages.
+ *
+ *  @see Less Slow in Rust: https://github.com/ashvardanian/less_slow.rs
+ *  @see Less Slow in Python: https://github.com/ashvardanian/less_slow.py
+ *
+ *  This same file is also available in an inverted form - instead of C++
+ *  sources with textual docstrings, there is a Markdown file with embedded
+ *  C++ code snippets. Fighters, choose your weapon!
+ *
+ *  @see Markdown version: https://github.com/ashvardanian/less_slow.cpp/blob/main/README.md
+ *  @see C++ version: https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp
+ *
+ *  Most of the measurements were performed on Intel Sapphire Rapids CPUs,
+ *  but unless explicitly stated, the results should be similar on other
+ *  hardware platforms.
  */
-#include <algorithm> // `std::sort`
-#include <cassert>   // `assert`
-#include <cmath>     // `std::pow`
-#include <cstdint>   // `std::int32_t`
-#include <cstring>   // `std::memcpy`, `std::strcmp`
-#include <fstream>   // `std::ifstream`
-#include <iterator>  // `std::random_access_iterator_tag`
-#include <memory>    // `std::assume_aligned`
-#include <new>       // `std::launder`
-#include <random>    // `std::mt19937`
-#include <vector>    // `std::algorithm`
-
 #include <benchmark/benchmark.h>
 
 namespace bm = benchmark;
@@ -24,58 +41,62 @@ namespace bm = benchmark;
 #pragma region How to Benchmark and Randomness
 
 /**
- *  Using Google Benchmark is simple. You define a C++ function, and then you register it
- *  with provided C macros. The suite will invoke your function, passing a `State` object,
- *  that dynamically chooses the number of loops to run based on the time it takes to execute
- *  each cycle.
+ *  Using Google Benchmark is simple. You define a C++ function and then
+ *  register it using the provided C macros. The suite will invoke your
+ *  function, passing a `State` object, that dynamically chooses the number
+ *  of loops to run based on the time it takes to execute each cycle.
  *
- *  For simplicity, let's start by benchmarking the most basic operation - 32-bit integer addition,
- *  universally natively supported by every modern CPU, be it x86, ARM, or RISC-V, 32-bit or 64-bit,
- *  big-endian or little-endian.
+ *  For simplicity, let's start by benchmarking the most basic operation -
+ *  the 32-bit integer addition, universally natively supported by every
+ *  modern CPU, be it x86, ARM, or RISC-V, 32-bit or 64-bit, big-endian
+ *  or little-endian.
  */
+#include <cstdint> // `std::int32_t` and other sized integers
 
 static void i32_addition(bm::State &state) {
     std::int32_t a = 0, b = 0, c = 0;
-    for (auto _ : state)
-        c = a + b;
+    for (auto _ : state) c = a + b;
     (void)c; // Silence "variable `c` set but not used" warning
 }
 
 BENCHMARK(i32_addition);
 
 /**
- *  Trivial kernels operating on constant values are not the easiest candidates for benchmarking.
- *  The compiler can easily optimize them out, and the CPU can predict the result... showing "0 ns",
- *  zero nanoseconds per iteration.
+ *  Trivial kernels operating on constant values are not the most
+ *  straightforward candidates for benchmarking. The compiler can easily
+ *  optimize them, and the CPU can predict the result... showing "0 ns" - zero
+ *  nanoseconds per iteration. Unfortunately, no operation runs this fast on the
+ *  computer. On a 3 GHz CPU, you would perform 3 Billion ops every second.
+ *  So, each would take 0.33 ns, not 0 ns. If we change the compilation
+ *  settings, discarding the @b `-O3` flag for "Release build" optimizations,
+ *  we may see a non-zero value, but it won't represent real-world performance.
  *
- *  Unfortunately, no operation runs this fast on the computer. On a 3 GHz CPU, you would perform
- *  3 Billion ops every second. So, each would take 0.33 ns, not 0 ns. If we change the compilation
- *  settings discarding the @b `-O3` flag for "Release build" optimizations, we may see a non-zero value,
- *  but it won't be representative of the real-world performance.
- *
- *  Another thing we can try - is generating random inputs on the fly with @b `std::rand()`, one of the
- *  most controversial operations in the C standard library.
+ *  Another thing we can try - is generating random inputs on the fly with
+ *  @b `std::rand()`, one of the most controversial operations in the
+ *  C standard library.
  */
+#include <cstdlib> // `std::rand`
 
 static void i32_addition_random(bm::State &state) {
     std::int32_t c = 0;
-    for (auto _ : state)
-        c = std::rand() + std::rand();
+    for (auto _ : state) c = std::rand() + std::rand();
     (void)c; // Silence "variable `c` set but not used" warning
 }
 
 BENCHMARK(i32_addition_random);
 
 /**
- *  Running this will report @b 25ns, or about 100 CPU cycles. Is integer addition really that expensive?
- *  It's used all the time, even when you are accessing @b `std::vector` elements and need to compute the
- *  memory address from the pointer and the index passed to the @b `operator[]` or `at()` functions.
+ *  Running this will report @b 25ns or about 100 CPU cycles. Is integer
+ *  addition really that expensive? It's used all the time, even when you are
+ *  accessing @b `std::vector` elements and need to compute the memory address
+ *  from the pointer and the index passed to the @b `operator[]` or `at()`
+ *  functions. The answer is - no, it's not. The addition takes a single CPU
+ *  cycle and is very fast.
  *
- *  The answer is - no, it's not. The addition itself takes a single CPU cycle, and it's very fast.
- *  Chances are we just benchmarked something else... the `std::rand()` function.
- *
- *  What if we could ask Google Benchmark to simply ignore the time spent in the `std::rand()` function?
- *  There are `PauseTiming` and `ResumeTiming` functions just for that!
+ *  Chances are we just benchmarked something else... the @b `std::rand()`
+ *  function. What if we could ask Google Benchmark to ignore the time spent
+ *  in the `std::rand()` function? There are `PauseTiming` and `ResumeTiming`
+ *  functions just for that!
  */
 
 static void i32_addition_paused(bm::State &state) {
@@ -91,51 +112,63 @@ static void i32_addition_paused(bm::State &state) {
 BENCHMARK(i32_addition_paused);
 
 /**
- *  Those `PauseTiming` and `ResumeTiming` functions, however, are not free either.
- *  In current implementation, they can easily take @b ~127 ns, or around 150 CPU cycles.
- *  Clearly useless in our case, but there is a good reusable recipe!
+ *  However, the `PauseTiming` and `ResumeTiming` functions are neither free.
+ *  In the current implementation, they can easily take @b ~127 ns, or around
+ *  150 CPU cycles. They are useless in this case, but there is an alternative!
  *
- *  A typical pattern when implementing a benchmark is to initialize with a random value, and then
- *  define a very cheap update policy that won't affect the latency much but will update the inputs.
- *  Increments, bit shifts, and bit rotations are a common choice! It's also a good idea to use
- *  native @b CRC32 and @b AES instructions to produce random state, as its often done in StringZilla.
- *  Another common approach is to use integer multiplication, often derived from the Golden Ratio,
- *  as in Knuth multiplicative hash function (with `2654435761`).
+ *  A typical pattern when implementing a benchmark is to initialize with a
+ *  random value and then define a very cheap update policy that won't affect
+ *  the latency much but will update the inputs. Increments, bit shifts, and bit
+ *  rotations are common choices!
+ *
+ *  It's also a good idea to use native @b CRC32 and @b AES instructions to
+ *  produce a random state, as it's often done in StringZilla. Another common
+ *  approach is to use integer multiplication, usually derived from the
+ *  Golden Ratio, as in the Knuth's multiplicative hash (with `2654435761`).
  *
  *  @see StringZilla: https://github.com/ashvardanian/stringzilla
  */
 
 static void i32_addition_randomly_initialized(bm::State &state) {
     std::int32_t a = std::rand(), b = std::rand(), c = 0;
-    for (auto _ : state)
-        bm::DoNotOptimize(c = (++a) + (++b));
+    for (auto _ : state) bm::DoNotOptimize(c = (++a) + (++b));
 }
 
 BENCHMARK(i32_addition_randomly_initialized);
 
 /**
- *  On x86 the `i32_addition_randomly_initialized` performs two @b `inc` instructions and an @b `add` instruction.
- *  This should take less than @b 0.7ns on a modern CPU. The first cycle was spent incrementing `a' and `b`
- *  on different Arithmetic Logic Units (ALUs) of the same core, while the second performed the
- *  final accumulation. So at least @b 97% of the benchmark was just spent in the `std::rand()` function...
- *  even in a single-threaded benchmark.
+ *  On x86, the `i32_addition_randomly_initialized` benchmark performs two
+ *  @b `inc` instructions and one @b `add` instruction. This should take less
+ *  than @b 0.7ns on a modern CPU. The first cycle increments `a` and `b`
+ *  simultaneously on different Arithmetic Logic Units (ALUs) of the same core,
+ *  while the second cycle performs the final accumulation. At least @b 97% of
+ *  the benchmark time was spent in the `std::rand()` function... even in a
+ *  single-threaded benchmark.
  *
- *  This may look like a trivial example, that may not appear in "real world production systems" of
- * "advanced proprietary software designed by world's leading engineers", but sadly, issues like this
- *  are present in most benchmarks, and sometimes influence multi-billion dollar decisions. 🤬🤬🤬
+ *  This may seem like a trivial example, far removed from "real-world
+ *  production systems" of "advanced proprietary software designed by the
+ *  world's leading engineers." Sadly, issues like this persist in many
+ *  benchmarks and sometimes influence multi-billion-dollar decisions 🤬
  *
- *  How bad is it? Let's re-run the same two benchmarks Now, let's run those benchmarks on 8 threads.
+ *  @see Bad I/O benchmark examples: https://www.unum.cloud/blog/2022-03-22-ucsb
+ *
+ *  How bad is it? Let's re-run the same two benchmarks, this time on 8 threads.
  */
 
 BENCHMARK(i32_addition_random)->Threads(8);
 BENCHMARK(i32_addition_randomly_initialized)->Threads(8);
 
 /**
- *  The `std::rand` variant latency jumped from @b 15ns in single-threaded mode to @b 12'000ns in multi-threaded,
- *  while our latest variant remained the same.
+ *  The latency of the `std::rand` variant skyrocketed from @b 15ns in
+ *  single-threaded mode to @b 12'000ns when running on multiple threads,
+ *  while our optimized variant remained unaffected.
  *
- *  Like many other LibC functions, it depends on the global state and uses mutexes to synchronize concurrent
- *  access to global memory. Here is its source code in the GNU C Compiler's (GCC) implementation:
+ *  This happens because `std::rand`, like many other LibC functions, relies
+ *  on a global state protected by a mutex to ensure thread-safe access.
+ *  This mutex-based synchronization becomes a severe bottleneck when multiple
+ *  threads contend for the same global resource.
+ *
+ *  Here's the relevant snippet from the GNU C Library (GlibC) implementation:
  *
  *      long int __random (void) {
  *          int32_t retval;
@@ -146,10 +179,12 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(8);
  *      }
  *      weak_alias (__random, random)
  *
- *  This is precisely the reason why experienced low-level engineers don't like the "singleton" pattern,
- *  where a single global state is shared between all threads. It's a performance @b killer.
+ *  This perfectly illustrates why experienced low-level engineers often avoid
+ *  the "singleton" pattern, where a single shared global state introduces
+ *  contention and kills performance under multi-threaded workloads.
  *
- *  @see GlibC implementation: https://code.woboq.org/userspace/glibc/stdlib/random.c.html#291
+ *  @see GlibC implementation:
+ *  https://code.woboq.org/userspace/glibc/stdlib/random.c.html#291
  */
 
 #pragma endregion // How to Benchmark and Randomness
@@ -157,20 +192,31 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(8);
 #pragma region Parallelism and Computational Complexity
 
 /**
- *  The most obvious approach to speed up the code is to parallelize it. After 2002, the CPUs have mostly
- *  stopped getting faster, and instead, they have been getting wider, with more cores and more threads.
- *  But not all the algorithms can be easily parallelized. Some are inherently sequential, and some are
- *  just too small to benefit from parallelism.
+ *  The most obvious way to speed up code is to parallelize it. Since 2002, CPU
+ *  clock speeds have plateaued, with CPUs getting wider instead of faster,
+ *  featuring more cores and hardware threads. However, not all algorithms can
+ *  be parallelized easily. Some are inherently sequential, while others are
+ *  simply too small to benefit from parallel execution.
  *
- *  Let's start with @b `std::sort`, probably the best-known and best-implemented algorithm in the C++ standard library.
+ *  Let's begin with @b `std::sort`, one of the best-known and best-optimized
+ *  algorithms in the C++ Standard Library.
  *
- *  One option is to random-shuffle on each iteration, but this will make the benchmark less predictable.
- *  Knowing, that the `std::sort` algorithm is based on Quick-Sort, we can reverse the array on each iteration,
- *  which is a well known worst-case scenario for that family of algorithms.
+ *  @see Docs for `std::sort`: https://en.cppreference.com/w/cpp/algorithm/sort
  *
- *  We can also parameterize the benchmark with runtime values, like the size of the array and whether to include
- *  the preprocessing step. This is done with the `Args` function.
+ *  A straightforward benchmarking strategy could involve applying a random
+ *  shuffle before each sort. However, this would introduce variability, making
+ *  the benchmark less predictable. Knowing that `std::sort` uses a Quick-Sort
+ *  variant, we can instead reverse the array on each iteration — a classic
+ *  worst-case scenario for this family of algorithms.
+ *
+ *  We can also parameterize the benchmark with runtime-configurable values,
+ *  such as the array size and whether to include the preprocessing step.
+ *  Google Benchmark provides the @b `Args` function precisely for this purpose.
  */
+#include <algorithm> // `std::sort`
+#include <numeric>   // `std::iota`
+#include <vector>    // `std::vector`
+
 static void sorting(bm::State &state) {
 
     auto count = static_cast<std::size_t>(state.range(0));
@@ -181,12 +227,10 @@ static void sorting(bm::State &state) {
 
     for (auto _ : state) {
 
-        if (!include_preprocessing)
-            state.PauseTiming();
+        if (!include_preprocessing) state.PauseTiming();
         // Reverse order is the most classical worst case, but not the only one.
         std::reverse(array.begin(), array.end());
-        if (!include_preprocessing)
-            state.ResumeTiming();
+        if (!include_preprocessing) state.ResumeTiming();
 
         std::sort(array.begin(), array.end());
         bm::DoNotOptimize(array.size());
@@ -199,22 +243,28 @@ BENCHMARK(sorting)->Args({1024, false})->Args({1024, true});
 BENCHMARK(sorting)->Args({8196, false})->Args({8196, true});
 
 /**
- *  That's the first case, where optimal control flow depends on the input size.
- *  On tiny inputs, its much faster to `include_preprocessing`, while on larger inputs, it's not.
+ *  This highlights how optimal control flow depends on input size:
+ *  - On small inputs, it's faster to perform preprocessing.
+ *  - On larger inputs, the overhead from preprocessing outweighs its benefits.
  *
- *  Until C++ 17, the standard didn't have a built-in way to run code in parallel. The C++17 standard
- *  introduced the @b `std::execution` namespace, with the @b `std::execution::par_unseq` policy for
- *  parallel execution of order-independent operations.
+ *  Until C++17, the standard lacked built-in parallel algorithms.
+ *  The C++17 standard introduced the @b `std::execution` namespace, including
+ *  the @b `std::execution::par_unseq` policy for parallel, order-independent
+ *  execution.
  *
- *  The @b `__cpp_lib_parallel_algorithm` macro is one of the feature testing macros, that are defined
- *  by the C++ standards to check, if the parallel algorithms are available:
- * https://en.cppreference.com/w/cpp/utility/feature_test
+ *  To check for support, the @b `__cpp_lib_parallel_algorithm` standard
+ *  feature testing macro can be used.
+ *
+ *  @see More feature testing macros:
+ *  https://en.cppreference.com/w/cpp/utility/feature_test
  */
 
 #if defined(__cpp_lib_parallel_algorithm)
 #include <execution> // `std::execution::par_unseq`
 
-template <typename execution_policy_> static void sorting_with_executors(bm::State &state, execution_policy_ &&policy) {
+template <typename execution_policy_>
+static void sorting_with_executors( //
+    bm::State &state, execution_policy_ &&policy) {
 
     auto count = static_cast<std::size_t>(state.range(0));
     std::vector<std::uint32_t> array(count);
@@ -230,10 +280,13 @@ template <typename execution_policy_> static void sorting_with_executors(bm::Sta
     state.SetItemsProcessed(count * state.iterations());
     state.SetBytesProcessed(count * state.iterations() * sizeof(std::int32_t));
 
-    // Feel free to report something else:
-    // state.counters["temperature_on_mars"] = bm::Counter(-95.4);
-    // But please use the metric system, as opposed to foots and hot-dogs,
-    // if you don't want the rockets to crash, like the Mars Climate Orbiter incident of 1999.
+    // Want to report something else? Sure, go ahead:
+    //
+    //      state.counters["temperature_on_mars"] = bm::Counter(-95.4);
+    //
+    // Just please, for the love of rockets, use the metric system.
+    // We've already lost one Mars climate orbiter to a tragic "feet vs. meters"
+    // debate. Let's not make NASA cry again. 🚀💥
 }
 
 BENCHMARK_CAPTURE(sorting_with_executors, seq, std::execution::seq)
@@ -251,24 +304,27 @@ BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
     ->UseRealTime();
 
 /**
- *  Without @b `UseRealTime()`, CPU time is used by default.
- *  Difference example: when you sleep your process it is no longer accumulating CPU time.
+ *  Without @b `UseRealTime()`, CPU time is measured by default.
+ *  This distinction matters: if your process sleeps, it no longer
+ *  accumulates CPU time.
  *
- *  In turn, the @b `Complexity` function is used to specify the asymptotic computational complexity of the benchmark.
- *  To fit the curve, we need to benchmark the function for a fairly broad range of input sizes.
- *  We go from 2^20 (1 Million) to 2^28 entries (256 Million), which is from 4 MB to 1 GB of data.
+ *  The @b `Complexity` function specifies the asymptotic computational
+ *  complexity of the benchmark. To estimate the scaling factor, we benchmark
+ *  over a broad range of input sizes, from 2^20 (1 million)
+ *  to 2^28 (256 million) entries — translating to 4 MB to 1 GB of data.
  *
- *  This would output not just the timings for each input size, but also the inferred complexity:
+ *  This approach outputs both timings and inferred complexity estimates:
  *
- *      sorting_with_executors/seq/1048576/min_time:10.000/real_time            5776408 ns      5776186 ns
- *      sorting_with_executors/seq/4194154/min_time:10.000/real_time           25323450 ns     2532153 ns
- *      sorting_with_executors/seq/16777216/min_time:10.000/real_time         109073782 ns    109071515 ns
- *      sorting_with_executors/seq/67108864/min_time:10.000/real_time         482794615 ns    482777617 ns
- *      sorting_with_executors/seq/268435456/min_time:10.000/real_time       2548725384 ns   2548695506 ns
- *      sorting_with_executors/seq/min_time:10.000/real_time_BigO                  0.34 NlgN       0.34 NlgN
- *      sorting_with_executors/seq/min_time:10.000/real_time_RMS                      8 %             8 %
+ *     sorting_with_executors/seq/1048576            5776408 ns      5776186 ns
+ *     sorting_with_executors/seq/4194154           25323450 ns      2532153 ns
+ *     sorting_with_executors/seq/16777216         109073782 ns    109071515 ns
+ *     sorting_with_executors/seq/67108864         482794615 ns    482777617 ns
+ *     sorting_with_executors/seq/268435456       2548725384 ns   2548695506 ns
+ *     sorting_with_executors/seq_BigO                  0.34 NlgN       0.34 NlgN
+ *     sorting_with_executors/seq_RMS                      8 %             8 %
  *
- *  As we can see, with parallel algorithms, the scaling isn't strictly linear, if the task isn't data-parallel.
+ *  As demonstrated, scaling isn't strictly linear, especially for tasks
+ *  that aren't fully data-parallel.
  */
 
 #endif // defined(__cpp_lib_parallel_algorithm)
@@ -276,35 +332,41 @@ BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
 #pragma endregion // Parallelism and Computational Complexity
 
 /**
- *  The `std::sort` and the underlying Quick-Sort are perfect research subjects for benchmarking and understanding
- *  how the computer works. Naively implementing the Quick-Sort in C/C++ would still put us at disadvantage, compared
- *  to the STL.
+ *  The `std::sort` and the underlying Quick-Sort are perfect research subjects
+ * for benchmarking and understanding how the computer works. Naively
+ * implementing the Quick-Sort in C/C++ would still put us at disadvantage,
+ * compared to the STL.
  *
- *  Most implementations we can find in textbooks, use recursion. Recursion is a beautiful concept, but it's not
- *  always the best choice for performance. Every nested call requires a new stack frame, and the stack is limited.
- *  Moreover, local variables need to be constructed and destructed, and the CPU needs to jump around in memory.
+ *  Most implementations we can find in textbooks, use recursion. Recursion is a
+ * beautiful concept, but it's not always the best choice for performance. Every
+ * nested call requires a new stack frame, and the stack is limited. Moreover,
+ * local variables need to be constructed and destructed, and the CPU needs to
+ * jump around in memory.
  *
- *  The alternative, as it often is in computing, is to use compensate runtime issue with memory. We can use a stack
- *  data structure to continuously store the state of the algorithm, and then process it in a loop.
+ *  The alternative, as it often is in computing, is to use compensate runtime
+ * issue with memory. We can use a stack data structure to continuously store
+ * the state of the algorithm, and then process it in a loop.
  *
  *  The same ideas common appear when dealing with trees or graph algorithms.
  */
+#include <utility> // `std::swap`
 
 #pragma region Recursion
 
 /**
- *  @brief  Quick-Sort helper function for array partitioning, reused by both recursive and iterative implementations.
+ *  @brief  Quick-Sort helper function for array partitioning, reused by both
+ * recursive and iterative implementations.
  */
-template <typename element_at> struct quick_sort_partition_gt {
-    using element_t = element_at;
+template <typename element_type_>
+struct quick_sort_partition {
+    using element_t = element_type_;
 
     std::size_t operator()(element_t *arr, std::size_t low, std::size_t high) noexcept {
         element_t pivot = arr[high];
         std::ptrdiff_t i = static_cast<std::ptrdiff_t>(low) - 1;
         std::ptrdiff_t j_last = static_cast<std::ptrdiff_t>(high) - 1;
         for (std::ptrdiff_t j = low; j <= j_last; j++) {
-            if (arr[j] >= pivot)
-                continue;
+            if (arr[j] >= pivot) continue;
             i++;
             std::swap(arr[i], arr[j]);
         }
@@ -317,30 +379,36 @@ template <typename element_at> struct quick_sort_partition_gt {
  *  @brief  Quick-Sort implementation as a C++ function object, using recursion.
  *          Note, recursion and @b inlining are not compatible.
  */
-template <typename element_at> //
-struct quick_sort_recursive_gt {
-    using element_t = element_at;
-    using quick_sort_partition_t = quick_sort_partition_gt<element_t>;
-    using quick_sort_recursive_t = quick_sort_recursive_gt<element_t>;
+template <typename element_type_> //
+struct quick_sort_recurse {
+    using element_t = element_type_;
+    using quick_sort_partition_t = quick_sort_partition<element_t>;
+    using quick_sort_recurse_t = quick_sort_recurse<element_t>;
 
     void operator()(element_t *arr, std::size_t low, std::size_t high) noexcept {
-        if (low >= high)
-            return;
-        auto pivot = quick_sort_partition_t{}(arr, low, high);
-        quick_sort_recursive_t{}(arr, low, pivot - 1);
-        quick_sort_recursive_t{}(arr, pivot + 1, high);
+        if (low >= high) return;
+        auto pivot = quick_sort_partition_t {}(arr, low, high);
+        quick_sort_recurse_t {}(arr, low, pivot - 1);
+        quick_sort_recurse_t {}(arr, pivot + 1, high);
     }
 };
 
 /**
- *  @brief  Quick-Sort implementation as a C++ function object, with iterative deepening using
- *          a "stack" data-structure. Note, this implementation can be inlined, but can't be @b `noexcept`,
- *          due to a potential memory allocation in the `std::vector::resize` function.
+ *  @brief  Quick-Sort implementation as a C++ function object, with iterative
+ * deepening using a "stack" data-structure. Note, this implementation can be
+ * inlined, but can't be @b `noexcept`, due to a potential memory allocation in
+ * the `std::vector::resize` function.
+ *
+ *  Fun fact: The `std::vector` is actually a better choice for a "stack" than
+ *  the `std::stack`, as the latter builds on top of a `std::deque`, which is
+ *  normally implemented as a sequence of individually allocated fixed-size arrays,
+ *  with additional bookkeeping. In our logic we never need to pop from the middle
+ *  or from the front, so a `std::vector` is a better choice.
  */
-template <typename element_at> //
-struct quick_sort_iterative_gt {
-    using element_t = element_at;
-    using quick_sort_partition_t = quick_sort_partition_gt<element_t>;
+template <typename element_type_> //
+struct quick_sort_iterate {
+    using element_t = element_type_;
+    using quick_sort_partition_t = quick_sort_partition<element_t>;
 
     std::vector<std::size_t> stack;
 
@@ -355,7 +423,7 @@ struct quick_sort_iterative_gt {
         while (top >= 0) {
             high = stack[top--];
             low = stack[top--];
-            auto pivot = quick_sort_partition_t{}(arr, low, high);
+            auto pivot = quick_sort_partition_t {}(arr, low, high);
 
             // If there are elements on left side of pivot,
             // then push left side to stack
@@ -375,57 +443,69 @@ struct quick_sort_iterative_gt {
 };
 
 template <typename sorter_type_, std::size_t length_> //
-static void cost_of_recursion(bm::State &state) {
+static void recursion_cost(bm::State &state) {
     using element_t = typename sorter_type_::element_t;
     sorter_type_ sorter;
-    std::vector<element_t> arr(static_cast<std::size_t>(length_));
+    std::vector<element_t> arr(length_);
     for (auto _ : state) {
-        for (std::size_t i = 0; i != length_; ++i)
-            arr[i] = length_ - i;
+        for (std::size_t i = 0; i != length_; ++i) arr[i] = length_ - i;
         sorter(arr.data(), 0, length_ - 1);
     }
 }
 
-BENCHMARK_TEMPLATE(cost_of_recursion, quick_sort_recursive_gt<std::int32_t>, 1024);
-BENCHMARK_TEMPLATE(cost_of_recursion, quick_sort_iterative_gt<std::int32_t>, 1024);
-BENCHMARK_TEMPLATE(cost_of_recursion, quick_sort_recursive_gt<std::int32_t>, 1024 * 1024);
-BENCHMARK_TEMPLATE(cost_of_recursion, quick_sort_iterative_gt<std::int32_t>, 1024 * 1024);
-BENCHMARK_TEMPLATE(cost_of_recursion, quick_sort_recursive_gt<std::int32_t>, 1024 * 1024 * 1024);
-BENCHMARK_TEMPLATE(cost_of_recursion, quick_sort_iterative_gt<std::int32_t>, 1024 * 1024 * 1024);
+using recursive_sort_i32s = quick_sort_recurse<std::int32_t>;
+using iterative_sort_i32s = quick_sort_iterate<std::int32_t>;
+
+BENCHMARK_TEMPLATE(recursion_cost, recursive_sort_i32s, 1024);
+BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 1024);
+BENCHMARK_TEMPLATE(recursion_cost, recursive_sort_i32s, 1024 * 1024);
+BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 1024 * 1024);
+BENCHMARK_TEMPLATE(recursion_cost, recursive_sort_i32s, 1024 * 1024 * 1024);
+BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 1024 * 1024 * 1024);
 
 #pragma endregion // Recursion
 
 #pragma region Branch Prediction
 
 /**
- *  The `if` statement and seemingly innocent ternary operator (condition ? a : b)
- *  can have a high cost for performance. It's especially noticeable, when conditional
- *  execution is happening at the scale of single bytes, like in text processing,
- *  parsing, search, compression, encoding, and so on.
+ *  The `if` statement and the seemingly innocent ternary operator `x ? a : b`
+ *  can be surprisingly expensive in performance-critical code. This is
+ *  especially noticeable when conditional execution operates at the byte level,
+ *  as in text processing, parsing, searching, compression, encoding, and
+ *  similar tasks.
  *
- *  The CPU has a branch-predictor which is one of the most complex parts of the silicon.
- *  It memorizes the most common `if` statements, to allow "speculative execution".
- *  In other words, start processing the task (i + 1), before finishing the task (i).
+ *  Modern CPUs have sophisticated branch predictors — some of the most complex
+ *  hardware components in a processor. These predictors memorize recent branch
+ *  patterns, enabling "speculative execution," where the CPU starts processing
+ *  the next task (`i+1`) before fully completing the current one (`i`).
  *
- *  Those branch predictors are very powerful, and if you have a single `if` statement
- *  on your hot-path, it's not a big deal. But most programs are almost entirely built
- *  on `if` statements. On most modern CPUs up to 4096 branches will be memorized, but
- *  anything that goes beyond that, would work slower - 3.7 ns vs 0.7 ns for the following
- *  snippet.
+ *  While a single `if` in a hot-path is usually not a problem, real-world
+ *  applications often involve thousands of branches. On most modern CPUs, up
+ *  to @b 4096 branches can be memorized. Beyond that, branch mis-predictions
+ *  occur, causing a severe slowdown due to pipeline stalls.
+ *
+ *  Consider this example: The same snippet can run at @b 0.7 ns per operation
+ *  when branch predictions are accurate but slows down to @b 3.7 ns when
+ *  predictions fail.
  */
-static void cost_of_branching_for_different_depth(bm::State &state) {
+static void branch_cost(bm::State &state) {
     auto count = static_cast<std::size_t>(state.range(0));
     std::vector<std::int32_t> random_values(count);
     std::generate_n(random_values.begin(), random_values.size(), &std::rand);
     std::int32_t variable = 0;
     std::size_t iteration = 0;
+
     for (auto _ : state) {
         std::int32_t random = random_values[(++iteration) & (count - 1)];
-        bm::DoNotOptimize(variable = (random & 1) ? (variable + random) : (variable * random));
+        bm::DoNotOptimize( //
+            variable =     //
+            (random & 1)   //
+                ? (variable + random)
+                : (variable * random));
     }
 }
 
-BENCHMARK(cost_of_branching_for_different_depth)->RangeMultiplier(4)->Range(256, 32 * 1024);
+BENCHMARK(branch_cost)->RangeMultiplier(4)->Range(256, 32 * 1024);
 
 #pragma endregion // Branch Prediction
 
@@ -436,27 +516,32 @@ BENCHMARK(cost_of_branching_for_different_depth)->RangeMultiplier(4)->Range(256,
 #pragma region Accuracy vs Efficiency of Standard Libraries
 
 /**
- *  Numerics are extensively studied in High-Performance Computing graduate programs and Research Institutes,
- *  but that topic is much more accessible than it seems. Let's start with one of the most basic operations - the sine.
+ *  Numerical computing is a core subject in high-performance computing (HPC)
+ *  research and graduate studies, yet its foundational concepts are more
+ *  accessible than they seem. Let's start with one of the most basic operations
+ *  — computing the @b sine of a number.
  */
+#include <cmath> // `std::sin`
 
 static void f64_sin(bm::State &state) {
     double argument = std::rand(), result = 0;
-    for (auto _ : state)
-        bm::DoNotOptimize(result = std::sin(argument += 1.0));
+    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 1.0));
 }
 
 BENCHMARK(f64_sin);
 
 /**
- *  The `sin` and `sinf` functions are part of the C standard library, and are implemented with maximum accuracy.
- *  This naturally means, there is space for optimization, trading off accuracy for speed.
+ *  Standard C library functions like `sin` and `sinf` are designed for maximum
+ *  accuracy, often at the cost of performance. We can explore approximations
+ *  to trade precision for speed.
  *
- *  The conventional approach is to approximate the function with the Taylor-Maclaurin series, which is a polynomial
- *  expansion of a function around a point. Given its an expansion, we can keep a small (and obviously finite) number
- *  of components, and the more we keep, the more accurate the result will be.
+ *  A common approach is using the Taylor-Maclaurin @b series — a polynomial
+ *  expansion of a function around a point. By limiting the expansion to a few
+ *  terms, we can approximate `sin(x)` as:
  *
- *  To start, we can take 3 components: sin(x) ~ x - (x^3) / 3! + (x^5) / 5!
+ *      sin(x) ≈ x - (x^3)/3! + (x^5)/5!
+ *
+ *  This reduces the computational cost but comes with reduced accuracy.
  *
  *  @see Taylor series: https://en.wikipedia.org/wiki/Taylor_series
  */
@@ -473,8 +558,9 @@ static void f64_sin_maclaurin(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin);
 
 /**
- *  The `std::pow` is a general-purpose function, and it's not optimized for the specific case of low integer powers.
- *  We can reimplement the same function with a more specialized version, that will be faster @b and more accurate.
+ *  The `std::pow` function is highly generic and not optimized for small,
+ *  constant integer exponents. We can implement a specialized version for
+ *  faster @b and slightly more accurate results.
  */
 
 static void f64_sin_maclaurin_powless(bm::State &state) {
@@ -490,16 +576,27 @@ static void f64_sin_maclaurin_powless(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin_powless);
 
 /**
- *  We want to recommend them to avoid all IEEE-754 compliance checks at a single-function level.
- *  For that, "fast math" attributes can be used: https://simonbyrne.github.io/notes/fastmath/
- *  The problem is, compilers define function attributes in different ways.
+ *  We can force the compiler to bypass IEEE-754 compliance checks using
+ *  "fast-math" attributes, enabling aggressive floating-point optimizations.
  *
- *       -ffast-math (and included by -Ofast) in GCC and Clang
- *       -fp-model=fast (the default) in ICC
- *       /fp:fast in MSVC
+ *  Different compilers support this via:
+ *  - Clang and GCC: `-ffast-math`
+ *  - ICC: `-fp-model=fast`
+ *  - MSVC: `/fp:fast`
+ *
+ *  The GCC syntax can be:
+ *  - Old: `__attribute__((optimize("-ffast-math")))`
+ *  - New: `[[gnu::optimize("-ffast-math")]]`
+ *
+ *  Among other things, this may reorder floating-point operations, ignoring
+ *  that floating-point arithmetic isn't strictly associative. So if you have
+ *  long chains of arithmetic operations, with a arguments significantly
+ *  differing in magnitude, you may get highly inaccurate results.
+ *
+ *  @see Beware of fast-math: https://simonbyrne.github.io/notes/fastmath/
  */
 #if defined(__GNUC__) && !defined(__clang__)
-#define FAST_MATH [[gnu::optimize("-ffast-math")]] //? The old syntax is: __attribute__((optimize("-ffast-math")))
+#define FAST_MATH [[gnu::optimize("-ffast-math")]]
 #elif defined(__clang__)
 #define FAST_MATH __attribute__((target("-ffast-math")))
 #else
@@ -516,17 +613,12 @@ FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
     }
 }
 
-// Floating point math is not associative!
-// So it's not reorderable! And it requires extra annotation!
-// Use only when you work with low-mid precision numbers and values of similar magnitude.
-// As always with IEEE-754, you have same number of elements in [-inf,-1], [-1,0], [0,1], [1,+inf].
-// https://en.wikipedia.org/wiki/Double-precision_floating-point_format
 BENCHMARK(f64_sin_maclaurin_with_fast_math);
 
 /**
- *  It's also possible to achieve even higher performance without sacrificing accuracy by using more advanced
- *  procedures, or by reducing the input range. For details check out SimSIMD and SLEEF libraries for different
- *  implementations.
+ *  Advanced libraries like SimSIMD and SLEEF can achieve even better
+ *  performance through SIMD-optimized implementations, sometimes trading
+ *  accuracy or the breadth of the input range for speed.
  *
  *  @see SimSIMD repository: https://github.com/ashvardanian/simsimd
  *  @see SLEEF repository: https://github.com/shibatch/sleef
@@ -536,57 +628,70 @@ BENCHMARK(f64_sin_maclaurin_with_fast_math);
 
 #pragma region Expensive Integer Operations
 
-/**
- *  It may be no wonder that complex floating-point operations are expensive, but so can be
- *  a single-instruction integer operations, most famously the @b division and the modulo.
- */
+template <typename scalar_type_>
+scalar_type_ square(scalar_type_ x) noexcept {
+    return x * x;
+}
 
+/**
+ *  It's common knowledge that floating-point math can be costly, but even
+ *  integer operations can be surprisingly expensive. @b Division and modulo
+ *  operations are notorious examples.
+ */
 static void integral_division(bm::State &state) {
-    std::int64_t a = std::rand() * std::rand(), b = std::rand() * std::rand(), c = 0;
-    for (auto _ : state)
-        bm::DoNotOptimize(c = (++a) / (++b));
+    std::int64_t a = square<std::int64_t>(std::rand()), b = square<std::int64_t>(std::rand()), c;
+    for (auto _ : state) bm::DoNotOptimize(c = (++a) / (++b));
 }
 
 BENCHMARK(integral_division);
 
 /**
- *  The above operation takes about ~10 CPU cycles or @b 2.5ns.
+ *  Division takes around ~10 CPU cycles or @b 2.5 ns. However, if the divisor
+ *  is known at compile time, the compiler can replace the division with
+ *  faster shift and multiply instructions — even for large prime numbers
+ *  like  `2147483647`.
  *
- *  When the denominator is known at the compile-time, however, the compiler can replace the integer
- *  division with a combination of shifts and multiplications, which is much faster. That can be the
- *  case even with @b prime numbers like the 2147483647.
- *
- *  https://www.sciencedirect.com/science/article/pii/S2405844021015450
+ *  @see More Details: https://www.sciencedirect.com/science/article/pii/S2405844021015450
  */
-
 static void integral_division_by_constexpr(bm::State &state) {
     constexpr std::int64_t b = 2147483647;
-    std::int64_t a = std::rand(), c = 0;
-    for (auto _ : state)
-        bm::DoNotOptimize(c = (++a) / b);
+    std::int64_t a = std::rand(), c;
+    for (auto _ : state) bm::DoNotOptimize(c = (++a) / b);
 }
 
 BENCHMARK(integral_division_by_constexpr);
 
 /**
- *  The @b `constexpr` specifier isn't necessarily needed if the compiler can deduce the same property.
- *  This can affect the benchmarks, but if you want to make sure the true division is used - you can
- *  wrap the variable with `std::launder`
+ *  The @b `constexpr` specifier is not strictly required if the compiler can
+ *  deduce that a value is constant at compile time. However, this optimization
+ *  can affect benchmarking results by eliminating divisions entirely through
+ *  strength reduction (replacing division with faster operations like shifts
+ *  and multiplications).
+ *
+ *  To ensure the division is evaluated at runtime, forcing the compiler to
+ *  treat the divisor as a mutable value, wrap it with `std::launder`. This
+ *  prevents constant propagation and keeps the benchmark realistic.
  */
+#include <new> // `std::launder`
 
 static void integral_division_by_const(bm::State &state) {
     std::int64_t b = 2147483647;
-    std::int64_t a = std::rand() * std::rand(), c = 0;
-    for (auto _ : state)
-        bm::DoNotOptimize(c = (++a) / *std::launder(&b));
+    std::int64_t a = square<std::int64_t>(std::rand()), c = 0;
+    for (auto _ : state) bm::DoNotOptimize(c = (++a) / *std::launder(&b));
 }
 
 BENCHMARK(integral_division_by_const);
 
 /**
- *  Another important trick to know is that the 32-bit integer division can be expressed accurately
- *  through 64-bit double-precision floating-point division. The latency should go down from 2.5ns
- *  to @b 0.5ns.
+ *  An important optimization trick is that 32-bit integer division can be
+ *  performed using 64-bit double-precision floating-point division. This
+ *  technique takes advantage of the CPU's highly optimized floating-point
+ *  division unit, reducing the operation's latency from approximately
+ *  @b 2.5ns to @b 0.5ns.
+ *
+ *  Since 64-bit doubles can exactly represent all 32-bit signed integers,
+ *  this method introduces @b no precision loss, making it a safe and efficient
+ *  alternative when division performance is critical.
  */
 static void integral_division_with_doubles(bm::State &state) {
     std::int32_t a = std::rand(), b = std::rand(), c = 0;
@@ -597,13 +702,17 @@ static void integral_division_with_doubles(bm::State &state) {
 BENCHMARK(integral_division_with_doubles);
 
 /**
- *  It's also crucial to understand that the performance of your code will vary depending on the compilation
- *  settings. The @b `-O3` flag is not enough. Even if you use compiler intrinsics, like the @b `__builtin_popcountll`,
- *  depending on the target CPU generation, it may not have a native Assembly instruction to perform the operation
- *  and will be emulated in software.
+ *  Understanding how compilation settings affect performance is crucial.
+ *  The @b `-O3` optimization flag alone isn't always sufficient. Even when
+ *  using compiler intrinsics like @b `__builtin_popcountll`, the actual
+ *  implementation depends on the target CPU generation. If the CPU lacks
+ *  a native Assembly instruction for population count, the compiler will
+ *  fall back to a slower, software-emulated version.
  *
- *  We can use GCC attributes to specify the target CPU architecture at a function level. Everything else inside
- *  those functions looks identical, only the flags differ.
+ *  To ensure optimal performance, we can use GCC attributes to specify
+ *  the target CPU architecture at the function level. The only difference
+ *  between the following functions is the applied target attribute,
+ *  while the internal logic remains identical.
  */
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -620,40 +729,52 @@ int bits_popcount_native(std::uint64_t x) {
 
 static void bits_population_count_core_2(bm::State &state) {
     auto a = static_cast<std::uint64_t>(std::rand());
-    for (auto _ : state)
-        bm::DoNotOptimize(bits_popcount_emulated(++a));
+    for (auto _ : state) bm::DoNotOptimize(bits_popcount_emulated(++a));
 }
 
 BENCHMARK(bits_population_count_core_2);
 
 static void bits_population_count_core_i7(bm::State &state) {
     auto a = static_cast<std::uint64_t>(std::rand());
-    for (auto _ : state)
-        bm::DoNotOptimize(bits_popcount_native(++a));
+    for (auto _ : state) bm::DoNotOptimize(bits_popcount_native(++a));
 }
 
 BENCHMARK(bits_population_count_core_i7);
 #endif
 
 /**
- *  The difference is @b 3x:
- *  - Core 2 variant: 2.4ns
- *  - Core i7 variant: 0.8ns
+ *  The performance difference is substantial — a @b 3x improvement:
+ *  - Core 2 variant: 2.4 ns
+ *  - Core i7 variant: 0.8 ns
  *
- *  Fun fact: there are only a couple of integer operations that can take @b ~100 cycles on select AMD CPUs,
- *  like the BMI2 bit-manipulation instructions, like @b `pdep` and @b `pext`, on AMD Zen 1 and Zen 2 chips.
- *  https://www.chessprogramming.org/BMI2
+ *  Fun fact: Only a few integer operations on select AMD CPUs can take as long
+ *  as @b ~100 CPU cycles. This includes BMI2 bit-manipulation instructions such
+ *  as @b `pdep` and @b `pext`, particularly on AMD Zen 1 and Zen 2 architectures.
+ *
+ *  @see BMI2 details: https://www.chessprogramming.org/BMI2
  */
 
 #pragma endregion // Expensive Integer Operations
 
 /**
- *  Matrix Multiplications are the foundation of Linear Algebra, and are used in a wide range of applications,
- *  including Artificial Intelligence, Computer Graphics, and Physics simulations. Those are so important, that
- *  many CPUs have native instructions for multiplying small matrices, like 4x4 or 8x8. And the larger matrix
- *  multiplications are decomposed into smaller ones, to take advantage of those instructions.
+ *  Understanding common algorithmic design patterns across various computational
+ *  complexity levels is invaluable. So far, most tasks we've examined have
+ *  featured linear complexity in both space and time. Broadly, the following
+ *  distinctions are useful:
  *
- *  Let's emulate them and learn something new.
+ *  - Sublinear (e.g., O(log N)): Often found in search workloads, typically IO-bound.
+ *  - Linear and sub-quadratic (e.g., O(N) to O(N*logN)): Most conventional "coding" tasks.
+ *  - Low polynomial (e.g., O(N^1.5) to O(N^4)): Common in matrix operations and graph algorithms.
+ *  - High polynomial and exponential (e.g., O(N^5) and beyond): Rarely practical to solve.
+ *
+ *  Among low-polynomial tasks, matrix operations stand out as particularly important.
+ *  Matrix multiplication forms the foundation of linear algebra and is critical in
+ *  fields such as artificial intelligence, computer graphics, and physics simulations.
+ *  Given their significance, many CPUs provide native instructions for small matrix
+ *  multiplications (e.g., 4x4 or 8x8). Larger matrix multiplications are decomposed
+ *  into smaller ones to take advantage of these optimizations.
+ *
+ *  Let's emulate such operations and explore the underlying principles.
  */
 
 #pragma region Compute vs Memory Bounds with Matrix Multiplications
@@ -663,16 +784,13 @@ struct f32x4x4_t {
 };
 
 f32x4x4_t f32x4x4_matmul_kernel(f32x4x4_t const &a, f32x4x4_t const &b) noexcept {
-    f32x4x4_t c{};
+    f32x4x4_t c {};
     // This code gets auto-vectorized regardless of the loop order,
     // be it "ijk", "ikj", "jik", "jki", "kij", or "kji".
-    for (std::size_t i = 0; i != 4; ++i) {
-        for (std::size_t j = 0; j != 4; ++j) {
-            for (std::size_t k = 0; k != 4; ++k) {
-                c.scalars[i][j] += a.scalars[i][k] * b.scalars[k][j];
-            }
-        }
-    }
+    for (std::size_t i = 0; i != 4; ++i)
+        for (std::size_t j = 0; j != 4; ++j)
+            for (std::size_t k = 0; k != 4; ++k) c.scalars[i][j] += a.scalars[i][k] * b.scalars[k][j];
+
     return c;
 }
 
@@ -681,8 +799,7 @@ static void f32x4x4_matmul(bm::State &state) {
     std::iota(&a.scalars[0][0], &a.scalars[0][0] + 16, 16);
     std::iota(&b.scalars[0][0], &b.scalars[0][0] + 16, 0);
 
-    for (auto _ : state)
-        bm::DoNotOptimize(c = f32x4x4_matmul_kernel(a, b));
+    for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_kernel(a, b));
 
     std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
@@ -691,16 +808,21 @@ static void f32x4x4_matmul(bm::State &state) {
 BENCHMARK(f32x4x4_matmul);
 
 /**
- *  A multiplication of two NxN inputs takes up to NxNxN multiplications and NxNx(N-1) additions.
- *  The asymptote of those operations is O(N^3), and the number of operations grows cubically with
- *  the side of the matrix. The naive kernel above performs those operations in @b 31.5ns.
+ *  Multiplying two NxN matrices requires up to NxNxN multiplications and NxNx(N-1)
+ *  additions. The asymptotic complexity is O(N^3), with the operation count scaling
+ *  cubically with the matrix side. Surprisingly, the naive kernel is fully unrolled
+ *  and vectorized by the compiler, achieving @b exceptional_performance:
+ *  @b ~3.1 ns for 112 arithmetic operations (64 multiplications + 48 additions).
  *
- *  Most of those operations are data-parallel, so we can probably squeeze more performance.
+ *  Most of these operations are data-parallel (each cell is independent of others),
+ *  enabling the CPU to execute them in parallel. Since the matrix size is small and
+ *  known at compile time, the compiler optimizes via loop unrolling—a critical
+ *  optimization technique every HPC developer should understand.
  *
- *  The most basic trick is loop unrolling. Every @b `for` loop is in reality a @b `goto` and an @b `if`.
- *  As we've learned from the "recursion" and "branching" sections, the jumps and conditions are expensive.
- *  In our case, we explicitly know the the size of the matrix and the number of iterations in every one
- *  of the @b three nested `for` loops. Let's manually express all the operations.
+ *  Every @b `for` loop is, in essence, a combination of a @b `goto` and an @b `if`.
+ *  As we've seen in sections on recursion and branching, jumps and conditions introduce
+ *  overhead. Knowing the loop bounds allows us to unroll them manually, expressing every
+ *  operation explicitly.
  */
 
 f32x4x4_t f32x4x4_matmul_unrolled_kernel(f32x4x4_t const &a_matrix, f32x4x4_t const &b_matrix) {
@@ -737,8 +859,7 @@ static void f32x4x4_matmul_unrolled(bm::State &state) {
     std::iota(&a.scalars[0][0], &a.scalars[0][0] + 16, 16);
     std::iota(&b.scalars[0][0], &b.scalars[0][0] + 16, 0);
 
-    for (auto _ : state)
-        bm::DoNotOptimize(c = f32x4x4_matmul_unrolled_kernel(a, b));
+    for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_unrolled_kernel(a, b));
 
     std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
@@ -747,14 +868,24 @@ static void f32x4x4_matmul_unrolled(bm::State &state) {
 BENCHMARK(f32x4x4_matmul_unrolled);
 
 /**
- *  The unrolled variant executes in @b 11ns, or a @b 3x speedup.
+ *  The unrolled variant completes in @b 3.1ns, benefiting from auto-vectorization
+ *  using SIMD. Modern CPUs leverage super-scalar execution, often called SIMD
+ *  (Single Instruction, Multiple Data). These units operate on 128-, 256-, or
+ *  512-bit words, containing multiple smaller components (e.g., 64-, 32-, 16-,
+ *  or 8-bit integers or floats). While compilers handle auto-vectorization in
+ *  many cases, they often fall short of manual optimizations. Achieving a 5x
+ *  speedup is common with hand-tuned SIMD code, with some operations seeing
+ *  10-100x improvements for certain data types.
  *
- *  Modern CPUs have a super-scalar execution capability, also called SIMD-computing (Single Instruction, Multiple
- *  Data). It operates on words of 128, 256, or 512 bits, which can contain many 64-, 32-, 16-, or 8-bit components,
- *  like continuous chunks of floats or integers.
+ *  @see Understanding SIMD: Infinite Complexity of Trivial Problems
+ *  https://www.modular.com/blog/understanding-simd-infinite-complexity-of-trivial-problems
+ *  @see GCC Compiler vs Human - 119x Faster Assembly
+ *  https://ashvardanian.com/posts/gcc-12-vs-avx512fp16/
  *
- *  Instead of individual scalar operations in the unrolled kernel, let's port to @b SSE4.1 SIMD instructions,
- *  one of the earliest SIMD instruction sets available on most x86 CPUs.
+ *  To push the limits of performance further, let's switch from scalar
+ *  operations in the unrolled kernel to @b SSE4.1 SIMD instructions—among the
+ *  earliest SIMD instruction sets available on most x86 CPUs—and explore how
+ *  close we can get to the theoretical 100x improvement.
  */
 
 #if defined(__SSE2__)
@@ -769,13 +900,15 @@ BENCHMARK(f32x4x4_matmul_unrolled);
 
 f32x4x4_t f32x4x4_matmul_sse41_kernel(f32x4x4_t const &a, f32x4x4_t const &b) noexcept {
     f32x4x4_t c;
-    // Load a continuous vector of 4x floats in a single instruction., invoked by the `_mm_loadu_ps` intrinsic.
+    // Load a continuous vector of 4x floats in a single instruction., invoked
+    // by the `_mm_loadu_ps` intrinsic.
     __m128 a_row_0 = _mm_loadu_ps(&a.scalars[0][0]);
     __m128 a_row_1 = _mm_loadu_ps(&a.scalars[1][0]);
     __m128 a_row_2 = _mm_loadu_ps(&a.scalars[2][0]);
     __m128 a_row_3 = _mm_loadu_ps(&a.scalars[3][0]);
 
-    // Load the columns of the matrix B, by loading the 4 rows and then transposing with an SSE macro:
+    // Load the columns of the matrix B, by loading the 4 rows and then
+    // transposing with an SSE macro:
     // https://randombit.net/bitbashing/posts/integer_matrix_transpose_in_sse2.html
     __m128 b_col_0 = _mm_loadu_ps(&b.scalars[0][0]);
     __m128 b_col_1 = _mm_loadu_ps(&b.scalars[1][0]);
@@ -786,9 +919,10 @@ f32x4x4_t f32x4x4_matmul_sse41_kernel(f32x4x4_t const &a, f32x4x4_t const &b) no
     // Multiply A rows by B columns and store the result in C.
     // Use bitwise "OR" to aggregate dot products and store results.
     //
-    // The individual dot products are calculated with the `_mm_dp_ps` intrinsic, which is a dot product
-    // of two vectors, with the result stored in a single float. The last argument is a mask, which
-    // specifies which components of the vectors should be multiplied and added.
+    // The individual dot products are calculated with the `_mm_dp_ps`
+    // intrinsic, which is a dot product of two vectors, with the result stored
+    // in a single float. The last argument is a mask, which specifies which
+    // components of the vectors should be multiplied and added.
     __m128 c_row_0 = _mm_or_ps( //
         _mm_or_ps(_mm_dp_ps(a_row_0, b_col_0, 0xF1), _mm_dp_ps(a_row_0, b_col_1, 0xF2)),
         _mm_or_ps(_mm_dp_ps(a_row_0, b_col_2, 0xF4), _mm_dp_ps(a_row_0, b_col_3, 0xF8)));
@@ -823,8 +957,7 @@ static void f32x4x4_matmul_sse41(bm::State &state) {
     std::iota(&a.scalars[0][0], &a.scalars[0][0] + 16, 16);
     std::iota(&b.scalars[0][0], &b.scalars[0][0] + 16, 0);
 
-    for (auto _ : state)
-        bm::DoNotOptimize(c = f32x4x4_matmul_sse41_kernel(a, b));
+    for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_sse41_kernel(a, b));
 
     std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
@@ -834,9 +967,10 @@ BENCHMARK(f32x4x4_matmul_sse41);
 #endif // defined(__SSE2__)
 
 /**
- *  The result is @b 18.8ns as opposed to the @b 11.1ns before. Turns out, we were not that smart.
- *  If we disassemble the unrolled kernel, we can see, that the compiler was smart optimizing it.
- *  Each line of that kernel is compiled to a snippet like:
+ *  The result is @b 19.6 ns compared to the @b 3.1 ns from the unrolled kernel.
+ *  It turns out we were not as clever as we thought. Disassembling the unrolled
+ *  kernel reveals that the compiler was already optimizing it better than we did.
+ *  Each line compiles into a series of efficient instructions like:
  *
  *      vmovss  xmm0, dword ptr [rdi]
  *      vmovss  xmm1, dword ptr [rdi + 4]
@@ -848,18 +982,24 @@ BENCHMARK(f32x4x4_matmul_sse41);
  *      vfmadd132ss     xmm1, xmm0, dword ptr [rsi + 48]
  *      vmovss  dword ptr [rdx], xmm1
  *
- *  Seeing the `vfmadd132ss` and `vfmadd231ss` instructions, applied to @b `xmm` registers clearly
- *  indicates, that the compiler was smarter at using SIMD than we are, but the game isn't over.
+ *  Instructions like `vfmadd132ss` and `vfmadd231ss` operating on @b `xmm`
+ *  registers show how smart the compiler was at exploiting SIMD capabilities.
+ *  But the game isn't over—there's still room to optimize for larger instruction
+ *  sets.
  *
- *  @see Explore the unrolled kernel assembly on GodBolt: https://godbolt.org/z/bW5nnTKs1
- *  @see Explore instruction latencies on the @b uops.info: https://uops.info/table.html
+ *  @see Explore the unrolled kernel assembly on GodBolt:
+ *       https://godbolt.org/z/bW5nnTKs1
+ *  @see Explore instruction latencies on @b uops.info:
+ *       https://uops.info/table.html
  *
- *  Using AVX-512 on modern CPUs, we can fit an entire matrix in one @b `zmm` register, 512 bits wide.
- *  That Instruction Set Extension is available on Intel Skylake-X, Ice Lake, and AMD Zen4 CPUs, and
- *  has extremely powerful functionality.
+ *  With AVX-512 on modern CPUs, we can fit an entire matrix into a single
+ *  @b `zmm` register (512 bits wide). This Instruction Set Extension is available
+ *  on Intel Skylake-X, Ice Lake, and AMD Zen4 CPUs, offering powerful functionality.
+ *  However, on Zen4, AVX-512 is emulated as two 256-bit operations, so the performance
+ *  isn’t as strong as on Intel CPUs. Native support comes with Zen5.
  */
-
 #if defined(__AVX512F__)
+#include <immintrin.h> // `_mm512_loadu_ps`
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC push_options
 #pragma GCC target("avx2", "avx512f", "avx512bw", "avx512vl", "bmi2")
@@ -906,93 +1046,126 @@ static void f32x4x4_matmul_avx512(bm::State &state) {
     std::iota(&a.scalars[0][0], &a.scalars[0][0] + 16, 16);
     std::iota(&b.scalars[0][0], &b.scalars[0][0] + 16, 0);
 
-    for (auto _ : state)
-        bm::DoNotOptimize(c = f32x4x4_matmul_avx512_kernel(a, b));
+    for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_avx512_kernel(a, b));
 
     std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
 }
 BENCHMARK(f32x4x4_matmul_avx512);
+
 #endif // defined(__AVX512F__)
+
+/**
+ *  The result is @b 2.8 ns on Sapphire Rapids—a modest 10% improvement. To
+ *  fully leverage AVX-512, we need larger matrices where horizontal reductions
+ *  don't dominate latency. For small sizes like 4x4, the wide ZMM registers
+ *  aren't fully utilized.
+ *
+ *  As an exercise, try implementing matrix multiplication for 3x3 matrices.
+ *  Despite requiring fewer operations (27 multiplications and 18 additions
+ *  compared to 64 multiplications and 48 additions for 4x4), the compiler
+ *  may peak at @b 5.3 ns — whopping @b 71% slower for a @b 60% smaller task!
+ *
+ *  AVX-512 includes advanced instructions like `_mm512_mask_compressstoreu_ps`
+ *  and `_mm512_maskz_expandloadu_ps`, which could be used with a mask like
+ *  @b 0b0000'0111'0111'0111 to handle 3x3 matrices. However, their high latency
+ *  means the performance will still degrade—@b around 5 ns in practice.
+ *
+ *  Benchmark everything! Don't assume less work translates to faster execution.
+ */
 
 #pragma endregion // Compute vs Memory Bounds with Matrix Multiplications
 
 /**
- *  When composing higher-level kernels from small tiled matrix multiplications, one of the most important
- *  components is tiling the memory and minimizing the number of loads from RAM, maximizing cache utilization.
- *  But not all loads are equal. If you are not careful, you'll end up with unaligned memory addresses, where
- *  part of your data is in one cache line, and the other part is in another.
+ *  When designing high-performance kernels, memory alignment is crucial.
+ *  Misaligned memory accesses split data across cache lines, causing extra
+ *  loads and reducing efficiency. While split loads are unavoidable for large
+ *  data structures, smaller kernels can benefit significantly from careful
+ *  memory management.
  *
- *  For large data-structures it's impossible to avoid such "split loads", but for small scalars, it's recommended.
- *  Especially if you are designing a high-performance kernel and you choose the granularity of your processing.
+ *  Modern CPUs typically have 64-byte cache lines, though Apple's M-series
+ *  uses 128 bytes. This means assuming @b `alignas(64)` won't ensure compatibility.
+ *  Instead, cache properties must be inferred at runtime for optimal performance.
  *
- *  On the majority of modern CPUs the cache line is 64 bytes wide, but its @b not always the case.
- *  On Apple M-series CPUs, for example, the cache line is 128 bytes wide. That's why we can't just put @b `alignas(64)`
- *  everywhere and magically expect total compatibility.
+ *  In this benchmark, we demonstrate how `std::sort` behaves when processing
+ *  cache-line-sized objects that are either correctly aligned or intentionally
+ *  misaligned. This covers:
  *
- *  Instead, we need to infer some of those aspects at runtime and invoke kernels designed for different alignments.
- *  To illustrate a point, let's go back to our `std::sort` function and apply it to a buffer of cache-line-sized,
- *  aligned and intentionally misaligned objects, sorted by a single integer.
- *
- *  To implement it, we will:
- *  - design a smart iterator that can access the elements with a given stride (offset multiple in bytes),
- *  - use Knuth's multiplicative hash to generate a semi-random sequence of integers,
- *  - use different Operating System APIs to infer the cache line size and the L2 cache size on the current machine,
- *  - flush CPU caches between benchmark iterations, to ensure that the results are not skewed by the cache state.
+ *  - Using a custom strided iterator (`strided_ptr`) to simulate offset memory access.
+ *  - Generating semi-random integers using Knuth's multiplicative hash.
+ *  - Reading cache properties with platform-specific APIs.
+ *  - Flushing the CPU cache between runs to ensure consistent results.
  */
 
 #pragma region Alignment of Memory Accesses
 
+#include <cassert>  // `assert`
+#include <fstream>  // `std::ifstream`
+#include <iterator> // `std::random_access_iterator_tag`
+#include <memory>   // `std::assume_aligned`
+#include <string>   // `std::string`, `std::stoull`
+
+/**
+ *  @brief  Reads the contents of a file from the specified path into a string.
+ */
 std::string read_file_contents(std::string const &path) {
     std::ifstream file(path);
     std::string content;
-    if (!file.is_open())
-        return 0;
+    if (!file.is_open()) return 0;
     std::getline(file, content);
     file.close();
     return content;
 }
 
 /**
- *  Reading memory specs is platform-dependent. It can be done in different ways, like invoking x86 CPUID instructions,
- *  to read the cache line size and the L2 cache size, but even on x86 the exact logic is different between AMD and
- *  Intel. To avoid Assembly, one can use compiler intrinsics, but those differ between compilers and don't provide a
- *  solution for Arm. Alternatively, we use Operating System APIs - different for Linux, MacOS, and Windows.
+ *  @brief  Fetches the cache line size using OS-specific APIs.
+ *          Supports Linux, macOS, and Windows.
+ *
+ *  A simpler approach can be to use the @b `std::hardware_destructive_interference_size`
+ *  on C++ 17 and newer, if the `__cpp_lib_hardware_interference_size` feature-macro is defined.
+ *  But this will be incorrect, if the compilation platform is different from the runtime platform.
+ *
+ *  A more advanced approach would be to use hardware-specific instructions, like the `cpuid` on x86,
+ *  and infer the cache line size from the returned bitmasks. That's however, not only different on
+ *  Arm, but also differs between Intel and AMD!
  */
 std::size_t fetch_cache_line_width() {
 
 #if defined(__linux__)
-    // On Linux, we can read the cache line size and the L2 cache size from the "sysfs" virtual filesystem.
-    // It can provide the properties of each individual CPU core.
+    // On Linux, we can read the cache line size and the L2 cache size from the
+    // "sysfs" virtual filesystem. It can provide the properties of each individual
+    // CPU core.
     std::string file_contents = read_file_contents("/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size");
-    std::size_t cache_line_size = std::stoul(file_contents);
+    std::size_t cache_line_size = std::stoull(file_contents);
     return cache_line_size;
 
 #elif defined(__APPLE__)
-    // On macOS, we can use the `sysctlbyname` function to read the `hw.cachelinesize` and `hw.l2cachesize` values
-    // into unsigned integers. You can achieve the same by using the `sysctl -a` command-line utility.
+    // On macOS, we can use the `sysctlbyname` function to read the
+    // `hw.cachelinesize` and `hw.l2cachesize` values into unsigned integers.
+    // You can achieve the same by using the `sysctl -a` command-line utility.
     size_t size;
     size_t len = sizeof(size);
-    if (sysctlbyname("hw.cachelinesize", &size, &len, nullptr, 0) == 0)
-        return size;
+    if (sysctlbyname("hw.cachelinesize", &size, &len, nullptr, 0) == 0) return size;
 
 #elif defined(_WIN32)
     SYSTEM_LOGICAL_PROCESSOR_INFORMATION buffer[256];
     DWORD len = sizeof(buffer);
     if (GetLogicalProcessorInformation(buffer, &len))
         for (size_t i = 0; i < len / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION); ++i)
-            if (buffer[i].Relationship == RelationCache && buffer[i].Cache.Level == 1)
-                return buffer[i].Cache.LineSize;
+            if (buffer[i].Relationship == RelationCache && buffer[i].Cache.Level == 1) return buffer[i].Cache.LineSize;
 #endif
 
     return 0;
 }
 
 /**
- *  We implement a minimalistic strided pointer/iterator, that chooses the next element
- *  address based on the runtime-known variable.
+ *  @brief  A minimalistic pointer with non-unit stride/step.
  */
-template <typename value_type_> class strided_ptr {
+template <typename value_type_>
+class strided_ptr {
+    std::byte *data_;
+    std::size_t stride_;
+
   public:
     using value_type = value_type_;
     using pointer = value_type_ *;
@@ -1000,73 +1173,73 @@ template <typename value_type_> class strided_ptr {
     using difference_type = std::ptrdiff_t;
     using iterator_category = std::random_access_iterator_tag;
 
-    inline strided_ptr(std::byte *data, std::size_t stride_bytes) noexcept : data_(data), stride_(stride_bytes) {
+    strided_ptr(std::byte *data, std::size_t stride_bytes) : data_(data), stride_(stride_bytes) {
         assert(data_ && "Pointer must not be null, as NULL arithmetic is undefined");
     }
-    inline reference operator*() const noexcept {
+    reference operator*() const noexcept {
         return *std::launder(std::assume_aligned<1>(reinterpret_cast<pointer>(data_)));
     }
-    inline reference operator[](difference_type i) const noexcept {
+    reference operator[](difference_type i) const noexcept {
         return *std::launder(std::assume_aligned<1>(reinterpret_cast<pointer>(data_ + i * stride_)));
     }
 
     // clang-format off
-    inline pointer operator->() const noexcept { return &operator*(); }
-    inline strided_ptr &operator++() noexcept { data_ += stride_; return *this; }
-    inline strided_ptr operator++(int) noexcept { strided_ptr temp = *this; ++(*this); return temp; }
-    inline strided_ptr &operator--() noexcept { data_ -= stride_; return *this; }
-    inline strided_ptr operator--(int) noexcept { strided_ptr temp = *this; --(*this); return temp; }
-    inline strided_ptr &operator+=(difference_type offset) noexcept { data_ += offset * stride_; return *this; }
-    inline strided_ptr &operator-=(difference_type offset) noexcept { data_ -= offset * stride_; return *this; }
-    inline strided_ptr operator+(difference_type offset) noexcept { strided_ptr temp = *this; return temp += offset; }
-    inline strided_ptr operator-(difference_type offset) noexcept { strided_ptr temp = *this; return temp -= offset; }
-    inline friend difference_type operator-(strided_ptr const &a, strided_ptr const &b) noexcept { assert(a.stride_ == b.stride_); return (a.data_ - b.data_) / static_cast<difference_type>(a.stride_); }
-    inline friend bool operator==(strided_ptr const &a, strided_ptr const &b) noexcept { return a.data_ == b.data_; }
-    inline friend bool operator<(strided_ptr const &a, strided_ptr const &b) noexcept { return a.data_ < b.data_; }
-    inline friend bool operator!=(strided_ptr const &a, strided_ptr const &b) noexcept { return !(a == b); }
-    inline friend bool operator>(strided_ptr const &a, strided_ptr const &b) noexcept { return b < a; }
-    inline friend bool operator<=(strided_ptr const &a, strided_ptr const &b) noexcept { return !(b < a); }
-    inline friend bool operator>=(strided_ptr const &a, strided_ptr const &b) noexcept { return !(a < b); }
+    pointer operator->() const noexcept { return &operator*(); }
+    strided_ptr &operator++() noexcept { data_ += stride_; return *this; }
+    strided_ptr operator++(int) noexcept { strided_ptr temp = *this; ++(*this); return temp; }
+    strided_ptr &operator--() noexcept { data_ -= stride_; return *this; }
+    strided_ptr operator--(int) noexcept { strided_ptr temp = *this; --(*this); return temp; }
+    strided_ptr &operator+=(difference_type offset) noexcept { data_ += offset * stride_; return *this; }
+    strided_ptr &operator-=(difference_type offset) noexcept { data_ -= offset * stride_; return *this; }
+    strided_ptr operator+(difference_type offset) noexcept { strided_ptr temp = *this; return temp += offset; }
+    strided_ptr operator-(difference_type offset) noexcept { strided_ptr temp = *this; return temp -= offset; }
+    friend difference_type operator-(strided_ptr const &a, strided_ptr const &b) noexcept { assert(a.stride_ == b.stride_); return (a.data_ - b.data_) / static_cast<difference_type>(a.stride_); }
+    friend bool operator==(strided_ptr const &a, strided_ptr const &b) noexcept { return a.data_ == b.data_; }
+    friend bool operator<(strided_ptr const &a, strided_ptr const &b) noexcept { return a.data_ < b.data_; }
+    friend bool operator!=(strided_ptr const &a, strided_ptr const &b) noexcept { return !(a == b); }
+    friend bool operator>(strided_ptr const &a, strided_ptr const &b) noexcept { return b < a; }
+    friend bool operator<=(strided_ptr const &a, strided_ptr const &b) noexcept { return !(b < a); }
+    friend bool operator>=(strided_ptr const &a, strided_ptr const &b) noexcept { return !(a < b); }
     // clang-format on
-
-  private:
-    std::byte *data_;
-    std::size_t stride_;
 };
 
-template <bool aligned> static void memory_access(bm::State &state) {
+template <bool aligned_>
+static void memory_access(bm::State &state) {
     constexpr std::size_t typical_l2_size = 1024u * 1024u;
     std::size_t const cache_line_width = fetch_cache_line_width();
     assert(cache_line_width > 0 && __builtin_popcountll(cache_line_width) == 1 &&
            "The cache line width must be a power of two greater than 0");
 
-    // We are using a fairly small L2-cache-sized buffer to show, that this is not just about Big Data.
-    // Anything beyond a few megabytes with irregular memory accesses may suffer from the same issues.
-    // For split-loads, pad our buffer with an extra `cache_line_width` bytes of space.
+    // We are using a fairly small L2-cache-sized buffer to show, that this is
+    // not just about Big Data. Anything beyond a few megabytes with irregular
+    // memory accesses may suffer from the same issues. For split-loads, pad our
+    // buffer with an extra `cache_line_width` bytes of space.
     std::size_t const buffer_size = typical_l2_size + cache_line_width;
     std::unique_ptr<std::byte, decltype(&std::free)> const buffer(                        //
         reinterpret_cast<std::byte *>(std::aligned_alloc(cache_line_width, buffer_size)), //
         &std::free);
     std::byte *const buffer_ptr = buffer.get();
 
-    // Let's initialize a strided range using out `strided_ptr` template, but for `aligned == false`
-    // make sure that the scalar-of-interest in each stride is located exactly at the boundary between two cache lines.
-    std::size_t const offset_within_page = !aligned ? (cache_line_width - sizeof(std::uint32_t) / 2) : 0;
+    // Let's initialize a strided range using out `strided_ptr` template, but
+    // for `aligned_ == false` make sure that the scalar-of-interest in each
+    // stride is located exactly at the boundary between two cache lines.
+    std::size_t const offset_within_page = !aligned_ ? (cache_line_width - sizeof(std::uint32_t) / 2) : 0;
     strided_ptr<std::uint32_t> integers(buffer_ptr + offset_within_page, cache_line_width);
 
     // We will start with a random seed position and walk through the buffer.
     std::uint32_t semi_random_state = 0xFFFFFFFFu;
     std::size_t const count_pages = typical_l2_size / cache_line_width;
     for (auto _ : state) {
-        // Generate some semi-random data, using Knuth's multiplicative hash number derived from the golden ratio.
+        // Generate some semi-random data, using Knuth's multiplicative hash
+        // number derived from the golden ratio.
         std::generate_n(integers, count_pages, [&semi_random_state] { return semi_random_state *= 2654435761u; });
 
-        // Flush all of the pages out of the cache
+        // Flush all of the pages out of the cache.
         // The `__builtin___clear_cache(buffer_ptr, buffer_ptr + buffer.size())`
-        // compiler intrinsic can't be used for the data cache, only the instructions cache.
-        // For Arm, GCC provides a `__aarch64_sync_cache_range` intrinsic, but it's not available in Clang.
-        for (std::size_t i = 0; i != count_pages; ++i)
-            _mm_clflush(&integers[i]);
+        // compiler intrinsic can't be used for the data cache, only the
+        // instructions cache. For Arm, GCC provides a `__aarch64_sync_cache_range`
+        // intrinsic, but it's not available in Clang.
+        for (std::size_t i = 0; i != count_pages; ++i) _mm_clflush(&integers[i]);
         bm::ClobberMemory();
 
         std::sort(integers, integers + count_pages);
@@ -1089,17 +1262,15 @@ BENCHMARK(memory_access_aligned)->MinTime(10);
 #pragma region Non Uniform Memory Access
 
 /**
- *  Takes a string like "64K" and "128M" and returns the corresponding size in bytes,
- *  expanding the multiple prefixes to the actual size, like "65536" and "134217728", respectively.
+ *  Takes a string like "64K" and "128M" and returns the corresponding size in
+ *  bytes, expanding the multiple prefixes to the actual size, like "65536" and
+ *  "134217728", respectively.
  */
 std::size_t parse_size_string(std::string const &str) {
-    std::size_t value = std::stoul(str);
-    if (str.find("K") != std::string::npos || str.find("k") != std::string::npos)
-        value *= 1024;
-    else if (str.find("M") != std::string::npos || str.find("m") != std::string::npos)
-        value *= 1024 * 1024;
-    else if (str.find("G") != std::string::npos || str.find("g") != std::string::npos)
-        value *= 1024 * 1024 * 1024;
+    std::size_t value = std::stoull(str);
+    if (str.find("K") != std::string::npos || str.find("k") != std::string::npos) { value *= 1024; }
+    else if (str.find("M") != std::string::npos || str.find("m") != std::string::npos) { value *= 1024 * 1024; }
+    else if (str.find("G") != std::string::npos || str.find("g") != std::string::npos) { value *= 1024 * 1024 * 1024; }
     return value;
 }
 
@@ -1108,51 +1279,78 @@ std::size_t parse_size_string(std::string const &str) {
 #pragma endregion // - Numerics
 
 /**
- *  Now that we understand the costs associated with designing kernels, we should learn how to compose them
- *  into programs without losing all of our performance gains.
+ *  Designing efficient kernels is only the first step; composing them into full
+ *  programs without losing performance is the real challenge.
  *
- *  Let's imagine an abstract numeric pipeline:
+ *  Consider a hypothetical numeric processing pipeline:
  *
- *    1. Generate a sequence of all integers in a specific range (e.g., [1, 33])
- *    2. Filter to keep only the integer squares
- *    3. Expand each square into its prime factors
- *    4. Accumulate (sum) all prime factors of all resulting numbers
+ *    1. Generate all integers in a given range (e.g., [1, 33]).
+ *    2. Filter out integers that are perfect squares.
+ *    3. Expand each remaining number into its prime factors.
+ *    4. Sum all prime factors from the filtered numbers.
  *
- *  We will use a few different approaches to implement this pipeline:
+ *  We'll explore four implementations of this pipeline:
  *
- *    - C++ 11 variant using `template` for lambda function arguments.
- *    - C++ 11 variant using `std::function` for lambda function arguments.
- *    - C++ 20 coroutines with a minimalistic generator.
- *    - C++ 20 ranges with a lazily-evaluated factors stream.
+ *    - C++11 using `template`-based lambda functions.
+ *    - C++11 using `std::function` for dynamic callbacks.
+ *    - C++20 coroutines using a lightweight generator.
+ *    - C++20 ranges with a lazily evaluated factorization.
  */
 
 #pragma region - Pipelines and Abstractions
 
-inline bool is_power_of_two(std::uint64_t x) noexcept { return __builtin_popcountll(x) == 1; }
+/**
+ *  @brief  Checks if a number is a power of two.
+ */
+[[gnu::always_inline]]
+inline bool is_power_of_two(std::uint64_t x) noexcept {
+    return __builtin_popcountll(x) == 1;
+}
 
+/**
+ *  @brief  Checks if a number is a power of three using modulo division.
+ *          The largest power of three fitting in a 64-bit integer is 3^40.
+ */
+[[gnu::always_inline]]
 inline bool is_power_of_three(std::uint64_t x) noexcept {
     constexpr std::uint64_t max_power_of_three = 4052555151518976267;
     return x > 0 && max_power_of_three % x == 0;
 }
 
+constexpr std::uint64_t pipe_start = 3;
+constexpr std::uint64_t pipe_end = 49;
+
 #pragma region Coroutines and Asynchronous Programming
 
+/**
+ *  @brief  Supplies the prime factors to a template-based callback.
+ */
 template <typename callback_type_>
-inline void prime_factors_cpp11(std::uint64_t input, callback_type_ &&callback) noexcept {
-    for (std::uint64_t factor = 2; factor * factor <= input; ++factor)
+[[gnu::always_inline]] inline void prime_factors_cpp11( //
+    std::uint64_t input, callback_type_ &&callback) noexcept {
+    // Handle factor 2 separately
+    while ((input & 1) == 0) {
+        callback(2);
+        input >>= 1; // equivalent to `input /= 2`
+    }
+
+    // Now factor is always odd, start from 3 and go up by 2
+    for (std::uint64_t factor = 3; factor * factor <= input; factor += 2) {
         while (input % factor == 0) {
             callback(factor);
             input /= factor;
         }
-    if (input > 1)
-        callback(input);
+    }
+
+    // If input is still greater than 1, then it's a prime factor
+    if (input > 1) callback(input);
 }
 
 static void pipeline_cpp11_lambdas(bm::State &state) {
     std::uint64_t sum = 0, count = 0;
     for (auto _ : state) {
         sum = 0, count = 0;
-        for (std::uint64_t value = 3; value <= 33; ++value) {
+        for (std::uint64_t value = pipe_start; value <= pipe_end; ++value) {
             if (!is_power_of_two(value) && !is_power_of_three(value))
                 prime_factors_cpp11(value, [&](std::uint64_t factor) { sum += factor, count++; });
         }
@@ -1165,39 +1363,35 @@ static void pipeline_cpp11_lambdas(bm::State &state) {
 BENCHMARK(pipeline_cpp11_lambdas);
 
 /**
- *  The more conventional approach is to avoid template meta-programming and use `std::function` callbacks.
- *  Each of those function objects will be heap-allocated.
+ *  A more conventional approach using @b `std::function` callbacks.
+ *  While this simplifies the interface, it introduces heap allocations,
+ *  and brings a lot of noisy source code into your translation unit:
+ *  up to @b 27'400 lines of code, being one of the largest standard
+ *  headers according to Philip Trettner's "C++ Compile Health Watchdog".
+ *
+ *  @see Headers length: https://artificial-mind.net/projects/compile-health/
  */
 #include <functional> // `std::function`
 
 static void for_range_stl(std::uint64_t start, std::uint64_t end, std::function<void(std::uint64_t)> const &callback) {
-    for (std::uint64_t i = start; i <= end; ++i)
-        callback(i);
+    for (std::uint64_t i = start; i <= end; ++i) callback(i);
 }
 
 static void filter_stl( //
     std::uint64_t value, std::function<bool(std::uint64_t)> const &predicate,
     std::function<void(std::uint64_t)> const &callback) {
-    if (!predicate(value))
-        callback(value);
+    if (!predicate(value)) callback(value);
 }
 
 static void prime_factors_stl(std::uint64_t input, std::function<void(std::uint64_t)> const &callback) {
-    for (std::uint64_t factor = 2; factor * factor <= input; ++factor) {
-        while (input % factor == 0) {
-            callback(factor);
-            input /= factor;
-        }
-    }
-    if (input > 1)
-        callback(input);
+    prime_factors_cpp11(input, callback);
 }
 
 static void pipeline_cpp11_stl(bm::State &state) {
     std::uint64_t sum = 0, count = 0;
     for (auto _ : state) {
         sum = 0, count = 0;
-        for_range_stl(3, 33, [&](std::uint64_t value) {
+        for_range_stl(pipe_start, pipe_end, [&](std::uint64_t value) {
             filter_stl(value, is_power_of_two, [&](std::uint64_t value) {
                 filter_stl(value, is_power_of_three, [&](std::uint64_t value) {
                     prime_factors_stl(value, [&](std::uint64_t factor) { sum += factor, count++; });
@@ -1213,12 +1407,13 @@ static void pipeline_cpp11_stl(bm::State &state) {
 BENCHMARK(pipeline_cpp11_stl);
 
 /**
- *  C++20 introduces coroutines in the language, but not in the library, so we need to
- *  provide a minimal implementation of a generator.
+ *  C++20 introduces @b coroutines in the language, but not in the library,
+ *  so we need to provide a minimal implementation of a "generator" class.
  */
 #include <coroutine> // `std::coroutine_handle`
 
-template <typename integer_type_> struct integer_generator {
+template <typename integer_type_>
+struct integer_generator {
     struct promise_type {
         integer_type_ value_;
 
@@ -1230,7 +1425,7 @@ template <typename integer_type_> struct integer_generator {
         std::suspend_always initial_suspend() noexcept { return {}; }
         std::suspend_always final_suspend() noexcept { return {}; }
         integer_generator get_return_object() noexcept {
-            return integer_generator{std::coroutine_handle<promise_type>::from_promise(*this)};
+            return integer_generator {std::coroutine_handle<promise_type>::from_promise(*this)};
         }
         void return_void() noexcept {}
         void unhandled_exception() noexcept { std::terminate(); }
@@ -1242,19 +1437,18 @@ template <typename integer_type_> struct integer_generator {
     integer_generator(integer_generator const &) = delete;
     integer_generator(integer_generator &&other) noexcept : coro(other.coro) { other.coro = nullptr; }
     ~integer_generator() noexcept {
-        if (coro)
-            coro.destroy();
+        if (coro) coro.destroy();
     }
 
     struct iterator {
         std::coroutine_handle<promise_type> handle_;
 
-        inline iterator &operator++() noexcept {
+        iterator &operator++() noexcept {
             handle_.resume();
             return *this;
         }
-        inline bool operator!=(iterator const &) const noexcept { return !handle_.done(); }
-        inline integer_type_ const &operator*() const noexcept { return handle_.promise().value_; }
+        bool operator!=(iterator const &) const noexcept { return !handle_.done(); }
+        integer_type_ const &operator*() const noexcept { return handle_.promise().value_; }
     };
 
     iterator begin() noexcept {
@@ -1265,40 +1459,45 @@ template <typename integer_type_> struct integer_generator {
 };
 
 integer_generator<std::uint64_t> for_range_generator(std::uint64_t start, std::uint64_t end) noexcept {
-    for (std::uint64_t value = start; value <= end; ++value)
-        co_yield value;
+    for (std::uint64_t value = start; value <= end; ++value) co_yield value;
 }
 
 integer_generator<std::uint64_t> filter_generator( //
     integer_generator<std::uint64_t> values, bool (*predicate)(std::uint64_t)) noexcept {
     for (auto value : values)
-        if (!predicate(value))
-            co_yield value;
+        if (!predicate(value)) co_yield value;
 }
 
 integer_generator<std::uint64_t> prime_factors_generator(integer_generator<std::uint64_t> values) noexcept {
     for (std::uint64_t value : values) {
-        for (std::uint64_t factor = 2; factor * factor <= value; ++factor) {
+        // Factor out 2 first
+        while ((value & 1) == 0) {
+            co_yield 2;
+            value >>= 1; // Equivalent to `value /= 2`
+        }
+
+        // Only consider odd factors from here on
+        for (std::uint64_t factor = 3; factor * factor <= value; factor += 2) {
             while (value % factor == 0) {
                 co_yield factor;
                 value /= factor;
             }
         }
-        if (value > 1)
-            co_yield value;
+
+        // If value is still greater than 1, it's a prime number
+        if (value > 1) co_yield value;
     }
 }
 
 static void pipeline_cpp20_coroutines(bm::State &state) {
     std::uint64_t sum = 0, count = 0;
     for (auto _ : state) {
-        auto range = for_range_generator(3, 33);
+        auto range = for_range_generator(pipe_start, pipe_end);
         auto filtered = filter_generator(filter_generator(std::move(range), is_power_of_two), is_power_of_three);
         auto factors = prime_factors_generator(std::move(filtered));
         // Reduce
         sum = 0, count = 0;
-        for (auto factor : factors)
-            sum += factor, count++;
+        for (auto factor : factors) sum += factor, count++;
         bm::DoNotOptimize(sum);
     }
     state.counters["sum"] = sum;
@@ -1312,19 +1511,27 @@ BENCHMARK(pipeline_cpp20_coroutines);
 #pragma region Ranges and Iterators
 
 /**
- *  C++20 ranges bring powerful tools to the language, but can be extremely hard to debug.
- *  It's definitely recommended to override default compiler settings with `-fconcepts-diagnostics-depth=10`
- *  to make meta-compilation errors more readable.
+ *  C++20 ranges are a double-edged sword. They offer powerful abstractions,
+ *  making complex tasks concise and expressive. But there's a price: they can
+ *  be infamously hard to debug. If your compiler ever throws a range-related
+ *  error, expect a wall of template gibberish that looks like a corrupted
+ *  stack trace from a parallel universe.
  *
- *  It's also hard to use STL with non-homogeneous ranges, where the begin and end iterators are of different types.
- *  The end iterator is often an empty "sentinel" object, like the `std::default_sentinel_t`, but many of the STL
- *  concepts don't recognize such ranges as valid, and the following assertions will fail:
+ *  Debugging them is a remarkable exercise in patience. It's highly recommended
+ *  to use `-fconcepts-diagnostics-depth=10` to make meta-template errors more
+ *  readable—assuming you're into that kind of suffering.
+ *
+ *  One especially maddening issue is handling non-homogeneous ranges, where
+ *  the begin and end iterators are different types. The end iterator is often
+ *  a "sentinel" like @b `std::default_sentinel_t`. But STL concepts don't always
+ *  recognize such ranges as valid, causing these assertions to fail:
  *
  *      static_assert(std::ranges::view<prime_factors_view>);
  *      static_assert(std::ranges::input_range<prime_factors_view>);
  *
- *  This will result in some key transformations being impossible to perform, like the `std::views::join` operation.
+ *  As a result, operations like `std::views::join` may refuse to compile.
  */
+
 #include <iterator> // `std::input_iterator_tag`
 #include <ranges>   // `std::ranges`
 
@@ -1341,19 +1548,28 @@ class prime_factors_view : public std::ranges::view_interface<prime_factors_view
         std::uint64_t factor_ = 0;
 
         inline void advance() noexcept {
+            // Handle factor 2 separately
+            if (factor_ == 2) {
+                // Keep dividing by 2 as long as the number is even
+                if ((number_ & 1) == 0) {
+                    number_ >>= 1; // Equivalent to `number_ /= 2`
+                    return;        // Still yielding factor = 2
+                }
+                else { factor_ = 3; } // No more factors of 2, move on to the next odd factor (3)
+            }
+
+            // Now handle only odd factors
             while (factor_ * factor_ <= number_) {
                 if (number_ % factor_ == 0) {
                     number_ /= factor_;
                     return;
                 }
-                ++factor_;
+                factor_ += 2; // Skip even numbers
             }
-            if (number_ > 1) {
-                factor_ = number_; // The last entry
-                number_ = 0;
-            } else {
-                factor_ = 0; // Mark as end
-            }
+
+            // If we exit the loop, `number_` is either 1 or a prime:
+            if (number_ > 1) { factor_ = number_, number_ = 0; } // The last entry
+            else { factor_ = 0; }                                // Mark as end
         }
 
       public:
@@ -1383,14 +1599,15 @@ class prime_factors_view : public std::ranges::view_interface<prime_factors_view
     iterator end() const noexcept { return iterator(); }
 };
 
-static_assert(std::ranges::view<prime_factors_view>, "prime_factors_view must model std::ranges::view");
-static_assert(std::ranges::input_range<prime_factors_view>, "prime_factors_view must model std::ranges::input_range");
+static_assert(std::ranges::view<prime_factors_view>, "The range must model `std::ranges::view`");
+static_assert(std::ranges::input_range<prime_factors_view>, "The range must model `std::ranges::input_range`");
 
 /**
  *  @brief  Inverts the output of a boolean-returning function.
  *          Useful for search predicates.
  */
-template <typename function_type_> auto not_fn(function_type_ f) noexcept {
+template <typename function_type_>
+auto not_fn(function_type_ f) noexcept {
     return [f](auto &&...args) { return !f(std::forward<decltype(args)>(args)...); };
 }
 
@@ -1398,18 +1615,20 @@ static void pipeline_cpp20_ranges(bm::State &state) {
     std::uint64_t sum = 0, count = 0;
     for (auto _ : state) {
         auto pipeline =                                                                    //
-            std::views::iota(std::uint64_t{3}, std::uint64_t{33 + 1}) |                    //
+            std::views::iota(pipe_start, pipe_end + 1) |                                   //
             std::views::filter(not_fn(is_power_of_two)) |                                  //
             std::views::filter(not_fn(is_power_of_three)) |                                //
             std::views::transform([](std::uint64_t x) { return prime_factors_view(x); }) | //
             std::views::join;
 
-        // Interestingly, STL still struggles with non-homogeneous ranges, x
-        // iterator iterators are of different types.
-        //      std::uint64_t sum = std::accumulate(pipeline.begin(), pipeline.end(), std::uint64_t{0});
+        // Interestingly, STL still struggles with non-homogeneous ranges,
+        // if the `begin` and `end` iterators are of different types:
+        //
+        //      std::uint64_t sum = std::accumulate(
+        //          pipeline.begin(), pipeline.end(), std::uint64_t{0});
+        //
         sum = 0, count = 0;
-        for (std::uint64_t factor : pipeline)
-            sum += factor, count++;
+        for (std::uint64_t factor : pipeline) sum += factor, count++;
         bm::DoNotOptimize(sum);
     }
     state.counters["sum"] = sum;
@@ -1419,28 +1638,51 @@ static void pipeline_cpp20_ranges(bm::State &state) {
 BENCHMARK(pipeline_cpp20_ranges);
 
 /**
- *  The results are as follows:
+ *  The results for the input range [3, 49] are as follows:
  *
- *      - pipeline_cpp11_lambdas:      @b 324ns
- *      - pipeline_cpp11_stl:          @b 474ns
- *      - pipeline_cpp20_coroutines:   @b 449ns
- *      - pipeline_cpp20_ranges:       @b 223ns
+ *      - pipeline_cpp11_lambdas:      @b 314ns
+ *      - pipeline_cpp11_stl:          @b 805ns
+ *      - pipeline_cpp20_coroutines:   @b 683ns
+ *      - pipeline_cpp20_ranges:       @b 219ns
  *
- *  TODO: Why?
+ *  Why is STL slower than C++11 lambdas? STL's `std::function` allocates memory!
+ *  Why are coroutines slower than lambdas? Coroutines allocate state and have
+ *  additional overhead for resuming and suspending. Those are fairly simple to grasp.
+ *
+ *  But why are ranges faster than lambdas? If that happens, the primary cause is
+ *  the cost of moving data from registers to stack and back. Lambdas are closures,
+ *  they capture their environment, and need to address it using the `rsp` register
+ *  on x86. So if you see many `mov`-es and `rsp` arithmetic like:
+ *
+ *      mov     rax, QWORD PTR [rsp-16]
+ *      xor     edx, edx
+ *      add     rax, rcx
+ *      mov     QWORD PTR [rsp-16], rax
+ *      mov     rax, QWORD PTR [rsp-8]
+ *      inc     rax
+ *      mov     QWORD PTR [rsp-8], rax
+ *      mov     rax, rsi
+ *
+ *  ... then you are probably looking at a lambda. Ranges, on the other hand, are
+ *  lazy and don't need to capture anything. On the practical side, when implementing
+ *  ranges, make sure to avoid branching even more than with regular code.
  */
 
 #pragma endregion // Ranges and Iterators
 
 /**
- *  Now that we know how to write performant modern code, let's just show how not to do it.
- *  Ironically, that's the kind of code most universities teach, and most companies use.
- *  If you see it at a potential workplace - run :)
+ *  Now that we've explored how to write modern, performant C++ code,
+ *  let's dive into how @b not to do it. Ironically, this style of programming
+ *  is still taught in universities and used in legacy systems across the industry.
+ *  If you see something like this in a codebase at a prospective job — run 🙂
  */
+
 #pragma region Virtual Functions and Polymorphism
 
 #include <memory> // `std::unique_ptr`
 
-struct base_virtual_class {
+class base_virtual_class {
+  public:
     virtual ~base_virtual_class() = default;
     virtual void process(std::vector<std::uint64_t> &data) const = 0;
 };
@@ -1452,8 +1694,7 @@ class for_range_virtual : public base_virtual_class {
     for_range_virtual(std::uint64_t start, std::uint64_t end) : start_(start), end_(end) {}
     void process(std::vector<std::uint64_t> &data) const override {
         data.clear();
-        for (std::uint64_t value = start_; value <= end_; ++value)
-            data.push_back(value);
+        for (std::uint64_t value = start_; value <= end_; ++value) data.push_back(value);
     }
 };
 
@@ -1468,38 +1709,27 @@ class filter_virtual : public base_virtual_class {
 };
 
 class prime_factors_virtual : public base_virtual_class {
+  public:
     void process(std::vector<std::uint64_t> &data) const override {
         std::vector<std::uint64_t> expanded;
-        for (auto input : data) {
-            std::uint64_t value = input;
-            for (std::uint64_t factor = 2; factor * factor <= value; ++factor) {
-                while (value % factor == 0) {
-                    expanded.push_back(factor);
-                    value /= factor;
-                }
-            }
-            if (value > 1)
-                expanded.push_back(value);
-        }
+        for (auto input : data) prime_factors_cpp11(input, [&](std::uint64_t factor) { expanded.push_back(factor); });
         data.swap(expanded);
     }
 };
 
 class homogeneous_virtual_pipeline : public base_virtual_class {
-  private:
     std::vector<std::unique_ptr<base_virtual_class>> stages_;
 
   public:
     void add_stage(std::unique_ptr<base_virtual_class> stage) { stages_.push_back(std::move(stage)); }
     void process(std::vector<std::uint64_t> &data) const override {
-        for (auto const &stage : stages_)
-            stage->process(data);
+        for (auto const &stage : stages_) stage->process(data);
     }
 };
 
 static void pipeline_virtual_functions(bm::State &state) {
     homogeneous_virtual_pipeline pipeline;
-    pipeline.add_stage(std::make_unique<for_range_virtual>(3, 33));
+    pipeline.add_stage(std::make_unique<for_range_virtual>(pipe_start, pipe_end));
     pipeline.add_stage(std::make_unique<filter_virtual>(is_power_of_two));
     pipeline.add_stage(std::make_unique<filter_virtual>(is_power_of_three));
     pipeline.add_stage(std::make_unique<prime_factors_virtual>());
@@ -1508,7 +1738,7 @@ static void pipeline_virtual_functions(bm::State &state) {
     for (auto _ : state) {
         std::vector<std::uint64_t> data;
         pipeline.process(data);
-        sum = std::accumulate(data.begin(), data.end(), std::uint64_t{0});
+        sum = std::accumulate(data.begin(), data.end(), std::uint64_t {0});
         count = data.size();
         bm::DoNotOptimize(sum);
     }
@@ -1519,31 +1749,32 @@ static void pipeline_virtual_functions(bm::State &state) {
 BENCHMARK(pipeline_virtual_functions);
 
 /**
- *  This code is a bio-hazard for many reasons:
+ *  This code is a hazard for multiple reasons:
  *
- *  - A couple of "feature releases" later, the code will become a spaghetti monster.
- *    Each layer of inheritance and interfaces will add its APIs and constraints,
- *    until at some point you'll need to skip-connect grand-kids to grand-parents.
+ *  - @b Spaghetti_Code_Guaranteed: As the code evolves, additional abstraction
+ *    layers will accumulate. Each layer will add new APIs and constraints until
+ *    developers are forced to skip-connect grandkids to grandparents, creating
+ *    a tangled mess.
  *
- *  - It uses dynamic memory allocations on hot paths. Their costs are amortized in
- *    a repeated benchmark, as practically the same region is allocated and deallocated
- *    and no fragmentation occurs. In the real world, this is not the case.
- *    Some allocation will happen before the deallocation of the previous one is complete,
- *    and your allocator is stuck approximating non-trivial optimization problems with
- *    all kinds of heuristics.
+ *  - @b Dynamic_Allocations_Everywhere: Memory allocations occur at every stage,
+ *    slowing execution and increasing fragmentation risks. In real-world scenarios,
+ *    allocations frequently overlap and can overwhelm allocators, forcing them
+ *    to fall back on expensive heuristics.
  *
- *  - Using such constructs to build Abstract Syntax Trees or other complex data structures
- *    almost universally leads to using `std::any`, arrays of strings, or even JSONs to
- *    pass around the data in the most generic way possible. That curse results in your
- *    CPU spending most of the time packing & unpacking data, or stalling the ALUs while
- *    chasing rogue pointers.
+ *  - @b Data_Packing Overhead: This approach inevitably leads to passing data
+ *    using `std::any`, arrays of strings, or even JSON objects. CPUs will spend
+ *    more time chasing pointers and repacking values than performing meaningful
+ *    computations.
  *
- *  This example is so systemically bad, that after reading the previous sections,
- *  you don't want to continue investigating it. After all, we are not writing a paper
- *  for some grant, so instead of wasting time on clearly bad ideas to prove they are bad,
- *  let's just move on to clearly good ideas.
+ *  - @b Unscalable_Design: Abstract Syntax Trees, interpreters, and similar
+ *    constructs built this way become unsalvageable, with performance hitting a
+ *    hard ceiling due to constant memory indirections and hidden costs.
  *
- *  Feel free to contribute!
+ *  This design is so systemically bad that after reading earlier sections, you
+ *  probably don’t need further convincing. We're not writing a grant proposal,
+ *  so let’s skip proving that bad ideas are indeed bad — and focus on the good ones.
+ *
+ *  Contributions are welcome — but not using `virtual` functions! 😉
  */
 
 #pragma endregion // Virtual Functions and Polymorphism
@@ -1553,7 +1784,7 @@ BENCHMARK(pipeline_virtual_functions);
 /**
  *  The default variant is to invoke the `BENCHMARK_MAIN()` macro.
  *  Alternatively, we can unpack it, if we want to augment the main function
- *  with more system logging logic.
+ *  with more system logging logic or pre-process some datasets before running.
  */
 
 int main(int argc, char **argv) {
@@ -1565,11 +1796,9 @@ int main(int argc, char **argv) {
     // Make sure the defaults are set correctly:
     char arg0_default[] = "benchmark";
     char *args_default = arg0_default;
-    if (!argv)
-        argc = 1, argv = &args_default;
+    if (!argv) argc = 1, argv = &args_default;
     bm::Initialize(&argc, argv);
-    if (bm::ReportUnrecognizedArguments(argc, argv))
-        return 1;
+    if (bm::ReportUnrecognizedArguments(argc, argv)) return 1;
     bm::RunSpecifiedBenchmarks();
     bm::Shutdown();
     return 0;
