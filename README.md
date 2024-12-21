@@ -1,95 +1,66 @@
-# C++ Benchmarking Tutorial using [Google Benchmark](https://github.com/google/benchmark)
+Much of modern code suffers from common pitfalls: bugs, security vulnerabilities, and __performance bottlenecks__.
+University curricula often teach outdated concepts, while bootcamps oversimplify crucial software development principles.
 
-[![Meme IEEE 754 vs GCC](assets/meme-ieee764-vs-gnu-compiler-cover.png)](https://ashvardanian.com/posts/google-benchmark/)
+![Less Slow C++](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/less_slow.cpp.jpg?raw=true)
 
-This repository is a practical example of common pitfalls in benchmarking high-performance applications.
-It's extensively-commented [source](tutorial.cxx) is also available in a more digestible [article form](https://ashvardanian.com/posts/google-benchmark/).
+This repository offers practical examples of writing efficient C and C++ code.
+It leverages C++20 features and is designed primarily for GCC and Clang compilers on Linux, though it may work on other platforms.
+The topics range from basic micro-kernels executing in a few nanoseconds to more complex constructs involving parallel algorithms, coroutines, and polymorphism.
+Some of the highlights include:
 
-### Quick Start Guide
+- __100x cheaper random inputs?!__ Discover how input generation sometimes costs more than the algorithm.
+- __40x faster trigonometric calculations:__ Achieve significant speed-ups over standard library functions like `std::sin`.
+- __4x faster logic with `std::ranges`:__ See how modern C++ abstractions can be surprisingly efficient when used correctly.
+- __Trade-offs between accuracy and efficiency:__ Explore how to balance precision and performance in numerical computations.
+- __Compiler optimizations beyond `-O3`:__ Learn about less obvious flags and techniques to deliver another 2x speedup.
+- __How many if conditions are too many?__ Test your CPU's branch predictor with just 10 lines of code.
+- __Iterative vs. recursive algorithms:__ Avoid pitfalls that could cause a `SEGFAULT` or slow your program.
+- __How not to build state machines:__ Compare `std::variant`, `virtual` functions, and C++20 coroutines.
 
-Clone the repository and execute the following commands to build and run the tutorial:
+To read, jump to the `less_slow.cpp` source file and read the code snippets and comments.
+
+## Reproducing the Benchmarks
+
+If you are familiar with C++ and want to review code and measurements as you read, you can clone the repository and execute the following commands.
 
 ```sh
-cmake -B ./build_release
-cmake --build ./build_release --config Release
-./build_release/tutorial
-
-# For JSON output
-./build_release/tutorial --benchmark_format=json
-
-# For output to a file
-./build_release/tutorial --benchmark_out=results.json
-
-# To match a specific benchmark
-./build_release/tutorial --benchmark_filter=i32_addition
+git clone https://github.com/ashvardanian/LessSlow.cpp.git  # Clone the repository
+cd LessSlow.cpp                                             # Change the directory
+cmake -B build_release -D CMAKE_BUILD_TYPE=Release          # Generate the build files
+cmake --build build_release --config Release                # Build the project
+build_release/less_slow                                     # Run the benchmarks
 ```
 
-### Compatibility and Special Features
+For brevity, the tutorial is __intended for GCC and Clang compilers on Linux__.
+To control the output or run specific benchmarks, use the following flags:
 
-While primarily designed for GNU C Compiler, this tutorial is also compatible with Clang.
-Note that certain features may not work with LLVM, MSVC, ICC, NVCC, and other compilers.
-It includes practical demonstrations of Parallel STL in GCC, focusing on different `std::execution` policies in the `std::sort` algorithm.
-For advanced parallel algorithm benchmarks, see [ashvardanian/ParallelReductionsBenchmark](https://github.com/ashvardanian/ParallelReductionsBenchmark).
+```sh
+build_release/less_slow --benchmark_format=json             # Output in JSON format
+build_release/less_slow --benchmark_out=results.json        # Save the results to a file, instead of `stdout`
+build_release/less_slow --benchmark_filter=std_sort         # Run only benchmarks containing `std_sort` in their name
+```
 
-There are more articles on benchmarking in the ["Less Slow" blog](https://ashvardanian.com/tags/less-slow/):
-
-- [Optimizing C++ & CUDA for High-Speed Parallel Reductions](https://ashvardanian.com/posts/cuda-parallel-reductions/)
-- [Challenges in Maximizing DDR4 Bandwidth](https://ashvardanian.com/posts/ddr4-bandwidth/)
-- [Comparing GCC Compiler and Manual Assembly Performance](https://ashvardanian.com/posts/gcc-12-vs-avx512fp16/)
-- [Enhancing SciPy Performance with AVX-512 & SVE](https://ashvardanian.com/posts/simsimd-faster-scipy/).
-
-### Advanced Google Benchmark Features
-
-#### Random Interleaving
+> The builds will [Google Benchmark](https://github.com/google/benchmark) and [Intel's oneTBB](https://github.com/uxlfoundation/oneTBB) for the Parallel STL implementation.
 
 To enhance stability and reproducibility, use the `--benchmark_enable_random_interleaving=true` flag which shuffles and interleaves benchmarks as described [here](https://github.com/google/benchmark/blob/main/docs/random_interleaving.md).
 
 ```sh
-./build_release/tutorial --benchmark_enable_random_interleaving=true
+build_release/less_slow --benchmark_enable_random_interleaving=true
 ```
-
-### Benchmark Comparison
-
-Utilize Google Benchmark's [`compare.py` tool](https://github.com/google/benchmark/blob/main/docs/tools.md) for CLI-based comparison of benchmarking results from different JSON files.
-The repository contains screenshots of the comparison of the following benchmarks:
-
-- AMD ThreadRipper PRO 3995WX against Dual AMD EPYC 7302 16-Core CPUs: [screenshot](assets/benchmarks_epyc_vs_pro.png)
-- AMD ThreadRipper PRO 3995WX with `-O3` vs `-O1` optimization levels: [screenshot](assets/benchmarks_o1_vs_o3.png)
-
-### Performance Counters with Google Benchmark
 
 Google Benchmark supports [User-Requested Performance Counters](https://github.com/google/benchmark/blob/main/docs/perf_counters.md) through `libpmf`.
 Note that collecting these may require `sudo` privileges.
 
 ```sh
-sudo ./build_release/tutorial --benchmark_enable_random_interleaving=true --benchmark_format=json --benchmark_perf_counters="CYCLES,INSTRUCTIONS"
+sudo build_release/less_slow --benchmark_enable_random_interleaving=true --benchmark_format=json --benchmark_perf_counters="CYCLES,INSTRUCTIONS"
 ```
 
 Alternatively, use the Linux `perf` tool for performance counter collection:
 
 ```sh
-sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF ./build_release/tutorial --benchmark_enable_random_interleaving=true --benchmark_filter=super_sort
+sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF build_release/less_slow --benchmark_enable_random_interleaving=true --benchmark_filter=super_sort
 ```
 
-Example output on AMD ThreadRipper PRO 3995WX:
+## Further Reading
 
-```sh
- Performance counter stats for 'taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF ./build_release/tutorial --benchmark_enable_random_interleaving=true --benchmark_filter=super_sort':
-
-       23048674.55 msec task-clock                #   35.901 CPUs utilized          
-           6627669      context-switches          #    0.288 K/sec                  
-             75843      cpu-migrations            #    0.003 K/sec                  
-         119085703      page-faults               #    0.005 M/sec                  
-    91429892293048      cycles                    #    3.967 GHz                      (83.33%)
-    13895432483288      stalled-cycles-frontend   #   15.20% frontend cycles idle     (83.33%)
-     3277370121317      stalled-cycles-backend    #    3.58% backend cycles idle      (83.33%)
-    16689799241313      instructions              #    0.18  insn per cycle         
-                                                  #    0.83  stalled cycles per insn  (83.33%)
-     3413731599819      branches                  #  148.110 M/sec                    (83.33%)
-       11861890556      branch-misses             #    0.35% of all branches          (83.34%)
-
-     642.008618457 seconds time elapsed
-
-   21779.611381000 seconds user
-    1244.984080000 seconds sys
-```
+Many of the examples here are condensed versions of the articles on my ["Less Slow" blog](https://ashvardanian.com/tags/less-slow/) and many related repositories on my [GitHub profile](https://github.com/ashvardanian).
