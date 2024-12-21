@@ -1,36 +1,34 @@
 /**
- *  @brief  Low-level microbenchmarks designed for educational purposes.
+ *  @brief  Low-level microbenchmarks for building a performance-first mindset.
  *  @file   less_slow.cpp
  *  @author Ash Vardanian
  *
- *  This project is designed to encourage a @b performance-oriented mindset to
- *  programming and software @b design. That spirit is hard to quantify, unlike
- *  the number of lines of code, the number of the solved problems on IOI or
- *  LeetCode, or the number of years of experience. Still, in my view, it has
- *  a higher impact on our daily work than any of the above.
+ *  There's no Easter bunny, no tooth fairy... and no free abstractions!
+ *  Every abstraction—no matter how elegant—comes with tradeoffs. Sometimes
+ *  the cost is in readability, like extra layers of indirection, and other
+ *  times, it's in performance, with additional instructions or memory overhead.
  *
- *  Knowing the limits of digital computers, and developing intuition for the
- *  various layers of abstraction, from the hardware to the software, is a key
- *  skill for any engineer.
+ *  This project dives into such tradeoffs, helping engineers develop a deeper
+ *  understanding of the costs associated with seemingly simple constructs.
+ *  While the examples are written in C++20 and focus on GCC and Clang,
+ *  targeting x86_64 and ARM64 architectures, the principles are universal.
  *
- *  The code is written in C++17 and C++20, focused on GCC and Clang compilers,
- *  and tested on x86_64 and ARM64 architectures. Those same principles apply
- *  far beyond the C++ language and reflect the more fundamental constraints,
- *  so parts of the project have been reproduced in other languages.
+ *  The benchmarks cover the costs of numerical operations, designing micro-
+ *  kernels, parallelism, computational complexity, branch prediction, compiler
+ *  limitations, and @b composing those with callbacks, coroutines, and ranges
+ *  into more complex systems. Same principles apply to Rust, Python, and Go,
+ *  so parts of the project have been reproduced in those languages.
  *
- *  @see Less Slow in Rust: https://github.com/ashvardanian/less_slow.rs
- *  @see Less Slow in Python: https://github.com/ashvardanian/less_slow.py
+ *  @see C++ Benchmarks: https://github.com/ashvardanian/less_slow.cpp
+ *  @see Rust Benchmarks: https://github.com/ashvardanian/less_slow.rs
+ *  @see Python Benchmarks: https://github.com/ashvardanian/less_slow.py
+ *  @see Go Benchmarks: https://github.com/ashvardanian/less_slow.go
  *
- *  This same file is also available in an inverted form - instead of C++
- *  sources with textual docstrings, there is a Markdown file with embedded
- *  C++ code snippets. Fighters, choose your weapon!
+ *  Most measurements were performed on Intel Sapphire Rapids CPUs, but the
+ *  findings are relevant across hardware platforms unless explicitly noted.
  *
- *  @see Markdown version: https://github.com/ashvardanian/less_slow.cpp/blob/main/README.md
- *  @see C++ version: https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp
- *
- *  Most of the measurements were performed on Intel Sapphire Rapids CPUs,
- *  but unless explicitly stated, the results should be similar on other
- *  hardware platforms.
+ *  Let's benchmark them all and dive into the implementation details that
+ *  make those abstractions @b less_slow!
  */
 #include <benchmark/benchmark.h>
 
@@ -1002,7 +1000,7 @@ BENCHMARK(f32x4x4_matmul_sse41);
  *  @b `zmm` register (512 bits wide). This Instruction Set Extension is available
  *  on Intel Skylake-X, Ice Lake, and AMD Zen4 CPUs, offering powerful functionality.
  *  However, on Zen4, AVX-512 is emulated as two 256-bit operations, so the performance
- *  isn’t as strong as on Intel CPUs. Native support comes with Zen5.
+ *  isn't as strong as on Intel CPUs. Native support comes with Zen5.
  */
 #if defined(__AVX512F__)
 #include <immintrin.h> // `_mm512_loadu_ps`
@@ -1777,8 +1775,8 @@ BENCHMARK(pipeline_virtual_functions);
  *    hard ceiling due to constant memory indirections and hidden costs.
  *
  *  This design is so systemically bad that after reading earlier sections, you
- *  probably don’t need further convincing. We're not writing a grant proposal,
- *  so let’s skip proving that bad ideas are indeed bad — and focus on the good ones.
+ *  probably don't need further convincing. We're not writing a grant proposal,
+ *  so let's skip proving that bad ideas are indeed bad — and focus on the good ones.
  *
  *  Contributions are welcome — but not using `virtual` functions! 😉
  */
