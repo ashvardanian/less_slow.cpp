@@ -27,6 +27,11 @@
  *  Most measurements were performed on Intel Sapphire Rapids CPUs, but the
  *  findings are relevant across hardware platforms unless explicitly noted.
  *
+ *  Worth noting, that some examples may seem over-engineered, but they are
+ *  no less relevant or impractical. They may be hard to recognize at first,
+ *  but they universally appear in larger codebases, as a form of emergent
+ *  complexity.
+ *
  *  Let's benchmark them all and dive into the implementation details that
  *  make those abstractions @b less_slow!
  */

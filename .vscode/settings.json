@@ -1,14 +1,23 @@
 {
   "cSpell.words": [
     "ashvardanian",
+    "bootcamps",
+    "coro",
     "CUDA",
+    "excerise",
+    "grandkids",
     "Maclaurin",
+    "matmul",
     "MSVC",
     "NVCC",
     "popcountll",
     "reorderable",
     "SLEEF",
-    "Vardanian"
+    "Trettner",
+    "unsalvageable",
+    "unscalable",
+    "Vardanian",
+    "StringZilla"
   ],
   "files.associations": {
     "execution": "cpp",
@@ -69,6 +78,10 @@
     "unordered_set": "cpp",
     "numeric": "cpp",
     "fstream": "cpp",
-    "thread": "cpp"
+    "thread": "cpp",
+    "deque": "cpp",
+    "forward_list": "cpp",
+    "list": "cpp",
+    "regex": "cpp"
   }
 }

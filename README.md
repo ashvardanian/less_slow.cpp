@@ -1,46 +1,27 @@
 Much of modern code suffers from common pitfalls: bugs, security vulnerabilities, and __performance bottlenecks__.
 University curricula often teach outdated concepts, while bootcamps oversimplify crucial software development principles.
-This repository provides practical examples of writing efficient C and C++ code.
 
 ![Less Slow C++](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/less_slow.cpp.jpg?raw=true)
 
-Even when an example seems over-engineered, it doesn't make it less relevant or impractical.
-The patterns discussed here often appear implicitly in large-scale software, even if most developers don't consciously recognize them.
+This repository offers practical examples of writing efficient C and C++ code.
+It leverages C++20 features and is designed primarily for GCC and Clang compilers on Linux, though it may work on other platforms.
+The topics range from basic micro-kernels executing in a few nanoseconds to more complex constructs involving parallel algorithms, coroutines, and polymorphism.
+Some of the highlights include:
 
-This is why some developers gravitate toward costly abstractions like multiple inheritance with dynamic polymorphism (e.g., `virtual` functions in C++) or using dynamic memory allocation inside loops.
-They rarely design benchmarks representing real-world projects with 100K+ lines of code.
-They rarely scale workloads across hundreds of cores, as required in modern cloud environments.
-They rarely interface with specialized hardware accelerators that have distinct address spaces.
+- __100x cheaper random inputs?!__ Discover how input generation sometimes costs more than the algorithm.
+- __40x faster trigonometric calculations:__ Achieve significant speed-ups over standard library functions like `std::sin`.
+- __4x faster logic with `std::ranges`:__ See how modern C++ abstractions can be surprisingly efficient when used correctly.
+- __Trade-offs between accuracy and efficiency:__ Explore how to balance precision and performance in numerical computations.
+- __Compiler optimizations beyond `-O3`:__ Learn about less obvious flags and techniques to deliver another 2x speedup.
+- __How many if conditions are too many?__ Test your CPU's branch predictor with just 10 lines of code.
+- __Iterative vs. recursive algorithms:__ Avoid pitfalls that could cause a `SEGFAULT` or slow your program.
+- __How not to build state machines:__ Compare `std::variant`, `virtual` functions, and C++20 coroutines.
 
-But we're not here to be average — we're here to be better.
-We want to know the cost of unaligned memory accesses, branch prediction, CPU cache misses and the latency of different cache levels, the frequency scaling policy levels, the cost of polymorphism and asynchronous programming, and the trade-offs between accuracy and efficiency in numerical computations.
-Let's dig deeper into writing __less slow__, more efficient software.
-
-## Contents
-
-All of material is organized into a single readable `.cpp` source code file with multiple sections.
-
-- Can random input generation be 100x more expensive than the algorithm itself?
-- Is it better to use a recursive or iterative algorithm?
-- How expensive is STL math and how to avoid it?
-- After `-O3`, which compilation flags can give you another 2x speedup?
-- How and where to write SIMD assembly and where the compiler does it better?
-- What's the cost of mis-aligned memory accesses and how to avoid them?
-- How expensive are coroutines and asynchronous programming?
-- How do the compare to ranges, callbacks, and lambdas?
-- What extra features do modern benchmarking tools provide?
-
-Highlights include:
-
-- 4x faster logic with `std::ranges`, compared to `std::function`.
-- 40x faster computing of $sine$ compared to `std::sin`.
-- 100x cheaper random inputs?!
-
-To continue reading, jump to `less_slow.cpp` and start reading the code and comments.
+To read, jump to the `less_slow.cpp` source file and read the code snippets and comments.
 
 ## Reproducing the Benchmarks
 
-If you are familiar with C++ and want to go through code and measurements as you read, you can clone the repository and execute the following commands.
+If you are familiar with C++ and want to review code and measurements as you read, you can clone the repository and execute the following commands.
 
 ```sh
 git clone https://github.com/ashvardanian/LessSlow.cpp.git  # Clone the repository
@@ -50,7 +31,7 @@ cmake --build build_release --config Release                # Build the project
 build_release/less_slow                                     # Run the benchmarks
 ```
 
-For brevity, the tutorial is intended for GCC and Clang compilers on Linux, but should be compatible with MacOS and Windows.
+For brevity, the tutorial is __intended for GCC and Clang compilers on Linux__.
 To control the output or run specific benchmarks, use the following flags:
 
 ```sh
@@ -82,12 +63,4 @@ sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF build_release/less_slo
 
 ## Further Reading
 
-Many of the examples here are condensed versions of the articles on the ["Less Slow" blog](https://ashvardanian.com/tags/less-slow/).
-For advanced parallel algorithm benchmarks, see [ashvardanian/ParallelReductionsBenchmark](https://github.com/ashvardanian/ParallelReductionsBenchmark).
-For SIMD algorithms, check the production code at [ashvardanian/SimSIMD](https://github.com/ashvardanian/SimSIMD) and [ashvardanian/StringZilla](https://github.com/asvardanian/StringZilla), or individual articles:
-
-- [Optimizing C++ & CUDA for High-Speed Parallel Reductions](https://ashvardanian.com/posts/cuda-parallel-reductions/)
-- [Challenges in Maximizing DDR4 Bandwidth](https://ashvardanian.com/posts/ddr4-bandwidth/)
-- [Comparing GCC Compiler and Manual Assembly Performance](https://ashvardanian.com/posts/gcc-12-vs-avx512fp16/)
-- [Enhancing SciPy Performance with AVX-512 & SVE](https://ashvardanian.com/posts/simsimd-faster-scipy/).
-
+Many of the examples here are condensed versions of the articles on my ["Less Slow" blog](https://ashvardanian.com/tags/less-slow/) and many related repositories on my [GitHub profile](https://github.com/ashvardanian).
