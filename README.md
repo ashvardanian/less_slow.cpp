@@ -1,3 +1,5 @@
+# _Less Slow_ C++
+
 Much of modern code suffers from common pitfalls: bugs, security vulnerabilities, and __performance bottlenecks__.
 University curricula often teach outdated concepts, while bootcamps oversimplify crucial software development principles.
 
@@ -13,6 +15,7 @@ Some of the highlights include:
 - __4x faster logic with `std::ranges`:__ See how modern C++ abstractions can be surprisingly efficient when used correctly.
 - __Trade-offs between accuracy and efficiency:__ Explore how to balance precision and performance in numerical computations.
 - __Compiler optimizations beyond `-O3`:__ Learn about less obvious flags and techniques to deliver another 2x speedup.
+- __Optimizing matrix multiplications?__ Learn how a 3x3x3 GEMM can be 60% slower than 4x4x4, despite performing 60% fewer math operations.
 - __How many if conditions are too many?__ Test your CPU's branch predictor with just 10 lines of code.
 - __Iterative vs. recursive algorithms:__ Avoid pitfalls that could cause a `SEGFAULT` or slow your program.
 - __How not to build state machines:__ Compare `std::variant`, `virtual` functions, and C++20 coroutines.
@@ -24,8 +27,8 @@ To read, jump to the `less_slow.cpp` source file and read the code snippets and 
 If you are familiar with C++ and want to review code and measurements as you read, you can clone the repository and execute the following commands.
 
 ```sh
-git clone https://github.com/ashvardanian/LessSlow.cpp.git  # Clone the repository
-cd LessSlow.cpp                                             # Change the directory
+git clone https://github.com/ashvardanian/less_slow.cpp.git # Clone the repository
+cd less_slow.cpp                                            # Change the directory
 cmake -B build_release -D CMAKE_BUILD_TYPE=Release          # Generate the build files
 cmake --build build_release --config Release                # Build the project
 build_release/less_slow                                     # Run the benchmarks
@@ -64,3 +67,4 @@ sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF build_release/less_slo
 ## Further Reading
 
 Many of the examples here are condensed versions of the articles on my ["Less Slow" blog](https://ashvardanian.com/tags/less-slow/) and many related repositories on my [GitHub profile](https://github.com/ashvardanian).
+If you are also practicing Rust, you may find the ["Less Slow Rust"](https://github.com/ashvardanian/less_slow.rs) repository interesting.
