@@ -1330,7 +1330,7 @@ inline bool is_power_of_two(std::uint64_t x) noexcept {
  */
 [[gnu::always_inline]]
 inline bool is_power_of_three(std::uint64_t x) noexcept {
-    constexpr std::uint64_t max_power_of_three = 4052555151518976267;
+    constexpr std::uint64_t max_power_of_three = 12157665459056928801ull;
     return x > 0 && max_power_of_three % x == 0;
 }
 
@@ -1657,10 +1657,10 @@ BENCHMARK(pipeline_cpp20_ranges);
 /**
  *  The results for the input range [3, 49] are as follows:
  *
- *      - pipeline_cpp11_lambdas:      @b 314ns
- *      - pipeline_cpp11_stl:          @b 805ns
- *      - pipeline_cpp20_coroutines:   @b 683ns
- *      - pipeline_cpp20_ranges:       @b 219ns
+ *      - pipeline_cpp11_lambdas:      @b 295ns
+ *      - pipeline_cpp11_stl:          @b 765ns
+ *      - pipeline_cpp20_coroutines:   @b 712ns
+ *      - pipeline_cpp20_ranges:       @b 216ns
  *
  *  Why is STL slower than C++11 lambdas? STL's `std::function` allocates memory!
  *  Why are coroutines slower than lambdas? Coroutines allocate state and have
