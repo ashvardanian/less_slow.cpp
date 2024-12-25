@@ -188,6 +188,8 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(8);
  *
  *  @see GlibC implementation:
  *  https://code.woboq.org/userspace/glibc/stdlib/random.c.html#291
+ *  @see Faster random integer generation with batching by Daniel Lemire:
+ *  https://lemire.me/blog/2024/08/17/faster-random-integer-generation-with-batching/
  */
 
 #pragma endregion // How to Benchmark and Randomness
@@ -518,6 +520,67 @@ BENCHMARK(branch_cost)->RangeMultiplier(4)->Range(256, 32 * 1024);
 
 #pragma endregion // Branch Prediction
 
+#pragma region Cache Misses
+
+/**
+ *  Over the decades, CPU speeds have outpaced memory speeds, creating a gap
+ *  mitigated by multi-level caching (L1/L2/L3). Cache misses occur when the
+ *  CPU fetches data from RAM instead of the cache, incurring high latency.
+ *
+ *  Access patterns play a crucial role:
+ *      - @b Sequential: Predictable and optimal for the CPU prefetcher.
+ *      - @b Random: Unpredictable, leading to frequent cache misses.
+ *
+ *  Benchmarks demonstrate this gap—sequential access can outperform random access
+ *  by 10x or more for data sizes exceeding cache capacity. However, the difference
+ *  narrows for smaller datasets, benefiting from spatial and temporal locality.
+ */
+
+#include <random> // `std::random_device`, `std::mt19937`
+
+enum class access_order { sequential, random };
+
+template <access_order access_order_>
+static void cache_misses_cost(bm::State &state) {
+    auto count = static_cast<std::uint32_t>(state.range(0));
+
+    // Populate with arbitrary data
+    std::vector<std::int32_t> data(count);
+    std::iota(data.begin(), data.end(), 0);
+
+    // Initialize different access orders
+    std::vector<std::uint32_t> indices(count);
+    if constexpr (access_order_ == access_order::random) {
+        std::random_device random_device;
+        std::mt19937 generator(random_device());
+        std::uniform_int_distribution<std::uint32_t> uniform_distribution(0, count - 1);
+        std::generate_n(indices.begin(), indices.size(), [&] { return uniform_distribution(generator); });
+    }
+    else { std::iota(indices.begin(), indices.end(), 0u); }
+
+    // The actual benchmark:
+    for (auto _ : state) {
+        std::int64_t sum = 0;
+        for (auto index : indices) bm::DoNotOptimize(sum += data[index]);
+    }
+}
+
+BENCHMARK(cache_misses_cost<access_order::sequential>)
+    ->MinTime(2)
+    ->RangeMultiplier(8)
+    ->Range(8u * 1024u, 128u * 1024u * 1024u);
+BENCHMARK(cache_misses_cost<access_order::random>)
+    ->MinTime(2)
+    ->RangeMultiplier(8)
+    ->Range(8u * 1024u, 128u * 1024u * 1024u);
+
+/**
+ *  For small arrays, the execution speed will be identical.
+ *  For larger ones, the latency can differ @b 15x!
+ */
+
+#pragma endregion // Cache Misses
+
 #pragma endregion // - Basics
 
 #pragma region - Numerics
@@ -777,10 +840,10 @@ BENCHMARK(bits_population_count_core_i7);
  *  featured linear complexity in both space and time. Broadly, the following
  *  distinctions are useful:
  *
- *  - Sublinear (e.g., O(log N)): Often found in search workloads, typically IO-bound.
- *  - Linear and sub-quadratic (e.g., O(N) to O(N*logN)): Most conventional "coding" tasks.
- *  - Low polynomial (e.g., O(N^1.5) to O(N^4)): Common in matrix operations and graph algorithms.
- *  - High polynomial and exponential (e.g., O(N^5) and beyond): Rarely practical to solve.
+ *  - Sublinear (e.g., @b O(logN) ): Often found in search workloads, typically IO-bound.
+ *  - Linear and sub-quadratic (e.g., @b O(N) to @b O(N*logN) ): Most conventional "coding" tasks.
+ *  - Low polynomial (e.g., @b O(N^1.5) to @b O(N^4) ): Common in matrix operations and graph algorithms.
+ *  - High polynomial and exponential (e.g., O(N^5) and @b beyond): Rarely practical to solve.
  *
  *  Among low-polynomial tasks, matrix operations stand out as particularly important.
  *  Matrix multiplication forms the foundation of linear algebra and is critical in
@@ -802,6 +865,8 @@ f32x4x4_t f32x4x4_matmul_kernel(f32x4x4_t const &a, f32x4x4_t const &b) noexcept
     f32x4x4_t c {};
     // This code gets auto-vectorized regardless of the loop order,
     // be it "ijk", "ikj", "jik", "jki", "kij", or "kji".
+    // That's not necessarily the case for other matrix sizes:
+    // https://lemire.me/blog/2024/06/13/rolling-your-own-fast-matrix-multiplication-loop-order-and-vectorization/
     for (std::size_t i = 0; i != 4; ++i)
         for (std::size_t j = 0; j != 4; ++j)
             for (std::size_t k = 0; k != 4; ++k) c.scalars[i][j] += a.scalars[i][k] * b.scalars[k][j];
@@ -1330,7 +1395,7 @@ inline bool is_power_of_two(std::uint64_t x) noexcept {
  */
 [[gnu::always_inline]]
 inline bool is_power_of_three(std::uint64_t x) noexcept {
-    constexpr std::uint64_t max_power_of_three = 4052555151518976267;
+    constexpr std::uint64_t max_power_of_three = 12157665459056928801ull;
     return x > 0 && max_power_of_three % x == 0;
 }
 
@@ -1426,6 +1491,9 @@ BENCHMARK(pipeline_cpp11_stl);
 /**
  *  C++20 introduces @b coroutines in the language, but not in the library,
  *  so we need to provide a minimal implementation of a "generator" class.
+ *
+ *  @see "Asymmetric Transfer" blogposts on coroutines by Lewis Baker:
+ *       https://lewissbaker.github.io/
  */
 #include <coroutine> // `std::coroutine_handle`
 
@@ -1657,10 +1725,10 @@ BENCHMARK(pipeline_cpp20_ranges);
 /**
  *  The results for the input range [3, 49] are as follows:
  *
- *      - pipeline_cpp11_lambdas:      @b 314ns
- *      - pipeline_cpp11_stl:          @b 805ns
- *      - pipeline_cpp20_coroutines:   @b 683ns
- *      - pipeline_cpp20_ranges:       @b 219ns
+ *      - pipeline_cpp11_lambdas:      @b 295ns
+ *      - pipeline_cpp11_stl:          @b 765ns
+ *      - pipeline_cpp20_coroutines:   @b 712ns
+ *      - pipeline_cpp20_ranges:       @b 216ns
  *
  *  Why is STL slower than C++11 lambdas? STL's `std::function` allocates memory!
  *  Why are coroutines slower than lambdas? Coroutines allocate state and have
@@ -1683,9 +1751,22 @@ BENCHMARK(pipeline_cpp20_ranges);
  *  ... then you are probably looking at a lambda. Ranges, on the other hand, are
  *  lazy and don't need to capture anything. On the practical side, when implementing
  *  ranges, make sure to avoid branching even more than with regular code.
+ *
+ *  @see Standard Ranges by Eric Niebler: https://ericniebler.com/2018/12/05/standard-ranges/
+ *  @see Should we stop writing functions? by Jonathan Müller
+ *       https://www.think-cell.com/en/career/devblog/should-we-stop-writing-functions
+ *  @see Lambdas, Nested Functions, and Blocks, oh my! by JeanHeyd Meneide:
+ *       https://thephd.dev/lambdas-nested-functions-block-expressions-oh-my
  */
 
 #pragma endregion // Ranges and Iterators
+
+#pragma region Variants, Tuples, and State Machines
+
+#include <tuple>   // `std::tuple`
+#include <variant> // `std::variant`
+
+#pragma endregion // Variants, Tuples, and State Machines
 
 /**
  *  Now that we've explored how to write modern, performant C++ code,
@@ -1766,6 +1847,10 @@ static void pipeline_virtual_functions(bm::State &state) {
 BENCHMARK(pipeline_virtual_functions);
 
 /**
+ *  Performance-wise, on this specific micro-example, the virtual functions
+ *  are somewhere in the middle between C++20 ranges and C++11 STL solution.
+ *
+ *
  *  This code is a hazard for multiple reasons:
  *
  *  - @b Spaghetti_Code_Guaranteed: As the code evolves, additional abstraction
@@ -1797,6 +1882,452 @@ BENCHMARK(pipeline_virtual_functions);
 #pragma endregion // Virtual Functions and Polymorphism
 
 #pragma endregion // - Abstractions
+
+#pragma region - Structures, Tuples, ADTs, AOS, SOA
+
+#pragma region Continuous Memory
+
+/**
+ *  It's a blessing if one can just use lazy processing, but realistically,
+ *  every program needs memory and it's layout and used structures matter.
+ *
+ *  Algebraic Data Types (ADTs) are one of the most sought-after features in
+ *  modern programming languages. They allow you to define complex data types
+ *  by combining simpler ones.
+ *
+ *  In C, the only way to achieve that is by combining `stuct` and `union` types.
+ *  In C++, the Standard Library provides `std::variant`, `std::tuple`, `std::pair`,
+ *  `std::optional`, and many other types that can be used to create ADTs.
+ *
+ *  Common sense suggests that there should be no performance degradation from
+ *  using the library types. Well, how hard can it be to implement a `std::pair`?
+ *  StackOverflow has 5 answers to a similar question - all 5 are wrong.
+ *
+ *  @see StackOverflow discussion:
+ *  https://stackoverflow.com/questions/3607352/struct-with-2-cells-vs-stdpair
+ *
+ *  Let's compare the performance of `std::pair` with a custom `pair_t` structure,
+ *  made of the same two elements, also named boringly - `first` and `second`.
+ */
+#include <tuple> // `std::tuple`
+
+static void packaging_custom_pairs(bm::State &state) {
+    struct pair_t {
+        int first;
+        float second;
+    };
+    std::vector<pair_t> a, b;
+    a.resize(1'000'000);
+    for (auto _ : state) bm::DoNotOptimize(b = a);
+}
+
+BENCHMARK(packaging_custom_pairs)->MinTime(2);
+
+static void packaging_stl_pair(bm::State &state) {
+    std::vector<std::pair<int, float>> a, b;
+    a.resize(1'000'000);
+    for (auto _ : state) bm::DoNotOptimize(b = a);
+}
+
+BENCHMARK(packaging_stl_pair)->MinTime(2);
+
+static void packaging_stl_tuple(bm::State &state) {
+    std::vector<std::tuple<int, float>> a, b;
+    a.resize(1'000'000);
+    for (auto _ : state) bm::DoNotOptimize(b = a);
+}
+
+BENCHMARK(packaging_stl_tuple)->MinTime(2);
+
+/**
+ *  Over @b 600 microseconds for STL variants vs @b 488 microseconds for the baseline.
+ *  The naive variant, avoiding STL, is faster by @b 20%.
+ *
+ *  Why? With the `std::pair` in its way `std::vector` can't realize that the actual
+ *  contents are trivially copyable and can be moved around without any overhead.
+ *
+ *  @see Reddit discussion: https://www.reddit.com/r/cpp/comments/ar4ghs/stdpair_disappointing_performance/
+ */
+static_assert(!std::is_trivially_copyable_v<std::pair<int, float>>);
+static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
+
+#pragma endregion // Continuous Memory
+
+#pragma region Trees and Graphs
+
+#pragma endregion // Trees and Graphs
+
+#pragma endregion // - Structures, Tuples, ADTs, AOS, SOA
+
+#pragma region - Exceptions, Backups, Logging
+
+#pragma region Errors
+
+/**
+ *  In the real world, control-flow gets messy, as different methods will
+ *  break in different places. Let's imagine a system, that:
+ *
+ *  - Reads an integer from a text file.
+ *  - Increments it.
+ *  - Saves it back to the text file.
+ *
+ *  As soon as we start dealing with "external devices", as opposed to the CPU itself,
+ *  failures become regular. The file may not exist, the integer may not be a number,
+ *  the file may be read-only, the disk may be full, the file may be locked, etc.
+ */
+#include <charconv>  // `std::from_chars`, `std::to_chars`
+#include <stdexcept> // `std::runtime_error`, `std::out_of_range`
+
+constexpr std::size_t fail_period_read_integer = 6;
+constexpr std::size_t fail_period_convert_to_integer = 11;
+constexpr std::size_t fail_period_next_string = 17;
+constexpr std::size_t fail_period_write_back = 23;
+
+static std::string read_integer_from_file_or_throw( //
+    [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept(false) {
+    if (iteration_index % fail_period_read_integer == 0) throw std::runtime_error("File read failed");
+    if (iteration_index % fail_period_convert_to_integer == 0) return "abc";
+    // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
+    // but given the Small String Optimization, it shouldn't happen in practice.
+    return "1";
+}
+
+static std::size_t string_to_integer_or_throw( //
+    std::string const &value, [[maybe_unused]] std::size_t iteration_index) noexcept(false) {
+    // The `std::stoull` function may throw:
+    // - `std::invalid_argument` if no conversion could be performed.
+    // - `std::out_of_range` if the converted value would fall out of the range of the
+    //   result type or if the underlying function sets `errno` to `ERANGE`.
+    // The cleaner modern way to implement this is using `std::from_chars` in C++17.
+    std::size_t integral_value = 0;
+    std::from_chars_result result = std::from_chars(value.data(), value.data() + value.size(), integral_value);
+    if (result.ec != std::errc()) throw std::out_of_range("Conversion failed");
+    return integral_value;
+}
+
+static std::string integer_to_next_string_or_throw(std::size_t value, std::size_t iteration_index) noexcept(false) {
+    if (iteration_index % fail_period_next_string == 0) throw std::runtime_error("Increment failed");
+    value++;
+    constexpr std::size_t buffer_size = 10;
+    char buffer[buffer_size] {};
+    std::to_chars_result result = std::to_chars(buffer, buffer + buffer_size, value);
+    if (result.ec != std::errc()) throw std::out_of_range("Conversion failed");
+    return std::string(buffer, result.ptr - buffer);
+}
+
+static void write_to_file_or_throw( //
+    [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
+    std::size_t iteration_index) noexcept(false) {
+    if (iteration_index % fail_period_write_back == 0) throw std::runtime_error("File write failed");
+}
+
+static void errors_throw(bm::State &state) {
+    std::string const filename = "test.txt";
+    std::size_t iteration_index = 0;
+    for (auto _ : state) {
+        iteration_index++;
+        try {
+            std::string read_value = read_integer_from_file_or_throw(filename, iteration_index);
+            std::size_t integer_value = string_to_integer_or_throw(read_value, iteration_index);
+            std::string next_value = integer_to_next_string_or_throw(integer_value, iteration_index);
+            write_to_file_or_throw(filename, next_value, iteration_index);
+        }
+        catch (std::exception const &) {
+        }
+    }
+}
+
+BENCHMARK(errors_throw)->MinTime(2);
+BENCHMARK(errors_throw)->MinTime(2)->Threads(8);
+
+/**
+ *  Until C++23, we don't have a `std::expected` implementation,
+ *  but it's easy to design one using `std::variant` and `std::error_code`.
+ */
+#include <system_error> // `std::error_code`
+#include <variant>      // `std::variant`
+
+using std::operator""s;
+
+template <typename value_type_>
+class expected {
+    std::variant<value_type_, std::error_code> value_;
+
+  public:
+    expected(value_type_ const &value) noexcept : value_(value) {}
+    expected(std::error_code const &error) noexcept : value_(error) {}
+
+    explicit operator bool() const noexcept { return std::holds_alternative<value_type_>(value_); }
+    value_type_ const &value() const noexcept { return std::get<value_type_>(value_); }
+    std::error_code const &error() const noexcept { return std::get<std::error_code>(value_); }
+    template <typename function_type_>
+    auto and_then(function_type_ &&f) const noexcept {
+        if (std::holds_alternative<value_type_>(value_)) return f(std::get<value_type_>(value_));
+        return *this;
+    }
+};
+
+static expected<std::string> read_integer_from_file_or_variants( //
+    [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_read_integer == 0) return std::error_code {EIO, std::generic_category()};
+    if (iteration_index % fail_period_convert_to_integer == 0) return "abc"s;
+    // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
+    // but given the Small String Optimization, it shouldn't happen in practice.
+    return "1"s;
+}
+
+static expected<std::size_t> string_to_integer_or_variants( //
+    std::string const &value, [[maybe_unused]] std::size_t iteration_index) noexcept {
+    std::size_t integral_value = 0;
+    std::from_chars_result result = std::from_chars(value.data(), value.data() + value.size(), integral_value);
+    if (result.ec != std::errc()) return std::make_error_code(result.ec);
+    return integral_value;
+}
+
+static expected<std::string> integer_to_next_string_or_variants(std::size_t value,
+                                                                std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_next_string == 0) return std::error_code {EIO, std::generic_category()};
+    value++;
+    constexpr std::size_t buffer_size = 10;
+    char buffer[buffer_size] {};
+    std::to_chars_result result = std::to_chars(buffer, buffer + buffer_size, value);
+    if (result.ec != std::errc()) return std::make_error_code(result.ec);
+    return std::string(buffer, result.ptr - buffer);
+}
+
+static std::error_code write_to_file_or_variants( //
+    [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
+    std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_write_back == 0) return std::error_code {EIO, std::generic_category()};
+    return std::error_code {};
+}
+
+static void errors_variants(bm::State &state) {
+    std::string const filename = "test.txt";
+    std::size_t iteration_index = 0;
+    for (auto _ : state) {
+        iteration_index++;
+        auto read_result = read_integer_from_file_or_variants(filename, iteration_index);
+        if (!read_result) continue;
+        auto integer_result = string_to_integer_or_variants(read_result.value(), iteration_index);
+        if (!integer_result) continue;
+        auto next_result = integer_to_next_string_or_variants(integer_result.value(), iteration_index);
+        if (!next_result) continue;
+        auto write_error = write_to_file_or_variants(filename, next_result.value(), iteration_index);
+        bm::DoNotOptimize(write_error);
+    }
+}
+
+BENCHMARK(errors_variants)->MinTime(2);
+BENCHMARK(errors_variants)->MinTime(2)->Threads(8);
+
+/**
+ *  As practice shows, STL is almost never the performance-oriented choice!
+ *  It's often good enough to get started, but every major player reimplements
+ *  STL-like primitives for its own needs. In some cases, no primitives are
+ *  needed at all, as the language itself provides the necessary tools.
+ *
+ *  Instead of using the heavy `std::variant`, that will contain an integer
+ *  to distinguish between the value and the error, plus the heavy error object
+ *  itself, we can use a simple `struct` with a status code.
+ */
+enum class status : unsigned int {
+    success,
+    read_failed,
+    convert_failed,
+    increment_failed,
+    write_failed,
+};
+
+template <typename value_type_>
+struct result {
+    value_type_ value;
+    status status_code;
+};
+
+static result<std::string> read_integer_from_file_with_status( //
+    [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_read_integer == 0) return {{}, status::read_failed};
+    if (iteration_index % fail_period_convert_to_integer == 0) return {"abc"s, status::success};
+    // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
+    // but given the Small String Optimization, it shouldn't happen in practice.
+    return {"1"s, status::success};
+}
+
+static result<std::size_t> string_to_integer_with_status( //
+    std::string const &value, [[maybe_unused]] std::size_t iteration_index) noexcept {
+    std::size_t integral_value = 0;
+    std::from_chars_result result = std::from_chars(value.data(), value.data() + value.size(), integral_value);
+    if (result.ec != std::errc()) return {0, status::convert_failed};
+    return {integral_value, status::success};
+}
+
+static result<std::string> integer_to_next_string_with_status(std::size_t value, std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_next_string == 0) return {{}, status::increment_failed};
+    value++;
+    constexpr std::size_t buffer_size = 10;
+    char buffer[buffer_size] {};
+    std::to_chars_result result = std::to_chars(buffer, buffer + buffer_size, value);
+    if (result.ec != std::errc()) return {{}, status::increment_failed};
+    return {std::string(buffer, result.ptr - buffer), status::success};
+}
+
+static status write_to_file_with_status( //
+    [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
+    std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_write_back == 0) return status::write_failed;
+    return status::success;
+}
+
+static void errors_with_status(bm::State &state) {
+    std::string const filename = "test.txt";
+    std::size_t iteration_index = 0;
+    for (auto _ : state) {
+        iteration_index++;
+        auto [read_result, read_status] = read_integer_from_file_with_status(filename, iteration_index);
+        if (read_status != status::success) continue; // In large programs, consider adding `[[unlikely]]`
+        auto [integer_result, integer_status] = string_to_integer_with_status(read_result, iteration_index);
+        if (integer_status != status::success) continue; // In large programs, consider adding `[[unlikely]]`
+        auto [next_result, next_status] = integer_to_next_string_with_status(integer_result, iteration_index);
+        if (next_status != status::success) continue; // In large programs, consider adding `[[unlikely]]`
+        auto write_status = write_to_file_with_status(filename, next_result, iteration_index);
+        bm::DoNotOptimize(write_status);
+    }
+}
+
+BENCHMARK(errors_with_status)->MinTime(2);
+BENCHMARK(errors_with_status)->MinTime(2)->Threads(8);
+
+#pragma endregion // Errors
+
+#pragma region Logs
+
+/**
+ *  - Throwing an exception: @b 268 ns single-threaded, @b 815 ns multi-threaded.
+ *  - Returning an error code: @b 7 ns single-threaded, @b 24 ns multi-threaded.
+ *
+ *  Similarly, logging can be done in different ways. Nice logs may look like this:
+ *
+ *      [time] | [filename]:[source-line] <[code]> "[message]"
+ *
+ *  The time should be in a ISO 8601 format, and a line for `EPERM` may look like this:
+ *
+ *      YYYY-MM-DDTHH:MM:SS.mmm | less_slow.cpp:2053 <1> "Operation not permitted"
+ *
+ *  C++ has one of the best standard libraries for time - `std::chrono`, and one of
+ *  the most powerful formatting libraries - `std::format`, derived from `fmt::`.
+ *  Both are more capable than most users realize!
+ */
+#include <chrono>          // `std::chrono`
+#include <source_location> // `std::source_location`
+#include <string_view>     // `std::string_view`
+
+using std::string_view_literals::operator""sv;
+
+static void log_with_printf(               //
+    char *buffer, std::size_t buffer_size, //
+    std::source_location const &location, int code, std::string_view message) noexcept {
+
+    auto now = std::chrono::high_resolution_clock::now();
+    auto time_since_epoch = now.time_since_epoch();
+
+    // Extract seconds and milliseconds
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
+
+    // Format as ISO 8601: YYYY-MM-DDTHH:MM:SS.mmm
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    auto tm = std::gmtime(&time_t_now); // UTC only, no local timezone dependency
+
+    std::snprintf( //
+        buffer, buffer_size,
+        "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ | "                                     // time format
+        "%s:%d <%03d> "                                                              // location and code format
+        "\"%.*s\"\n",                                                                // message format
+        tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,                             // date
+        tm->tm_hour, tm->tm_min, tm->tm_sec, static_cast<int>(milliseconds.count()), // time
+        location.file_name(), location.line(), code,                                 // location and code
+        static_cast<int>(message.size()), message.data()                             // message of known length
+    );
+}
+
+static void log_printf(bm::State &state) {
+    struct {
+        int code;
+        std::string_view message;
+    } errors[3] = {
+        {1, "Operation not permitted"sv},
+        {12, "Cannot allocate memory"sv},
+        {113, "No route to host"sv},
+    };
+    char buffer[1024];
+    std::size_t iteration_index = 0;
+    for (auto _ : state) {
+        log_with_printf(                     //
+            buffer, sizeof(buffer),          //
+            std::source_location::current(), //
+            errors[iteration_index % 3].code, errors[iteration_index % 3].message);
+        iteration_index++;
+    }
+}
+
+#include <format> // `std::format_to_n`
+
+static void log_with_fmt(                  //
+    char *buffer, std::size_t buffer_size, //
+    std::source_location const &location, int code, std::string_view message) noexcept {
+
+    auto now = std::chrono::high_resolution_clock::now();
+    auto time_since_epoch = now.time_since_epoch();
+
+    // Extract seconds and milliseconds
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
+
+    // ISO 8601 defines the format as: YYYY-MM-DDTHH:MM:SS.mmm
+    // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
+    // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
+    // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
+    std::format_to_n( //
+        buffer, buffer_size,
+        "{:%FT%R}:{:0>2}.{:0>3}Z | "                     // time format
+        "{}:{} <{:0>3}> "                                // location and code format
+        "\"{}\"\n",                                      // message format
+        now, static_cast<unsigned int>(seconds.count()), // date and time
+        static_cast<unsigned int>(milliseconds.count()), // milliseconds
+        location.file_name(), location.line(), code,     // location and code
+        message                                          // message of known length
+    );
+}
+
+static void log_fmt(bm::State &state) {
+    struct {
+        int code;
+        std::string_view message;
+    } errors[3] = {
+        {1, "Operation not permitted"sv},
+        {12, "Cannot allocate memory"sv},
+        {113, "No route to host"sv},
+    };
+    char buffer[1024];
+    std::size_t iteration_index = 0;
+    for (auto _ : state) {
+        log_with_fmt(                        //
+            buffer, sizeof(buffer),          //
+            std::source_location::current(), //
+            errors[iteration_index % 3].code, errors[iteration_index % 3].message);
+        iteration_index++;
+    }
+}
+
+BENCHMARK(log_printf)->MinTime(2);
+BENCHMARK(log_fmt)->MinTime(2);
+BENCHMARK(log_printf)->MinTime(2)->Threads(8);
+BENCHMARK(log_fmt)->MinTime(2)->Threads(8);
+
+#pragma endregion // Logs
+
+#pragma endregion // - Exceptions, Backups, Logging
 
 /**
  *  The default variant is to invoke the `BENCHMARK_MAIN()` macro.

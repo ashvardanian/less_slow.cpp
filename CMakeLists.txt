@@ -25,17 +25,21 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-stringop-overflow") # Compiling TBB
 
 # Inherit the release flags from the default ones
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS}")
+
 # Make it fast by default :)
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
+
 # Less warnings
 set(CMAKE_CXX_FLAGS_RELEASE
     "${CMAKE_CXX_FLAGS_RELEASE} -Wno-unused-but-set-variable")
+
 # Stable results between recompilations
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -falign-functions=32")
 
 # Inherit the debug flags from the default ones
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g")
+
 # Add sanitizers
 set(CMAKE_CXX_FLAGS_DEBUG
     "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address,undefined")
@@ -51,23 +55,46 @@ FetchContent_Declare(
   GIT_TAG v1.15.2)
 FetchContent_MakeAvailable(googletest)
 
-# Fetch GBenchmark and suppress internal tests.
-# https://github.com/google/benchmark/blob/main/docs/user_guide.md#using-register-benchmark
-FetchContent_Declare(
-  googlebenchmark
-  GIT_REPOSITORY https://github.com/google/benchmark.git
-  GIT_TAG v1.9.1)
+# Suppress building tests of Google Benchmark to accelerate builds.
 set(BENCHMARK_ENABLE_TESTING
     OFF
     CACHE BOOL "" FORCE)
-
+set(BENCHMARK_ENABLE_INSTALL
+    OFF
+    CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_DOXYGEN
+    OFF
+    CACHE BOOL "" FORCE)
+set(BENCHMARK_INSTALL_DOCS
+    OFF
+    CACHE BOOL "" FORCE)
+set(BENCHMARK_DOWNLOAD_DEPENDENCIES
+    ON
+    CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_GTEST_TESTS
+    OFF
+    CACHE BOOL "" FORCE)
+set(BENCHMARK_USE_BUNDLED_GTEST
+    ON
+    CACHE BOOL "" FORCE)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(BENCHMARK_ENABLE_LIBPFM
       OFF
       CACHE BOOL "" FORCE)
 endif()
 
+# Fetch GBenchmark and suppress internal tests.
+# https://github.com/google/benchmark/blob/main/docs/user_guide.md#using-register-benchmark
+FetchContent_Declare(
+  googlebenchmark
+  GIT_REPOSITORY https://github.com/google/benchmark.git
+  GIT_TAG v1.9.1)
 FetchContent_MakeAvailable(googlebenchmark)
+
+# Remove the Google Benchmark's "built in debug warning".
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  target_compile_definitions(benchmark PRIVATE NDEBUG)
+endif()
 
 # We need TBB for Parallel CPU Algorithms in GCC.
 # https://github.com/oneapi-src/oneTBB/blob/onetbb_2021/cmake/README.md
