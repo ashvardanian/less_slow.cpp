@@ -1,36 +1,37 @@
-Much of modern code suffers from common pitfalls: bugs, security vulnerabilities, and performance bottlenecks.
+Much of modern code suffers from common pitfalls: bugs, security vulnerabilities, and __performance bottlenecks__.
 University curricula often teach outdated concepts, while bootcamps oversimplify crucial software development principles.
-This repository provides practical examples of writing efficient C and C++ code.
 
-![Less Slow C++](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/LessSlow.cpp.jpg?raw=true)
+![Less Slow C++](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/less_slow.cpp.jpg?raw=true)
 
-Even when an example seems over-engineered, it doesn’t make it less relevant or impractical.
-The patterns discussed here often appear implicitly in large-scale software, even if most developers don’t consciously recognize them.
+This repository offers practical examples of writing efficient C and C++ code.
+It leverages C++20 features and is designed primarily for GCC and Clang compilers on Linux, though it may work on other platforms.
+The topics range from basic micro-kernels executing in a few nanoseconds to more complex constructs involving parallel algorithms, coroutines, and polymorphism.
+Some of the highlights include:
 
-This is why some developers gravitate toward costly abstractions like multiple inheritance with dynamic polymorphism (e.g., `virtual` functions in C++) or using dynamic memory allocation inside loops.
-They rarely design benchmarks representing real-world projects with 100K+ lines of code.
-They rarely scale workloads across hundreds of cores, as required in modern cloud environments.
-They rarely interface with specialized hardware accelerators that have distinct address spaces.
+- __100x cheaper random inputs?!__ Discover how input generation sometimes costs more than the algorithm.
+- __40x faster trigonometric calculations:__ Achieve significant speed-ups over standard library functions like `std::sin`.
+- __4x faster logic with `std::ranges`:__ See how modern C++ abstractions can be surprisingly efficient when used correctly.
+- __Trade-offs between accuracy and efficiency:__ Explore how to balance precision and performance in numerical computations.
+- __Compiler optimizations beyond `-O3`:__ Learn about less obvious flags and techniques to deliver another 2x speedup.
+- __How many if conditions are too many?__ Test your CPU's branch predictor with just 10 lines of code.
+- __Iterative vs. recursive algorithms:__ Avoid pitfalls that could cause a `SEGFAULT` or slow your program.
+- __How not to build state machines:__ Compare `std::variant`, `virtual` functions, and C++20 coroutines.
 
-But we're not here to be average — we're here to be better.
-We want to know the cost of unaligned memory accesses, branch prediction, CPU cache misses and the latency of different cache levels, the frequency scaling policy levels, the cost of polymorphysm and asynchronous programming, and the trade-offs between accuracy and efficiency in numerical computations.
-Let's dig deeper into writing __less slow__, more efficient software.
+To read, jump to the `less_slow.cpp` source file and read the code snippets and comments.
 
-## Quick Start
+## Reproducing the Benchmarks
 
-> [Jump to reading](#basics) 🔗
-
-If you are familiar with C++ and want to go through code and measurements as you read, you can clone the repository and execute the following commands.
+If you are familiar with C++ and want to review code and measurements as you read, you can clone the repository and execute the following commands.
 
 ```sh
 git clone https://github.com/ashvardanian/LessSlow.cpp.git  # Clone the repository
 cd LessSlow.cpp                                             # Change the directory
-cmake -B build_release                                      # Generate the build files
+cmake -B build_release -D CMAKE_BUILD_TYPE=Release          # Generate the build files
 cmake --build build_release --config Release                # Build the project
 build_release/less_slow                                     # Run the benchmarks
 ```
 
-For brevity, the tutorial is intended for GCC and Clang compilers on Linux, but should be compatible with MacOS and Windows.
+For brevity, the tutorial is __intended for GCC and Clang compilers on Linux__.
 To control the output or run specific benchmarks, use the following flags:
 
 ```sh
@@ -60,56 +61,6 @@ Alternatively, use the Linux `perf` tool for performance counter collection:
 sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF build_release/less_slow --benchmark_enable_random_interleaving=true --benchmark_filter=super_sort
 ```
 
-## Basics
-
-### How to Benchmark and Randomness
-
-```cpp
-static void i32_addition(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
-    for (auto _ : state)
-        c = a + b;
-}
-```
-
-### Parallelism and Computational Complexity
-
-### Recursion and Branch Prediction
-
-## Numerics
-
-### Accuracy vs Efficiency of Standard Libraries
-
-[![Meme IEEE 754 vs GCC](assets/meme-ieee764-vs-gnu-compiler-cover.png)](https://ashvardanian.com/posts/google-benchmark/)
-
-### Compute vs Memory Bounds with Matrix Multiplications
-
-### Alignment of Memory Accesses
-
-
-
-## Abstractions
-
-### Virtual Functions and Polymorphism
-
-### Ranges and Iterators
-
-### Coroutines and Asynchronous Programming
-
-C++20 introduces coroutines, or pre-emptive multitasking, which allows you to write asynchronous code in a synchronous manner.
-Unlike a function, a coroutine can be paused and resumed at `co_await` and `co_yield` points.
-In high-level languages the implementation of coroutines is universally bad and prohibitively expensive.
-In C++, they are much better, but still have a cost.
-
-
 ## Further Reading
 
-Many of the examples here are condensed versions of the articles on the ["Less Slow" blog](https://ashvardanian.com/tags/less-slow/).
-For advanced parallel algorithm benchmarks, see [ashvardanian/ParallelReductionsBenchmark](https://github.com/ashvardanian/ParallelReductionsBenchmark).
-For SIMD algorithms, check the production code at [ashvardanian/SimSIMD](https://github.com/ashvardanian/SimSIMD) and [ashvardanian/StringZilla](https://github.com/asvardanian/StringZilla), or individual articles:
-
-- [Optimizing C++ & CUDA for High-Speed Parallel Reductions](https://ashvardanian.com/posts/cuda-parallel-reductions/)
-- [Challenges in Maximizing DDR4 Bandwidth](https://ashvardanian.com/posts/ddr4-bandwidth/)
-- [Comparing GCC Compiler and Manual Assembly Performance](https://ashvardanian.com/posts/gcc-12-vs-avx512fp16/)
-- [Enhancing SciPy Performance with AVX-512 & SVE](https://ashvardanian.com/posts/simsimd-faster-scipy/).
-
+Many of the examples here are condensed versions of the articles on my ["Less Slow" blog](https://ashvardanian.com/tags/less-slow/) and many related repositories on my [GitHub profile](https://github.com/ashvardanian).

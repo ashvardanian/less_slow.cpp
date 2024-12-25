@@ -9,7 +9,7 @@
       "type": "cppdbg",
       "request": "launch",
       "preLaunchTask": "Build: Debug",
-      "program": "${workspaceFolder}/build_debug/tutorial",
+      "program": "${workspaceFolder}/build_debug/less_slow",
       "cwd": "${workspaceFolder}",
       "args": [
         "--benchmark_filter=loop"
@@ -28,7 +28,7 @@
         "MIMode": "lldb"
       },
       "windows": {
-        "program": "${workspaceFolder}\\build_debug\\tutorial.exe",
+        "program": "${workspaceFolder}\\build_debug\\less_slow.exe",
         "MIMode": "gdb",
         "miDebuggerPath": "C:\\MinGw\\bin\\gdb.exe"
       }
