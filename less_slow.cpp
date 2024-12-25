@@ -1961,6 +1961,8 @@ static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
 
 #pragma region - Exceptions, Backups, Logging
 
+#pragma region Errors
+
 /**
  *  In the real world, control-flow gets messy, as different methods will
  *  break in different places. Let's imagine a system, that:
@@ -2019,7 +2021,7 @@ static void write_to_file_or_throw( //
     if (iteration_index % fail_period_write_back == 0) throw std::runtime_error("File write failed");
 }
 
-static void exceptions_throw(bm::State &state) {
+static void errors_throw(bm::State &state) {
     std::string const filename = "test.txt";
     std::size_t iteration_index = 0;
     for (auto _ : state) {
@@ -2035,8 +2037,8 @@ static void exceptions_throw(bm::State &state) {
     }
 }
 
-BENCHMARK(exceptions_throw)->MinTime(2);
-BENCHMARK(exceptions_throw)->MinTime(2)->Threads(8);
+BENCHMARK(errors_throw)->MinTime(2);
+BENCHMARK(errors_throw)->MinTime(2)->Threads(8);
 
 /**
  *  Until C++23, we don't have a `std::expected` implementation,
@@ -2100,7 +2102,7 @@ static std::error_code write_to_file_or_variants( //
     return std::error_code {};
 }
 
-static void exceptions_variants(bm::State &state) {
+static void errors_variants(bm::State &state) {
     std::string const filename = "test.txt";
     std::size_t iteration_index = 0;
     for (auto _ : state) {
@@ -2116,8 +2118,8 @@ static void exceptions_variants(bm::State &state) {
     }
 }
 
-BENCHMARK(exceptions_variants)->MinTime(2);
-BENCHMARK(exceptions_variants)->MinTime(2)->Threads(8);
+BENCHMARK(errors_variants)->MinTime(2);
+BENCHMARK(errors_variants)->MinTime(2)->Threads(8);
 
 /**
  *  As practice shows, STL is almost never the performance-oriented choice!
@@ -2177,7 +2179,7 @@ static status write_to_file_with_status( //
     return status::success;
 }
 
-static void exceptions_with_status(bm::State &state) {
+static void errors_with_status(bm::State &state) {
     std::string const filename = "test.txt";
     std::size_t iteration_index = 0;
     for (auto _ : state) {
@@ -2193,8 +2195,12 @@ static void exceptions_with_status(bm::State &state) {
     }
 }
 
-BENCHMARK(exceptions_with_status)->MinTime(2);
-BENCHMARK(exceptions_with_status)->MinTime(2)->Threads(8);
+BENCHMARK(errors_with_status)->MinTime(2);
+BENCHMARK(errors_with_status)->MinTime(2)->Threads(8);
+
+#pragma endregion // Errors
+
+#pragma region Logs
 
 /**
  *  - Throwing an exception: @b 268 ns single-threaded, @b 815 ns multi-threaded.
@@ -2245,7 +2251,7 @@ static void log_with_printf(               //
     );
 }
 
-static void logging_printf(bm::State &state) {
+static void log_printf(bm::State &state) {
     struct {
         int code;
         std::string_view message;
@@ -2294,7 +2300,7 @@ static void log_with_fmt(                  //
     );
 }
 
-static void logging_fmt(bm::State &state) {
+static void log_fmt(bm::State &state) {
     struct {
         int code;
         std::string_view message;
@@ -2314,10 +2320,12 @@ static void logging_fmt(bm::State &state) {
     }
 }
 
-BENCHMARK(logging_printf)->MinTime(2);
-BENCHMARK(logging_fmt)->MinTime(2);
-BENCHMARK(logging_printf)->MinTime(2)->Threads(8);
-BENCHMARK(logging_fmt)->MinTime(2)->Threads(8);
+BENCHMARK(log_printf)->MinTime(2);
+BENCHMARK(log_fmt)->MinTime(2);
+BENCHMARK(log_printf)->MinTime(2)->Threads(8);
+BENCHMARK(log_fmt)->MinTime(2)->Threads(8);
+
+#pragma endregion // Logs
 
 #pragma endregion // - Exceptions, Backups, Logging
 
