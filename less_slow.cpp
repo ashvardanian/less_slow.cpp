@@ -808,7 +808,7 @@ static void f32_matrix_multiplication_4x4_loop(bm::State &state) {
         bm::DoNotOptimize(c);
     }
 
-    std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
+    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
 }
 
@@ -843,7 +843,7 @@ static void f32_matrix_multiplication_4x4_loop_unrolled(bm::State &state) {
         bm::DoNotOptimize(c);
     }
 
-    std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
+    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
 }
 
@@ -923,7 +923,7 @@ static void f32_matrix_multiplication_4x4_loop_sse41(bm::State &state) {
         bm::DoNotOptimize(c);
     }
 
-    std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
+    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
 }
 #endif // defined(__SSE2__)
@@ -986,7 +986,7 @@ static void f32_matrix_multiplication_4x4_loop_avx512(bm::State &state) {
         bm::DoNotOptimize(c);
     }
 
-    std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
+    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
 }
 #endif // defined(__AVX512F__)
