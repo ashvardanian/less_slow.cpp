@@ -1880,12 +1880,17 @@ static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
  *  In the real world, control-flow gets messy, as different methods will
  *  break in different places. Let's imagine a system, that:
  *
- *  - Reads an integer from a file.
+ *  - Reads an integer from a text file.
  *  - Increments it.
- *  - Saves it back to the file.
+ *  - Saves it back to the text file.
  *
- *  Implementing such systems
+ *  As soon as we start dealing with "external devices", as opposed to the CPU itself,
+ *  failures become regular. The file may not exist, the integer may not be a number,
+ *  the file may be read-only, the disk may be full, the file may be locked, etc.
  */
+#include <charconv>  // `std::from_chars`, `std::to_chars`
+#include <stdexcept> // `std::runtime_error`, `std::out_of_range`
+
 constexpr std::size_t fail_period_read_integer = 6;
 constexpr std::size_t fail_period_convert_to_integer = 11;
 constexpr std::size_t fail_period_next_string = 17;
@@ -1906,14 +1911,21 @@ static std::size_t string_to_integer_or_throw( //
     // - `std::invalid_argument` if no conversion could be performed.
     // - `std::out_of_range` if the converted value would fall out of the range of the
     //   result type or if the underlying function sets `errno` to `ERANGE`.
-    return std::stoull(value);
+    // The cleaner modern way to implement this is using `std::from_chars` in C++17.
+    std::size_t integral_value = 0;
+    std::from_chars_result result = std::from_chars(value.data(), value.data() + value.size(), integral_value);
+    if (result.ec != std::errc()) throw std::out_of_range("Conversion failed");
+    return integral_value;
 }
 
 static std::string integer_to_next_string_or_throw(std::size_t value, std::size_t iteration_index) noexcept(false) {
     if (iteration_index % fail_period_next_string == 0) throw std::runtime_error("Increment failed");
     value++;
-    // The `std::to_string` function may throw `std::bad_alloc` if the allocation fails.
-    return std::to_string(value);
+    constexpr std::size_t buffer_size = 10;
+    char buffer[buffer_size] {};
+    std::to_chars_result result = std::to_chars(buffer, buffer + buffer_size, value);
+    if (result.ec != std::errc()) throw std::out_of_range("Conversion failed");
+    return std::string(buffer, result.ptr - buffer);
 }
 
 static void write_to_file_or_throw( //
@@ -1939,9 +1951,9 @@ static void exceptions_throw(bm::State &state) {
 }
 
 /**
- *  Until C++23, we don't have a `std::expected` implementation, but it's easy to design one.
+ *  Until C++23, we don't have a `std::expected` implementation, but it's easy to
+ *  design one using `std::variant` and `std::error_code`.
  */
-#include <charconv>     // `std::from_chars`, `std::to_chars`
 #include <system_error> // `std::error_code`
 #include <variant>      // `std::variant`
 
@@ -1976,10 +1988,6 @@ static expected<std::string> read_integer_from_file_or_return( //
 
 static expected<std::size_t> string_to_integer_or_return( //
     std::string const &value, [[maybe_unused]] std::size_t iteration_index) noexcept {
-    // The clean modern way to implement this is using `std::from_chars` in C++17.
-    // To be more fair in our comparions, we can call the underlying function of `std::stoull`,
-    // the `std::strtoull` function, checking the `errno` value for `ERANGE` afterwards,
-    // but that again introduces a dependency on a global variable.
     std::size_t integral_value = 0;
     std::from_chars_result result = std::from_chars(value.data(), value.data() + value.size(), integral_value);
     if (result.ec != std::errc()) return std::make_error_code(result.ec);
@@ -1989,13 +1997,10 @@ static expected<std::size_t> string_to_integer_or_return( //
 static expected<std::string> integer_to_next_string_or_return(std::size_t value, std::size_t iteration_index) noexcept {
     if (iteration_index % fail_period_next_string == 0) return std::error_code {EIO, std::generic_category()};
     value++;
-    // Same concerns as in `string_to_integer_or_return`, also apply to here for the implementation
-    // differences between `std::to_string` and `std::to_chars`.
     constexpr std::size_t buffer_size = 10;
     char buffer[buffer_size] {};
     std::to_chars_result result = std::to_chars(buffer, buffer + buffer_size, value);
     if (result.ec != std::errc()) return std::make_error_code(result.ec);
-
     return std::string(buffer, result.ptr - buffer);
 }
 
