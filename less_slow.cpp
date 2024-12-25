@@ -1798,6 +1798,258 @@ BENCHMARK(pipeline_virtual_functions);
 
 #pragma endregion // - Abstractions
 
+#pragma region - Structures, Tuples, ADTs, AOS, SOA
+
+#pragma region Continuous Memory
+
+/**
+ *  It's a blessing if one can just use lazy processing, but realistically,
+ *  every program needs memory and it's layout and used structures matter.
+ *
+ *  Algebraic Data Types (ADTs) are one of the most sought-after features in
+ *  modern programming languages. They allow you to define complex data types
+ *  by combining simpler ones.
+ *
+ *  In C, the only way to achieve that is by combining `stuct` and `union` types.
+ *  In C++, the Standard Library provides `std::variant`, `std::tuple`, `std::pair`,
+ *  `std::optional`, and many other types that can be used to create ADTs.
+ *
+ *  Common sense suggests that there should be no performance degradation from
+ *  using the library types. Well, how hard can it be to implement a `std::pair`?
+ *  StackOverflow has 5 answers to a similar question - all 5 are wrong.
+ *
+ *  @see StackOverflow discussion:
+ *  https://stackoverflow.com/questions/3607352/struct-with-2-cells-vs-stdpair
+ *
+ *  Let's compare the performance of `std::pair` with a custom `pair_t` structure,
+ *  made of the same two elements, also named boringly - `first` and `second`.
+ */
+#include <tuple> // `std::tuple`
+
+static void packaging_custom_pairs(bm::State &state) {
+    struct pair_t {
+        int first;
+        float second;
+    };
+    std::vector<pair_t> a, b;
+    a.resize(1'000'000);
+    for (auto _ : state) bm::DoNotOptimize(b = a);
+}
+
+BENCHMARK(packaging_custom_pairs)->MinTime(2);
+
+static void packaging_stl_pair(bm::State &state) {
+    std::vector<std::pair<int, float>> a, b;
+    a.resize(1'000'000);
+    for (auto _ : state) bm::DoNotOptimize(b = a);
+}
+
+BENCHMARK(packaging_stl_pair)->MinTime(2);
+
+static void packaging_stl_tuple(bm::State &state) {
+    std::vector<std::tuple<int, float>> a, b;
+    a.resize(1'000'000);
+    for (auto _ : state) bm::DoNotOptimize(b = a);
+}
+
+BENCHMARK(packaging_stl_tuple)->MinTime(2);
+
+/**
+ *  Over @b 600 microseconds for STL variants vs @b 488 microseconds for the baseline.
+ *  The naive variant, avoiding STL, is faster by @b 20%.
+ *
+ *  Why? With the `std::pair` in its way `std::vector` can't realize that the actual
+ *  contents are trivially copyable and can be moved around without any overhead.
+ *
+ *  @see Reddit discussion: https://www.reddit.com/r/cpp/comments/ar4ghs/stdpair_disappointing_performance/
+ */
+static_assert(!std::is_trivially_copyable_v<std::pair<int, float>>);
+static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
+
+#pragma endregion // Continuous Memory
+
+#pragma region Trees and Graphs
+
+#pragma endregion // Trees and Graphs
+
+#pragma endregion // - Structures, Tuples, ADTs, AOS, SOA
+
+#pragma region - Exceptions, Backups, Logging
+
+/**
+ *  In the real world, control-flow gets messy, as different methods will
+ *  break in different places. Let's imagine a system, that:
+ *
+ *  - Reads an integer from a file.
+ *  - Increments it.
+ *  - Saves it back to the file.
+ *
+ *  Implementing such systems
+ */
+constexpr std::size_t fail_period_read_integer = 6;
+constexpr std::size_t fail_period_convert_to_integer = 11;
+constexpr std::size_t fail_period_next_string = 17;
+constexpr std::size_t fail_period_write_back = 23;
+
+static std::string read_integer_from_file_or_throw( //
+    [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept(false) {
+    if (iteration_index % fail_period_read_integer == 0) throw std::runtime_error("File read failed");
+    if (iteration_index % fail_period_convert_to_integer == 0) return "abc";
+    // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
+    // but given the Small String Optimization, it shouldn't happen in practice.
+    return "1";
+}
+
+static std::size_t string_to_integer_or_throw( //
+    std::string const &value, [[maybe_unused]] std::size_t iteration_index) noexcept(false) {
+    // The `std::stoull` function may throw:
+    // - `std::invalid_argument` if no conversion could be performed.
+    // - `std::out_of_range` if the converted value would fall out of the range of the
+    //   result type or if the underlying function sets `errno` to `ERANGE`.
+    return std::stoull(value);
+}
+
+static std::string integer_to_next_string_or_throw(std::size_t value, std::size_t iteration_index) noexcept(false) {
+    if (iteration_index % fail_period_next_string == 0) throw std::runtime_error("Increment failed");
+    value++;
+    // The `std::to_string` function may throw `std::bad_alloc` if the allocation fails.
+    return std::to_string(value);
+}
+
+static void write_to_file_or_throw( //
+    [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
+    std::size_t iteration_index) noexcept(false) {
+    if (iteration_index % fail_period_write_back == 0) throw std::runtime_error("File write failed");
+}
+
+static void exceptions_throw(bm::State &state) {
+    std::string const filename = "test.txt";
+    std::size_t iteration_index = 0;
+    for (auto _ : state) {
+        iteration_index++;
+        try {
+            std::string read_value = read_integer_from_file_or_throw(filename, iteration_index);
+            std::size_t integer_value = string_to_integer_or_throw(read_value, iteration_index);
+            std::string next_value = integer_to_next_string_or_throw(integer_value, iteration_index);
+            write_to_file_or_throw(filename, next_value, iteration_index);
+        }
+        catch (std::exception const &) {
+        }
+    }
+}
+
+/**
+ *  Until C++23, we don't have a `std::expected` implementation, but it's easy to design one.
+ */
+#include <charconv>     // `std::from_chars`, `std::to_chars`
+#include <system_error> // `std::error_code`
+#include <variant>      // `std::variant`
+
+using std::operator""s;
+
+template <typename value_type_>
+class expected {
+    std::variant<value_type_, std::error_code> value_;
+
+  public:
+    expected(value_type_ const &value) noexcept : value_(value) {}
+    expected(std::error_code const &error) noexcept : value_(error) {}
+
+    explicit operator bool() const noexcept { return std::holds_alternative<value_type_>(value_); }
+    value_type_ const &value() const noexcept { return std::get<value_type_>(value_); }
+    std::error_code const &error() const noexcept { return std::get<std::error_code>(value_); }
+    template <typename function_type_>
+    auto and_then(function_type_ &&f) const noexcept {
+        if (std::holds_alternative<value_type_>(value_)) return f(std::get<value_type_>(value_));
+        return *this;
+    }
+};
+
+static expected<std::string> read_integer_from_file_or_return( //
+    [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_read_integer == 0) return std::error_code {EIO, std::generic_category()};
+    if (iteration_index % fail_period_convert_to_integer == 0) return "abc"s;
+    // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
+    // but given the Small String Optimization, it shouldn't happen in practice.
+    return "1"s;
+}
+
+static expected<std::size_t> string_to_integer_or_return( //
+    std::string const &value, [[maybe_unused]] std::size_t iteration_index) noexcept {
+    // The clean modern way to implement this is using `std::from_chars` in C++17.
+    // To be more fair in our comparions, we can call the underlying function of `std::stoull`,
+    // the `std::strtoull` function, checking the `errno` value for `ERANGE` afterwards,
+    // but that again introduces a dependency on a global variable.
+    std::size_t integral_value = 0;
+    std::from_chars_result result = std::from_chars(value.data(), value.data() + value.size(), integral_value);
+    if (result.ec != std::errc()) return std::make_error_code(result.ec);
+    return integral_value;
+}
+
+static expected<std::string> integer_to_next_string_or_return(std::size_t value, std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_next_string == 0) return std::error_code {EIO, std::generic_category()};
+    value++;
+    // Same concerns as in `string_to_integer_or_return`, also apply to here for the implementation
+    // differences between `std::to_string` and `std::to_chars`.
+    constexpr std::size_t buffer_size = 10;
+    char buffer[buffer_size] {};
+    std::to_chars_result result = std::to_chars(buffer, buffer + buffer_size, value);
+    if (result.ec != std::errc()) return std::make_error_code(result.ec);
+
+    return std::string(buffer, result.ptr - buffer);
+}
+
+static std::error_code write_to_file_or_return( //
+    [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
+    std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_write_back == 0) return std::error_code {EIO, std::generic_category()};
+    return std::error_code {};
+}
+
+static void exceptions_codes(bm::State &state) {
+    std::string const filename = "test.txt";
+    std::size_t iteration_index = 0;
+    for (auto _ : state) {
+        iteration_index++;
+        auto read_result = read_integer_from_file_or_return(filename, iteration_index);
+        if (!read_result) continue;
+        auto integer_result = string_to_integer_or_return(read_result.value(), iteration_index);
+        if (!integer_result) continue;
+        auto next_result = integer_to_next_string_or_return(integer_result.value(), iteration_index);
+        if (!next_result) continue;
+        auto write_error = write_to_file_or_return(filename, next_result.value(), iteration_index);
+        bm::DoNotOptimize(write_error);
+    }
+}
+
+BENCHMARK(exceptions_throw)->MinTime(2);
+BENCHMARK(exceptions_codes)->MinTime(2);
+
+BENCHMARK(exceptions_throw)->MinTime(2)->Threads(8);
+BENCHMARK(exceptions_codes)->MinTime(2)->Threads(8);
+
+static void exceptions_algebraic(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(1);
+}
+
+BENCHMARK(exceptions_algebraic)->MinTime(2);
+
+static void logging_printf(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(1);
+}
+
+BENCHMARK(logging_printf)->MinTime(2);
+BENCHMARK(logging_printf)->MinTime(2)->Threads(10);
+
+static void logging_fmt(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(1);
+}
+
+BENCHMARK(logging_fmt)->MinTime(2);
+BENCHMARK(logging_fmt)->MinTime(2)->Threads(10);
+
+#pragma endregion // - Exceptions, Backups, Logging
+
 /**
  *  The default variant is to invoke the `BENCHMARK_MAIN()` macro.
  *  Alternatively, we can unpack it, if we want to augment the main function
