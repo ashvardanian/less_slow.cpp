@@ -82,6 +82,15 @@
     "deque": "cpp",
     "forward_list": "cpp",
     "list": "cpp",
-    "regex": "cpp"
+    "regex": "cpp",
+    "cstdarg": "cpp",
+    "condition_variable": "cpp",
+    "coroutine": "cpp",
+    "mutex": "cpp",
+    "ratio": "cpp",
+    "semaphore": "cpp",
+    "shared_mutex": "cpp",
+    "stop_token": "cpp",
+    "source_location": "cpp"
   }
 }
