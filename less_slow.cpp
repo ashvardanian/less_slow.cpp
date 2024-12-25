@@ -521,105 +521,61 @@ BENCHMARK(branch_cost)->RangeMultiplier(4)->Range(256, 32 * 1024);
 #pragma region Cache Misses
 
 /**
- *  Over the last decades the CPU speed has increased by orders of magnitude,
- *  while the memory speed has only doubled. This has created a significant
- *  performance gap between the CPU and RAM. To bridge this gap, CPUs use
- *  multiple levels of cache, each faster and smaller than the previous (L1 / L2 / L3).
+ *  Over the decades, CPU speeds have outpaced memory speeds, creating a gap
+ *  mitigated by multi-level caching (L1/L2/L3). Cache misses occur when the
+ *  CPU fetches data from RAM instead of the cache, incurring high latency.
  *
- *  The CPU is designed to predict the memory access patterns and prefetch the
- *  data into the cache before it's needed. However, if the CPU fails to predict
- *  the access pattern, it will have to wait for the data to be fetched from RAM.
- *  This is called a cache miss.
- * 
- *  While this behavior is fully on CPU side and similar to the branch predictor,
- *  is opaque for the user, it's important to understand its behavior, to make
- *  best use of the hardware for our applications. This usually involves engineering
- *  the data structures and memory access to minimize those cache misses.
- * 
- *  The ideal and most predictable access pattern is linear / sequential access.
- *  While the worst case is completely random access that is impossible to predict.
- * 
- *  We can demonstrate this with two benchmarks, one with sequential access and
- *  another with random access. The difference in performance for data sizes that
- *  exceed the cache size can be in order of magnitude (x10 or more).
- * 
- *  Note, that we are only demonstrating what is known as spatial locality and
- *  making the best use of the CPUs prefetcher. There is also temporal locality,
- *  and other hueristics, where the CPU can cache some data based on how many
- *  often its used, for example. This is why in smaller data sizes (below L3 cache)
- *  the difference in performance is not as large, especially if the same test
- *  is run on multiple iterations back-to-back.
+ *  Access patterns play a crucial role:
+ *      - @b Sequential: Predictable and optimal for the CPU prefetcher.
+ *      - @b Random: Unpredictable, leading to frequent cache misses.
+ *
+ *  Benchmarks demonstrate this gap—sequential access can outperform random access
+ *  by 10x or more for data sizes exceeding cache capacity. However, the difference
+ *  narrows for smaller datasets, benefiting from spatial and temporal locality.
  */
 
-#include <random> // std::random_device, std::mt19937, std::uniform_int_distribution
+#include <random> // `std::random_device`, `std::mt19937`
 
-/**
- *  @brief  Measure sequential access of an array (best case, low cache misses).
- */
-static void cache_misses_sequential_access(bm::State &state) {
-    auto count = static_cast<std::int32_t>(state.range(0));
+enum class access_order { sequential, random };
 
-    std::vector<std::int32_t> array(count);
-    array.resize(count);
-    std::generate_n(array.begin(), array.size(), &std::rand);
+template <access_order access_order_>
+static void cache_misses_cost(bm::State &state) {
+    auto count = static_cast<std::uint32_t>(state.range(0));
 
-    std::vector<std::int32_t> indices(count);
-    indices.resize(count);
-    for(std::int32_t i = 0; i < count; i++) {
-        indices[i] = i;
+    // Populate with arbitrary data
+    std::vector<std::int32_t> data(count);
+    std::iota(data.begin(), data.end(), 0);
+
+    // Initialize different access orders
+    std::vector<std::uint32_t> indices(count);
+    if constexpr (access_order_ == access_order::random) {
+        std::random_device random_device;
+        std::mt19937 generator(random_device());
+        std::uniform_int_distribution<std::uint32_t> uniform_distribution(0, count - 1);
+        std::generate_n(indices.begin(), indices.size(), [&] { return uniform_distribution(generator); });
     }
+    else { std::iota(indices.begin(), indices.end(), 0u); }
 
+    // The actual benchmark:
     for (auto _ : state) {
-        std::int32_t sum = 0;
-        for(std::int32_t index = 0; index < count; index++) {
-            bm::DoNotOptimize(
-                sum += array[indices[index]]
-                );
-        }
+        std::int64_t sum = 0;
+        for (auto index : indices) bm::DoNotOptimize(sum += data[index]);
     }
 }
 
+BENCHMARK(cache_misses_cost<access_order::sequential>)
+    ->MinTime(2)
+    ->RangeMultiplier(8)
+    ->Range(8u * 1024u, 128u * 1024u * 1024u);
+BENCHMARK(cache_misses_cost<access_order::random>)
+    ->MinTime(2)
+    ->RangeMultiplier(8)
+    ->Range(8u * 1024u, 128u * 1024u * 1024u);
+
 /**
- *  @brief  Measure random access of an array (worst case, high cache misses).
+ *  For small arrays, the execution speed will be identical.
+ *  For larger ones, the latency can differ @b 15x!
  */
-static void cache_misses_random_access(bm::State &state) {
-    auto count = static_cast<std::int32_t>(state.range(0));
-
-    std::vector<std::int32_t> array(count);
-    array.resize(count);
-    std::generate_n(array.begin(), array.size(), &std::rand);
-
-    // std::rand does not produce a uniform distribution and is heavily biased
-    // for proper measurement we need to use a better random number generator
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> uniform_distribution(0, count - 1);
-
-    std::vector<std::int32_t> indices(count);
-    indices.resize(count);
-    for(std::int32_t i = 0; i < count; i++) {
-        indices[i] = uniform_distribution(gen);
-    }
-
-    for (auto _ : state) {
-        std::int32_t sum = 0;
-        for(std::int32_t index = 0; index < count; index++) {
-            bm::DoNotOptimize(
-                sum += array[indices[index]]
-                );
-        }
-    }
-}
-
-#define ELEMENT_SIZE sizeof(std::int32_t)
-#define SIZE_KB(x) (x * 1024 / ELEMENT_SIZE)
-#define SIZE_MB(x) (SIZE_KB(x * 1024))
-BENCHMARK(cache_misses_sequential_access)->
-    RangeMultiplier(8)->
-    Range(SIZE_KB(64), SIZE_MB(512));
-BENCHMARK(cache_misses_random_access)->
-    RangeMultiplier(8)->
-    Range(SIZE_KB(64), SIZE_MB(512));
 
 #pragma endregion // Cache Misses
 
