@@ -23,10 +23,14 @@ FetchContent_Declare(
   googlebenchmark
   GIT_REPOSITORY https://github.com/google/benchmark.git
   GIT_TAG v1.9.1)
-set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_TESTING
+    OFF
+    CACHE BOOL "" FORCE)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  set(BENCHMARK_ENABLE_LIBPFM OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_ENABLE_LIBPFM
+      OFF
+      CACHE BOOL "" FORCE)
 endif()
 
 FetchContent_MakeAvailable(googlebenchmark)
@@ -39,7 +43,9 @@ FetchContent_Declare(
   GIT_TAG master)
 
 # Set the TBB_TEST option to OFF before making it available
-set(TBB_TEST OFF CACHE BOOL "Do not build TBB tests" FORCE)
+set(TBB_TEST
+    OFF
+    CACHE BOOL "Do not build TBB tests" FORCE)
 FetchContent_MakeAvailable(TBB)
 
 # Make Release by default
@@ -47,7 +53,13 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
+# Apple Clang doesn't support `-march=native` flag.
+message(STATUS "CMAKE_SYSTEM_NAME: ${CMAKE_SYSTEM_NAME}")
+message(STATUS "CMAKE_CXX_COMPILER_ID: ${CMAKE_CXX_COMPILER_ID}")
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
+endif()
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g")
 
@@ -56,7 +68,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
 
 # Less warnings
 set(CMAKE_CXX_FLAGS_RELEASE
-  "${CMAKE_CXX_FLAGS_RELEASE} -Wno-unused-but-set-variable")
+    "${CMAKE_CXX_FLAGS_RELEASE} -Wno-unused-but-set-variable")
 
 # Stable results between recompilations
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -falign-functions=32")

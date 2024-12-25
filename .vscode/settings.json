@@ -1,6 +1,7 @@
 {
   "cSpell.words": [
     "ashvardanian",
+    "clflush",
     "CUDA",
     "Maclaurin",
     "MSVC",
@@ -62,6 +63,32 @@
     "streambuf": "cpp",
     "typeinfo": "cpp",
     "variant": "cpp",
-    "text_encoding": "cpp"
+    "text_encoding": "cpp",
+    "__bit_reference": "cpp",
+    "__hash_table": "cpp",
+    "__node_handle": "cpp",
+    "__split_buffer": "cpp",
+    "__threading_support": "cpp",
+    "__verbose_abort": "cpp",
+    "complex": "cpp",
+    "cstring": "cpp",
+    "__bits": "cpp",
+    "__config": "cpp",
+    "__debug": "cpp",
+    "__errc": "cpp",
+    "__locale": "cpp",
+    "__mutex_base": "cpp",
+    "__nullptr": "cpp",
+    "__string": "cpp",
+    "__tree": "cpp",
+    "__tuple": "cpp",
+    "cstdarg": "cpp",
+    "fstream": "cpp",
+    "iomanip": "cpp",
+    "ios": "cpp",
+    "locale": "cpp",
+    "map": "cpp",
+    "mutex": "cpp",
+    "ratio": "cpp"
   }
 }
