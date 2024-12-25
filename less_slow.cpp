@@ -188,6 +188,8 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(8);
  *
  *  @see GlibC implementation:
  *  https://code.woboq.org/userspace/glibc/stdlib/random.c.html#291
+ *  @see Faster random integer generation with batching by Daniel Lemire:
+ *  https://lemire.me/blog/2024/08/17/faster-random-integer-generation-with-batching/
  */
 
 #pragma endregion // How to Benchmark and Randomness
@@ -863,6 +865,8 @@ f32x4x4_t f32x4x4_matmul_kernel(f32x4x4_t const &a, f32x4x4_t const &b) noexcept
     f32x4x4_t c {};
     // This code gets auto-vectorized regardless of the loop order,
     // be it "ijk", "ikj", "jik", "jki", "kij", or "kji".
+    // That's not necessarily the case for other matrix sizes:
+    // https://lemire.me/blog/2024/06/13/rolling-your-own-fast-matrix-multiplication-loop-order-and-vectorization/
     for (std::size_t i = 0; i != 4; ++i)
         for (std::size_t j = 0; j != 4; ++j)
             for (std::size_t k = 0; k != 4; ++k) c.scalars[i][j] += a.scalars[i][k] * b.scalars[k][j];
@@ -1487,6 +1491,9 @@ BENCHMARK(pipeline_cpp11_stl);
 /**
  *  C++20 introduces @b coroutines in the language, but not in the library,
  *  so we need to provide a minimal implementation of a "generator" class.
+ *
+ *  @see "Asymmetric Transfer" blogposts on coroutines by Lewis Baker:
+ *       https://lewissbaker.github.io/
  */
 #include <coroutine> // `std::coroutine_handle`
 
@@ -1744,6 +1751,12 @@ BENCHMARK(pipeline_cpp20_ranges);
  *  ... then you are probably looking at a lambda. Ranges, on the other hand, are
  *  lazy and don't need to capture anything. On the practical side, when implementing
  *  ranges, make sure to avoid branching even more than with regular code.
+ *
+ *  @see Standard Ranges by Eric Niebler: https://ericniebler.com/2018/12/05/standard-ranges/
+ *  @see Should we stop writing functions? by Jonathan Müller
+ *       https://www.think-cell.com/en/career/devblog/should-we-stop-writing-functions
+ *  @see Lambdas, Nested Functions, and Blocks, oh my! by JeanHeyd Meneide:
+ *       https://thephd.dev/lambdas-nested-functions-block-expressions-oh-my
  */
 
 #pragma endregion // Ranges and Iterators
