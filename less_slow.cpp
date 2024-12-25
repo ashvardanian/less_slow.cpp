@@ -1961,9 +1961,12 @@ static void exceptions_throw(bm::State &state) {
     }
 }
 
+BENCHMARK(exceptions_throw)->MinTime(2);
+BENCHMARK(exceptions_throw)->MinTime(2)->Threads(8);
+
 /**
- *  Until C++23, we don't have a `std::expected` implementation, but it's easy to
- *  design one using `std::variant` and `std::error_code`.
+ *  Until C++23, we don't have a `std::expected` implementation,
+ *  but it's easy to design one using `std::variant` and `std::error_code`.
  */
 #include <system_error> // `std::error_code`
 #include <variant>      // `std::variant`
@@ -1988,7 +1991,7 @@ class expected {
     }
 };
 
-static expected<std::string> read_integer_from_file_or_return( //
+static expected<std::string> read_integer_from_file_or_variants( //
     [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept {
     if (iteration_index % fail_period_read_integer == 0) return std::error_code {EIO, std::generic_category()};
     if (iteration_index % fail_period_convert_to_integer == 0) return "abc"s;
@@ -1997,7 +2000,7 @@ static expected<std::string> read_integer_from_file_or_return( //
     return "1"s;
 }
 
-static expected<std::size_t> string_to_integer_or_return( //
+static expected<std::size_t> string_to_integer_or_variants( //
     std::string const &value, [[maybe_unused]] std::size_t iteration_index) noexcept {
     std::size_t integral_value = 0;
     std::from_chars_result result = std::from_chars(value.data(), value.data() + value.size(), integral_value);
@@ -2005,7 +2008,8 @@ static expected<std::size_t> string_to_integer_or_return( //
     return integral_value;
 }
 
-static expected<std::string> integer_to_next_string_or_return(std::size_t value, std::size_t iteration_index) noexcept {
+static expected<std::string> integer_to_next_string_or_variants(std::size_t value,
+                                                                std::size_t iteration_index) noexcept {
     if (iteration_index % fail_period_next_string == 0) return std::error_code {EIO, std::generic_category()};
     value++;
     constexpr std::size_t buffer_size = 10;
@@ -2015,34 +2019,108 @@ static expected<std::string> integer_to_next_string_or_return(std::size_t value,
     return std::string(buffer, result.ptr - buffer);
 }
 
-static std::error_code write_to_file_or_return( //
+static std::error_code write_to_file_or_variants( //
     [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
     std::size_t iteration_index) noexcept {
     if (iteration_index % fail_period_write_back == 0) return std::error_code {EIO, std::generic_category()};
     return std::error_code {};
 }
 
-static void exceptions_codes(bm::State &state) {
+static void exceptions_variants(bm::State &state) {
     std::string const filename = "test.txt";
     std::size_t iteration_index = 0;
     for (auto _ : state) {
         iteration_index++;
-        auto read_result = read_integer_from_file_or_return(filename, iteration_index);
+        auto read_result = read_integer_from_file_or_variants(filename, iteration_index);
         if (!read_result) continue;
-        auto integer_result = string_to_integer_or_return(read_result.value(), iteration_index);
+        auto integer_result = string_to_integer_or_variants(read_result.value(), iteration_index);
         if (!integer_result) continue;
-        auto next_result = integer_to_next_string_or_return(integer_result.value(), iteration_index);
+        auto next_result = integer_to_next_string_or_variants(integer_result.value(), iteration_index);
         if (!next_result) continue;
-        auto write_error = write_to_file_or_return(filename, next_result.value(), iteration_index);
+        auto write_error = write_to_file_or_variants(filename, next_result.value(), iteration_index);
         bm::DoNotOptimize(write_error);
     }
 }
 
-BENCHMARK(exceptions_throw)->MinTime(2);
-BENCHMARK(exceptions_codes)->MinTime(2);
+BENCHMARK(exceptions_variants)->MinTime(2);
+BENCHMARK(exceptions_variants)->MinTime(2)->Threads(8);
 
-BENCHMARK(exceptions_throw)->MinTime(2)->Threads(8);
-BENCHMARK(exceptions_codes)->MinTime(2)->Threads(8);
+/**
+ *  As practice shows, STL is almost never the performance-oriented choice!
+ *  It's often good enough to get started, but every major player reimplements
+ *  STL-like primitives for its own needs. In some cases, no primitives are
+ *  needed at all, as the language itself provides the necessary tools.
+ *
+ *  Instead of using the heavy `std::variant`, that will contain an integer
+ *  to distinguish between the value and the error, plus the heavy error object
+ *  itself, we can use a simple `struct` with a status code.
+ */
+enum class status : unsigned int {
+    success,
+    read_failed,
+    convert_failed,
+    increment_failed,
+    write_failed,
+};
+
+template <typename value_type_>
+struct result {
+    value_type_ value;
+    status status_code;
+};
+
+static result<std::string> read_integer_from_file_with_status( //
+    [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_read_integer == 0) return {{}, status::read_failed};
+    if (iteration_index % fail_period_convert_to_integer == 0) return {"abc"s, status::success};
+    // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
+    // but given the Small String Optimization, it shouldn't happen in practice.
+    return {"1"s, status::success};
+}
+
+static result<std::size_t> string_to_integer_with_status( //
+    std::string const &value, [[maybe_unused]] std::size_t iteration_index) noexcept {
+    std::size_t integral_value = 0;
+    std::from_chars_result result = std::from_chars(value.data(), value.data() + value.size(), integral_value);
+    if (result.ec != std::errc()) return {0, status::convert_failed};
+    return {integral_value, status::success};
+}
+
+static result<std::string> integer_to_next_string_with_status(std::size_t value, std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_next_string == 0) return {{}, status::increment_failed};
+    value++;
+    constexpr std::size_t buffer_size = 10;
+    char buffer[buffer_size] {};
+    std::to_chars_result result = std::to_chars(buffer, buffer + buffer_size, value);
+    if (result.ec != std::errc()) return {{}, status::increment_failed};
+    return {std::string(buffer, result.ptr - buffer), status::success};
+}
+
+static status write_to_file_with_status( //
+    [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
+    std::size_t iteration_index) noexcept {
+    if (iteration_index % fail_period_write_back == 0) return status::write_failed;
+    return status::success;
+}
+
+static void exceptions_with_status(bm::State &state) {
+    std::string const filename = "test.txt";
+    std::size_t iteration_index = 0;
+    for (auto _ : state) {
+        iteration_index++;
+        auto [read_result, read_status] = read_integer_from_file_with_status(filename, iteration_index);
+        if (read_status != status::success) continue; // In large programs, consider adding `[[unlikely]]`
+        auto [integer_result, integer_status] = string_to_integer_with_status(read_result, iteration_index);
+        if (integer_status != status::success) continue; // In large programs, consider adding `[[unlikely]]`
+        auto [next_result, next_status] = integer_to_next_string_with_status(integer_result, iteration_index);
+        if (next_status != status::success) continue; // In large programs, consider adding `[[unlikely]]`
+        auto write_status = write_to_file_with_status(filename, next_result, iteration_index);
+        bm::DoNotOptimize(write_status);
+    }
+}
+
+BENCHMARK(exceptions_with_status)->MinTime(2);
+BENCHMARK(exceptions_with_status)->MinTime(2)->Threads(8);
 
 /**
  *  - Throwing an exception: @b 268 ns single-threaded, @b 815 ns multi-threaded.
