@@ -777,10 +777,10 @@ BENCHMARK(bits_population_count_core_i7);
  *  featured linear complexity in both space and time. Broadly, the following
  *  distinctions are useful:
  *
- *  - Sublinear (e.g., O(log N)): Often found in search workloads, typically IO-bound.
- *  - Linear and sub-quadratic (e.g., O(N) to O(N*logN)): Most conventional "coding" tasks.
- *  - Low polynomial (e.g., O(N^1.5) to O(N^4)): Common in matrix operations and graph algorithms.
- *  - High polynomial and exponential (e.g., O(N^5) and beyond): Rarely practical to solve.
+ *  - Sublinear (e.g., @b O(logN) ): Often found in search workloads, typically IO-bound.
+ *  - Linear and sub-quadratic (e.g., @b O(N) to @b O(N*logN) ): Most conventional "coding" tasks.
+ *  - Low polynomial (e.g., @b O(N^1.5) to @b O(N^4) ): Common in matrix operations and graph algorithms.
+ *  - High polynomial and exponential (e.g., O(N^5) and @b beyond): Rarely practical to solve.
  *
  *  Among low-polynomial tasks, matrix operations stand out as particularly important.
  *  Matrix multiplication forms the foundation of linear algebra and is critical in
@@ -1687,6 +1687,13 @@ BENCHMARK(pipeline_cpp20_ranges);
 
 #pragma endregion // Ranges and Iterators
 
+#pragma region Variants, Tuples, and State Machines
+
+#include <tuple>   // `std::tuple`
+#include <variant> // `std::variant`
+
+#pragma endregion // Variants, Tuples, and State Machines
+
 /**
  *  Now that we've explored how to write modern, performant C++ code,
  *  let's dive into how @b not to do it. Ironically, this style of programming
@@ -1766,6 +1773,10 @@ static void pipeline_virtual_functions(bm::State &state) {
 BENCHMARK(pipeline_virtual_functions);
 
 /**
+ *  Performance-wise, on this specific micro-example, the virtual functions
+ *  are somewhere in the middle between C++20 ranges and C++11 STL solution.
+ *
+ *
  *  This code is a hazard for multiple reasons:
  *
  *  - @b Spaghetti_Code_Guaranteed: As the code evolves, additional abstraction
@@ -2033,25 +2044,123 @@ BENCHMARK(exceptions_codes)->MinTime(2);
 BENCHMARK(exceptions_throw)->MinTime(2)->Threads(8);
 BENCHMARK(exceptions_codes)->MinTime(2)->Threads(8);
 
-static void exceptions_algebraic(bm::State &state) {
-    for (auto _ : state) bm::DoNotOptimize(1);
+/**
+ *  - Throwing an exception: @b 268 ns single-threaded, @b 815 ns multi-threaded.
+ *  - Returning an error code: @b 7 ns single-threaded, @b 24 ns multi-threaded.
+ *
+ *  Similarly, logging can be done in different ways. Nice logs may look like this:
+ *
+ *      [time] | [filename]:[source-line] <[code]> "[message]"
+ *
+ *  The time should be in a ISO 8601 format, and a line for `EPERM` may look like this:
+ *
+ *      YYYY-MM-DDTHH:MM:SS.mmm | less_slow.cpp:2053 <1> "Operation not permitted"
+ *
+ *  C++ has one of the best standard libraries for time - `std::chrono`, and one of
+ *  the most powerful formatting libraries - `std::format`, derived from `fmt::`.
+ *  Both are more capable than most users realize!
+ */
+#include <chrono>          // `std::chrono`
+#include <source_location> // `std::source_location`
+#include <string_view>     // `std::string_view`
+
+using std::string_view_literals::operator""sv;
+
+static void log_with_printf(               //
+    char *buffer, std::size_t buffer_size, //
+    std::source_location const &location, int code, std::string_view message) noexcept {
+
+    auto now = std::chrono::high_resolution_clock::now();
+    auto time_since_epoch = now.time_since_epoch();
+
+    // Extract seconds and milliseconds
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
+
+    // Format as ISO 8601: YYYY-MM-DDTHH:MM:SS.mmm
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    auto tm = std::gmtime(&time_t_now); // UTC only, no local timezone dependency
+
+    std::snprintf( //
+        buffer, buffer_size,
+        "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ | "                                     // time format
+        "%s:%d <%03d> "                                                              // location and code format
+        "\"%.*s\"\n",                                                                // message format
+        tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,                             // date
+        tm->tm_hour, tm->tm_min, tm->tm_sec, static_cast<int>(milliseconds.count()), // time
+        location.file_name(), location.line(), code,                                 // location and code
+        static_cast<int>(message.size()), message.data()                             // message of known length
+    );
 }
 
-BENCHMARK(exceptions_algebraic)->MinTime(2);
-
 static void logging_printf(bm::State &state) {
-    for (auto _ : state) bm::DoNotOptimize(1);
+    struct {
+        int code;
+        std::string_view message;
+    } errors[3] = {
+        {1, "Operation not permitted"sv},
+        {12, "Cannot allocate memory"sv},
+        {113, "No route to host"sv},
+    };
+    char buffer[1024];
+    std::size_t iteration_index = 0;
+    for (auto _ : state) {
+        log_with_printf(                     //
+            buffer, sizeof(buffer),          //
+            std::source_location::current(), //
+            errors[iteration_index % 3].code, errors[iteration_index % 3].message);
+        iteration_index++;
+    }
+}
+
+#include <format> // `std::format_to_n`
+
+static void log_with_fmt(                  //
+    char *buffer, std::size_t buffer_size, //
+    std::source_location const &location, int code, std::string_view message) noexcept {
+
+    auto now = std::chrono::high_resolution_clock::now();
+    auto time_since_epoch = now.time_since_epoch();
+
+    // ISO 8601 defines the format as: YYYY-MM-DDTHH:MM:SS.mmm
+    // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
+    // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
+    // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
+    std::format_to_n( //
+        buffer, buffer_size,
+        "{0:%FT%H:%M:}{1:%S}{0:%Oz} | "              // time format
+        "{2}:{3} {4:>3} "                            // location and code format
+        "\"{5}\"\n",                                 // message format
+        now, time_since_epoch,                       // date and time
+        location.file_name(), location.line(), code, // location and code
+        message                                      // message of known length
+    );
+}
+
+static void logging_fmt(bm::State &state) {
+    struct {
+        int code;
+        std::string_view message;
+    } errors[3] = {
+        {1, "Operation not permitted"sv},
+        {12, "Cannot allocate memory"sv},
+        {113, "No route to host"sv},
+    };
+    char buffer[1024];
+    std::size_t iteration_index = 0;
+    for (auto _ : state) {
+        log_with_fmt(                        //
+            buffer, sizeof(buffer),          //
+            std::source_location::current(), //
+            errors[iteration_index % 3].code, errors[iteration_index % 3].message);
+        iteration_index++;
+    }
 }
 
 BENCHMARK(logging_printf)->MinTime(2);
-BENCHMARK(logging_printf)->MinTime(2)->Threads(10);
-
-static void logging_fmt(bm::State &state) {
-    for (auto _ : state) bm::DoNotOptimize(1);
-}
-
 BENCHMARK(logging_fmt)->MinTime(2);
-BENCHMARK(logging_fmt)->MinTime(2)->Threads(10);
+BENCHMARK(logging_printf)->MinTime(2)->Threads(8);
+BENCHMARK(logging_fmt)->MinTime(2)->Threads(8);
 
 #pragma endregion // - Exceptions, Backups, Logging
 
