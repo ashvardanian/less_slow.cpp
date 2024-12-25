@@ -1951,11 +1951,119 @@ BENCHMARK(packaging_stl_tuple)->MinTime(2);
 static_assert(!std::is_trivially_copyable_v<std::pair<int, float>>);
 static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
 
+/**
+ *  With larger structures, the presence of `noexcept` constructors and operators
+ *  is not the only thing to worry about. The order and the layout of the elements
+ *  is also relevant.
+ *
+ *  Let's say you are organizing some customer records. You'll assemble a "person"
+ *  structure with a first name, last name, age, address, phone number, height, and
+ *  weight, and the order of those fields will affect the performance.
+ */
+
+#include <cstring> // `std::strcmp`
+
+struct person_natural_t {
+    char firstname[24];               // 24 bytes
+    char lastname[24];                // 24 bytes
+    std::uint16_t age;                // 2 bytes
+    std::uint16_t phone_country_code; // 2 bytes
+    std::uint64_t phone_number;       // 8 bytes
+    char footnotes[64];               // 64 bytes
+    std::uint16_t height_cm;          // 2 bytes
+    std::uint16_t weight_kg;          // 2 bytes
+};
+
+struct person_alphabetical_t {
+    std::uint16_t age;                // 2 bytes
+    char firstname[24];               // 24 bytes
+    char footnotes[64];               // 64 bytes
+    std::uint16_t height_cm;          // 2 bytes
+    char lastname[24];                // 24 bytes
+    std::uint16_t phone_country_code; // 2 bytes
+    std::uint64_t phone_number;       // 8 bytes
+    std::uint16_t weight_kg;          // 2 bytes
+};
+
+struct person_packed_t {
+    char footnotes[64];               // 64 bytes
+    char firstname[24];               // 24 bytes
+    char lastname[24];                // 24 bytes
+    std::uint64_t phone_number;       // 8 bytes
+    std::uint16_t phone_country_code; // 2 bytes
+    std::uint16_t age;                // 2 bytes
+    std::uint16_t height_cm;          // 2 bytes
+    std::uint16_t weight_kg;          // 2 bytes
+};
+
+static_assert(sizeof(person_natural_t) > 128);      // 136 bytes
+static_assert(sizeof(person_alphabetical_t) > 128); // 136 bytes
+static_assert(sizeof(person_packed_t) == 128);      // Manually packed to 128 bytes
+
+template <typename person_type_>
+person_type_ random_person(unsigned seed) {
+    std::srand(seed);
+    // Let's use a small alphabet here, just 2 letters instead of 26.
+    auto random_letter = []() { return "al"[std::rand() % 2]; };
+    constexpr std::size_t name_length = 3;
+
+    person_type_ person {};
+    std::generate_n(person.firstname, name_length, random_letter), person.firstname[name_length] = '\0';
+    std::generate_n(person.lastname, name_length, random_letter), person.lastname[name_length] = '\0';
+    person.age = 20 + std::rand() % 10;
+    std::generate_n(person.footnotes, std::size(person.footnotes) - 1, random_letter);
+    person.phone_country_code = std::rand() % 10;
+    person.phone_number = std::rand();
+    person.height_cm = 100 + std::rand() % 100;
+    person.weight_kg = 40 + std::rand() % 100;
+    return person;
+}
+
+struct sort_by_names {
+    template <typename person_type_>
+    inline bool operator()(person_type_ const &lhs, person_type_ const &rhs) const noexcept {
+        int cmp = std::strcmp(lhs.lastname, rhs.lastname);
+        return cmp < 0 || (cmp == 0 && std::strcmp(lhs.firstname, rhs.firstname) < 0);
+    }
+};
+
+struct sort_by_age_and_names {
+    template <typename person_type_>
+    inline bool operator()(person_type_ const &lhs, person_type_ const &rhs) const noexcept {
+        return lhs.age < rhs.age || (lhs.age == rhs.age && sort_by_names {}(lhs, rhs));
+    }
+};
+
+template <typename person_type_, typename sorter_type_>
+static void packing_structures(bm::State &state) {
+
+    // Generate identical data for all sorters by using the same seed.
+    std::vector<person_type_> people(4096);
+    for (std::size_t i = 0; i < people.size(); i++) people[i] = random_person<person_type_>(i);
+
+    for (auto _ : state) {
+        std::reverse(people.begin(), people.end());
+        std::sort(people.begin(), people.end(), sorter_type_ {});
+    }
+}
+
+BENCHMARK_TEMPLATE(packing_structures, person_natural_t, sort_by_names)->MinTime(2);
+BENCHMARK_TEMPLATE(packing_structures, person_alphabetical_t, sort_by_names)->MinTime(2);
+BENCHMARK_TEMPLATE(packing_structures, person_packed_t, sort_by_names)->MinTime(2);
+
+BENCHMARK_TEMPLATE(packing_structures, person_natural_t, sort_by_age_and_names)->MinTime(2);
+BENCHMARK_TEMPLATE(packing_structures, person_alphabetical_t, sort_by_age_and_names)->MinTime(2);
+BENCHMARK_TEMPLATE(packing_structures, person_packed_t, sort_by_age_and_names)->MinTime(2);
+
+/**
+ *  What is supposed to happen here?
+ */
+
 #pragma endregion // Continuous Memory
 
-#pragma region Trees and Graphs
+#pragma region Trees, Graphs, and Priority Queues
 
-#pragma endregion // Trees and Graphs
+#pragma endregion // Trees, Graphs, and Priority Queues
 
 #pragma endregion // - Structures, Tuples, ADTs, AOS, SOA
 
