@@ -741,6 +741,15 @@ template <typename value_type_> class strided_iterator {
     std::size_t stride_bytes_;
 };
 
+#if defined(__aarch64__)
+/**
+ *  @brief  Helper derived from `__aarch64_sync_cache_range` in `libgcc`, used to
+ *          @b flush the cache on Arm64, where the x86 `_mm_clflush` intrinsic is not available.
+ *  @param  address The address to flush from the cache, must be aligned to the cache line size.
+ */
+void _mm_clflush(void const *address) { asm volatile("dc\tcvau, %0" : : "r"(address) : "memory"); }
+#endif
+
 template <bool aligned> static void memory_access(bm::State &state) {
     memory_specs_t const memory_specs = fetch_memory_specs();
     assert(                                                      //
