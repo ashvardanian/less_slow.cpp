@@ -2200,18 +2200,23 @@ static void log_with_fmt(                  //
     auto now = std::chrono::high_resolution_clock::now();
     auto time_since_epoch = now.time_since_epoch();
 
+    // Extract seconds and milliseconds
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
+
     // ISO 8601 defines the format as: YYYY-MM-DDTHH:MM:SS.mmm
     // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
     // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
     // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
     std::format_to_n( //
         buffer, buffer_size,
-        "{0:%FT%H:%M:}{1:%S}{0:%Oz} | "              // time format
-        "{2}:{3} {4:>3} "                            // location and code format
-        "\"{5}\"\n",                                 // message format
-        now, time_since_epoch,                       // date and time
-        location.file_name(), location.line(), code, // location and code
-        message                                      // message of known length
+        "{:%FT%R}:{:0>2}.{:0>3}Z | "                     // time format
+        "{}:{} <{:0>3}> "                                // location and code format
+        "\"{}\"\n",                                      // message format
+        now, static_cast<unsigned int>(seconds.count()), // date and time
+        static_cast<unsigned int>(milliseconds.count()), // milliseconds
+        location.file_name(), location.line(), code,     // location and code
+        message                                          // message of known length
     );
 }
 
