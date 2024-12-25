@@ -518,6 +518,67 @@ BENCHMARK(branch_cost)->RangeMultiplier(4)->Range(256, 32 * 1024);
 
 #pragma endregion // Branch Prediction
 
+#pragma region Cache Misses
+
+/**
+ *  Over the decades, CPU speeds have outpaced memory speeds, creating a gap
+ *  mitigated by multi-level caching (L1/L2/L3). Cache misses occur when the
+ *  CPU fetches data from RAM instead of the cache, incurring high latency.
+ *
+ *  Access patterns play a crucial role:
+ *      - @b Sequential: Predictable and optimal for the CPU prefetcher.
+ *      - @b Random: Unpredictable, leading to frequent cache misses.
+ *
+ *  Benchmarks demonstrate this gap—sequential access can outperform random access
+ *  by 10x or more for data sizes exceeding cache capacity. However, the difference
+ *  narrows for smaller datasets, benefiting from spatial and temporal locality.
+ */
+
+#include <random> // `std::random_device`, `std::mt19937`
+
+enum class access_order { sequential, random };
+
+template <access_order access_order_>
+static void cache_misses_cost(bm::State &state) {
+    auto count = static_cast<std::uint32_t>(state.range(0));
+
+    // Populate with arbitrary data
+    std::vector<std::int32_t> data(count);
+    std::iota(data.begin(), data.end(), 0);
+
+    // Initialize different access orders
+    std::vector<std::uint32_t> indices(count);
+    if constexpr (access_order_ == access_order::random) {
+        std::random_device random_device;
+        std::mt19937 generator(random_device());
+        std::uniform_int_distribution<std::uint32_t> uniform_distribution(0, count - 1);
+        std::generate_n(indices.begin(), indices.size(), [&] { return uniform_distribution(generator); });
+    }
+    else { std::iota(indices.begin(), indices.end(), 0u); }
+
+    // The actual benchmark:
+    for (auto _ : state) {
+        std::int64_t sum = 0;
+        for (auto index : indices) bm::DoNotOptimize(sum += data[index]);
+    }
+}
+
+BENCHMARK(cache_misses_cost<access_order::sequential>)
+    ->MinTime(2)
+    ->RangeMultiplier(8)
+    ->Range(8u * 1024u, 128u * 1024u * 1024u);
+BENCHMARK(cache_misses_cost<access_order::random>)
+    ->MinTime(2)
+    ->RangeMultiplier(8)
+    ->Range(8u * 1024u, 128u * 1024u * 1024u);
+
+/**
+ *  For small arrays, the execution speed will be identical.
+ *  For larger ones, the latency can differ @b 15x!
+ */
+
+#pragma endregion // Cache Misses
+
 #pragma endregion // - Basics
 
 #pragma region - Numerics
