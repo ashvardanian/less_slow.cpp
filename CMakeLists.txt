@@ -11,8 +11,15 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fconcepts-diagnostics-depth=10") # Helps debugging concepts
+# Apple Clang doesn't support `-march=native` flag.
+message(STATUS "CMAKE_SYSTEM_NAME: ${CMAKE_SYSTEM_NAME}")
+message(STATUS "CMAKE_CXX_COMPILER_ID: ${CMAKE_CXX_COMPILER_ID}")
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
+endif()
+
+# Debugging concepts requires a higher depth
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fconcepts-diagnostics-depth=10")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra") # Forces clean code
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-stringop-overflow") # Compiling TBB
 
@@ -33,7 +40,8 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g")
 
 # Add sanitizers
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address,undefined")
+set(CMAKE_CXX_FLAGS_DEBUG
+    "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address,undefined")
 
 # Load the dependencies only after we've configured the compilation settings
 set(FETCHCONTENT_QUIET OFF)
@@ -79,7 +87,9 @@ FetchContent_Declare(
   GIT_TAG master)
 
 # Set the TBB_TEST option to OFF before making it available
-set(TBB_TEST OFF CACHE BOOL "Do not build TBB tests" FORCE)
+set(TBB_TEST
+    OFF
+    CACHE BOOL "Do not build TBB tests" FORCE)
 FetchContent_MakeAvailable(TBB)
 
 # Add dependencies

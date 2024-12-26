@@ -816,7 +816,7 @@ static void f32x4x4_matmul(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
+    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
 }
 
@@ -876,7 +876,7 @@ static void f32x4x4_matmul_unrolled(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_unrolled_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
+    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
 }
 
@@ -974,7 +974,7 @@ static void f32x4x4_matmul_sse41(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_sse41_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
+    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
 }
 
@@ -1063,7 +1063,7 @@ static void f32x4x4_matmul_avx512(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_avx512_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * 4 * 2 /* 1 addition and 1 multiplication */;
+    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
     state.SetItemsProcessed(flops_per_cycle * state.iterations());
 }
 BENCHMARK(f32x4x4_matmul_avx512);
