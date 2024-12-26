@@ -1983,6 +1983,8 @@ constexpr std::size_t fail_period_convert_to_integer = 11;
 constexpr std::size_t fail_period_next_string = 17;
 constexpr std::size_t fail_period_write_back = 23;
 
+double get_max_value(std::vector<double> const &v) noexcept { return *(std::max_element(std::begin(v), std::end(v))); }
+
 static std::string read_integer_from_file_or_throw( //
     [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept(false) {
     if (iteration_index % fail_period_read_integer == 0) throw std::runtime_error("File read failed");
@@ -2037,8 +2039,8 @@ static void errors_throw(bm::State &state) {
     }
 }
 
-BENCHMARK(errors_throw)->MinTime(2);
-BENCHMARK(errors_throw)->MinTime(2)->Threads(8);
+BENCHMARK(errors_throw)->ComputeStatistics("max", get_max_value)->MinTime(2);
+BENCHMARK(errors_throw)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(8);
 
 /**
  *  Until C++23, we don't have a `std::expected` implementation,
@@ -2118,8 +2120,8 @@ static void errors_variants(bm::State &state) {
     }
 }
 
-BENCHMARK(errors_variants)->MinTime(2);
-BENCHMARK(errors_variants)->MinTime(2)->Threads(8);
+BENCHMARK(errors_variants)->ComputeStatistics("max", get_max_value)->MinTime(2);
+BENCHMARK(errors_variants)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(8);
 
 /**
  *  As practice shows, STL is almost never the performance-oriented choice!
@@ -2195,16 +2197,17 @@ static void errors_with_status(bm::State &state) {
     }
 }
 
-BENCHMARK(errors_with_status)->MinTime(2);
-BENCHMARK(errors_with_status)->MinTime(2)->Threads(8);
+BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(2);
+BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(8);
 
 #pragma endregion // Errors
 
 #pragma region Logs
 
 /**
- *  - Throwing an exception: @b 268 ns single-threaded, @b 815 ns multi-threaded.
- *  - Returning an error code: @b 7 ns single-threaded, @b 24 ns multi-threaded.
+ *  - Throwing an STL exception: @b 268 ns single-threaded, @b 815 ns multi-threaded.
+ *  - Returning an STL error code: @b 7 ns single-threaded, @b 24 ns multi-threaded.
+ *  - Returning a custom status code: @b 4 ns single-threaded, @b 15 ns multi-threaded.
  *
  *  Similarly, logging can be done in different ways. Nice logs may look like this:
  *
