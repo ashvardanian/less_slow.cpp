@@ -48,6 +48,13 @@ set(CMAKE_CXX_FLAGS_DEBUG
 set(FETCHCONTENT_QUIET OFF)
 include(FetchContent)
 
+# Fetch FMT for logging, as `std::format` is not feature-complete yet
+FetchContent_Declare(
+  fmt
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG 11.1.0)
+FetchContent_MakeAvailable(fmt)
+
 # Fetch GTest, as its needed for GBenchmark https://stackoverflow.com/a/60417587
 FetchContent_Declare(
   googletest
@@ -115,7 +122,7 @@ find_package(OpenMP)
 
 add_executable(less_slow less_slow.cpp)
 set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(less_slow pthread benchmark)
+target_link_libraries(less_slow pthread benchmark fmt)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(less_slow TBB::tbb)

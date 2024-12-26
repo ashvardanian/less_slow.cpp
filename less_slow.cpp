@@ -2224,7 +2224,7 @@ BENCHMARK(errors_with_status)->MinTime(2)->Threads(8);
 
 using std::string_view_literals::operator""sv;
 
-static void log_with_printf(               //
+static std::size_t log_with_printf(        //
     char *buffer, std::size_t buffer_size, //
     std::source_location const &location, int code, std::string_view message) noexcept {
 
@@ -2239,7 +2239,7 @@ static void log_with_printf(               //
     auto time_t_now = std::chrono::system_clock::to_time_t(now);
     auto tm = std::gmtime(&time_t_now); // UTC only, no local timezone dependency
 
-    std::snprintf( //
+    int count_bytes = std::snprintf( //
         buffer, buffer_size,
         "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ | "                                     // time format
         "%s:%d <%03d> "                                                              // location and code format
@@ -2249,31 +2249,12 @@ static void log_with_printf(               //
         location.file_name(), location.line(), code,                                 // location and code
         static_cast<int>(message.size()), message.data()                             // message of known length
     );
-}
-
-static void log_printf(bm::State &state) {
-    struct {
-        int code;
-        std::string_view message;
-    } errors[3] = {
-        {1, "Operation not permitted"sv},
-        {12, "Cannot allocate memory"sv},
-        {113, "No route to host"sv},
-    };
-    char buffer[1024];
-    std::size_t iteration_index = 0;
-    for (auto _ : state) {
-        log_with_printf(                     //
-            buffer, sizeof(buffer),          //
-            std::source_location::current(), //
-            errors[iteration_index % 3].code, errors[iteration_index % 3].message);
-        iteration_index++;
-    }
+    return static_cast<std::size_t>(count_bytes);
 }
 
 #include <format> // `std::format_to_n`
 
-static void log_with_fmt(                  //
+static std::size_t log_with_format(        //
     char *buffer, std::size_t buffer_size, //
     std::source_location const &location, int code, std::string_view message) noexcept {
 
@@ -2288,7 +2269,7 @@ static void log_with_fmt(                  //
     // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
     // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
     // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
-    std::format_to_n( //
+    std::format_to_n_result<char *> result = std::format_to_n( //
         buffer, buffer_size,
         "{:%FT%R}:{:0>2}.{:0>3}Z | "                     // time format
         "{}:{} <{:0>3}> "                                // location and code format
@@ -2298,9 +2279,45 @@ static void log_with_fmt(                  //
         location.file_name(), location.line(), code,     // location and code
         message                                          // message of known length
     );
+    return static_cast<std::size_t>(result.size);
 }
 
-static void log_fmt(bm::State &state) {
+#include <fmt/chrono.h>  // formatting for `std::chrono` types
+#include <fmt/compile.h> // compile-time format strings
+#include <fmt/core.h>    // `std::format_to_n`
+
+static std::size_t log_with_fmt(           //
+    char *buffer, std::size_t buffer_size, //
+    std::source_location const &location, int code, std::string_view message) noexcept {
+
+    auto now = std::chrono::high_resolution_clock::now();
+    auto time_since_epoch = now.time_since_epoch();
+
+    // Extract seconds and milliseconds
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
+
+    // ISO 8601 defines the format as: YYYY-MM-DDTHH:MM:SS.mmm
+    // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
+    // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
+    // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
+    fmt::format_to_n_result<char *> result = fmt::format_to_n( //
+        buffer, buffer_size,
+        FMT_COMPILE(                                     //
+            "{:%FT%R}:{:0>2}.{:0>3}Z | "                 // time format
+            "{}:{} <{:0>3}> "                            // location and code format
+            "\"{}\"\n"),                                 // message format
+        now, static_cast<unsigned int>(seconds.count()), // date and time
+        static_cast<unsigned int>(milliseconds.count()), // milliseconds
+        location.file_name(), location.line(), code,     // location and code
+        message                                          // message of known length
+    );
+    return static_cast<std::size_t>(result.size);
+}
+
+typedef std::size_t (*logger_type)(char *, std::size_t, std::source_location const &, int, std::string_view);
+
+static void logging(bm::State &state, logger_type logger) {
     struct {
         int code;
         std::string_view message;
@@ -2311,19 +2328,24 @@ static void log_fmt(bm::State &state) {
     };
     char buffer[1024];
     std::size_t iteration_index = 0;
+    std::size_t bytes_logged = 0;
     for (auto _ : state) {
-        log_with_fmt(                        //
+        bytes_logged += logger(              //
             buffer, sizeof(buffer),          //
             std::source_location::current(), //
             errors[iteration_index % 3].code, errors[iteration_index % 3].message);
         iteration_index++;
     }
+    state.SetBytesProcessed(bytes_logged);
 }
 
-BENCHMARK(log_printf)->MinTime(2);
-BENCHMARK(log_fmt)->MinTime(2);
-BENCHMARK(log_printf)->MinTime(2)->Threads(8);
-BENCHMARK(log_fmt)->MinTime(2)->Threads(8);
+BENCHMARK_CAPTURE(logging, &log_with_printf)->MinTime(2);
+BENCHMARK_CAPTURE(logging, &log_with_format)->MinTime(2);
+BENCHMARK_CAPTURE(logging, &log_with_fmt)->MinTime(2);
+
+BENCHMARK_CAPTURE(logging, &log_with_printf)->MinTime(2)->Threads(8);
+BENCHMARK_CAPTURE(logging, &log_with_format)->MinTime(2)->Threads(8);
+BENCHMARK_CAPTURE(logging, &log_with_fmt)->MinTime(2)->Threads(8);
 
 #pragma endregion // Logs
 
