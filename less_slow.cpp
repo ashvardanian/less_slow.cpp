@@ -19,7 +19,6 @@
  *  into more complex systems. Same principles apply to Rust, Python, and Go,
  *  so parts of the project have been reproduced in those languages.
  *
- *  @see C++ Benchmarks: https://github.com/ashvardanian/less_slow.cpp
  *  @see Rust Benchmarks: https://github.com/ashvardanian/less_slow.rs
  *  @see Python Benchmarks: https://github.com/ashvardanian/less_slow.py
  *  @see Go Benchmarks: https://github.com/ashvardanian/less_slow.go
@@ -67,10 +66,10 @@ BENCHMARK(i32_addition);
 /**
  *  Trivial kernels operating on constant values are not the most
  *  straightforward candidates for benchmarking. The compiler can easily
- *  optimize them, and the CPU can predict the result... showing "0 ns" - zero
+ *  optimize them, and the CPU can predict the result... showing "0ns" - zero
  *  nanoseconds per iteration. Unfortunately, no operation runs this fast on the
  *  computer. On a 3 GHz CPU, you would perform 3 Billion ops every second.
- *  So, each would take 0.33 ns, not 0 ns. If we change the compilation
+ *  So, each would take 0.33ns, not 0ns. If we change the compilation
  *  settings, discarding the @b `-O3` flag for "Release build" optimizations,
  *  we may see a non-zero value, but it won't represent real-world performance.
  *
@@ -116,7 +115,7 @@ BENCHMARK(i32_addition_paused);
 
 /**
  *  However, the `PauseTiming` and `ResumeTiming` functions are neither free.
- *  In the current implementation, they can easily take @b ~127 ns, or around
+ *  In the current implementation, they can easily take @b ~127ns, or around
  *  150 CPU cycles. They are useless in this case, but there is an alternative!
  *
  *  A typical pattern when implementing a benchmark is to initialize with a
@@ -336,27 +335,27 @@ BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
 
 #pragma endregion // Parallelism and Computational Complexity
 
+#pragma region Recursion
+
 /**
  *  The `std::sort` and the underlying Quick-Sort are perfect research subjects
- * for benchmarking and understanding how the computer works. Naively
- * implementing the Quick-Sort in C/C++ would still put us at disadvantage,
- * compared to the STL.
+ *  for benchmarking and understanding how the computer works. Naively
+ *  implementing the Quick-Sort in C/C++ would still put us at disadvantage,
+ *  compared to the STL.
  *
  *  Most implementations we can find in textbooks, use recursion. Recursion is a
- * beautiful concept, but it's not always the best choice for performance. Every
- * nested call requires a new stack frame, and the stack is limited. Moreover,
- * local variables need to be constructed and destructed, and the CPU needs to
- * jump around in memory.
+ *  beautiful concept, but it's not always the best choice for performance. Every
+ *  nested call requires a new stack frame, and the stack is limited. Moreover,
+ *  local variables need to be constructed and destructed, and the CPU needs to
+ *  jump around in memory.
  *
  *  The alternative, as it often is in computing, is to use compensate runtime
- * issue with memory. We can use a stack data structure to continuously store
- * the state of the algorithm, and then process it in a loop.
+ *  issue with memory. We can use a stack data structure to continuously store
+ *  the state of the algorithm, and then process it in a loop.
  *
  *  The same ideas common appear when dealing with trees or graph algorithms.
  */
 #include <utility> // `std::swap`
-
-#pragma region Recursion
 
 /**
  *  @brief  Quick-Sort helper function for array partitioning, reused by both
@@ -399,9 +398,10 @@ struct quick_sort_recurse {
 
 /**
  *  @brief  Quick-Sort implementation as a C++ function object, with iterative
- *  deepening using a "stack" data-structure. Note, this implementation can be
- *  inlined, but can't be @b `noexcept`, due to a potential memory allocation in
- *  the `std::vector::resize` function.
+ *          deepening using a "stack" data-structure.
+ *
+ *  Note, this implementation can be inlined, but can't be @b `noexcept`, due to
+ *  a potential memory allocation in the `std::vector::resize` function.
  *
  *  Fun fact: The `std::vector` is actually a better choice for a "stack" than
  *  the `std::stack`, as the latter builds on top of a `std::deque`, which is
@@ -495,8 +495,8 @@ BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 4096);
  *  to @b 4096 branches can be memorized. Beyond that, branch mis-predictions
  *  occur, causing a severe slowdown due to pipeline stalls.
  *
- *  Consider this example: The same snippet can run at @b 0.7 ns per operation
- *  when branch predictions are accurate but slows down to @b 3.7 ns when
+ *  Consider this example: The same snippet can run at @b 0.7ns per operation
+ *  when branch predictions are accurate but slows down to @b 3.7ns when
  *  predictions fail.
  */
 static void branch_cost(bm::State &state) {
@@ -630,7 +630,7 @@ static void f64_sin_maclaurin(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin);
 
 /**
- *  Result: latency reduction from @b 31 ns down to @b 21 ns.
+ *  Result: latency reduction from @b 31ns down to @b 21ns.
  *
  *  The `std::pow` function is highly generic and not optimized for small,
  *  constant integer exponents. We can implement a specialized version for
@@ -650,7 +650,7 @@ static void f64_sin_maclaurin_powless(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin_powless);
 
 /**
- *  Result: latency reduction to @b 2 ns - a @b 15x speedup over the standard!
+ *  Result: latency reduction to @b 2ns - a @b 15x speedup over the standard!
  *
  *  We can force the compiler to bypass IEEE-754 compliance checks using
  *  "fast-math" attributes, enabling aggressive floating-point optimizations.
@@ -692,7 +692,7 @@ FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin_with_fast_math);
 
 /**
- *  Result: latency of @b 0.8 ns - almost @b 40x faster than the standard!
+ *  Result: latency of @b 0.8ns - almost @b 40x faster than the standard!
  *
  *  Advanced libraries like SimSIMD and SLEEF can achieve even better
  *  performance through SIMD-optimized implementations, sometimes trading
@@ -724,7 +724,7 @@ static void integral_division(bm::State &state) {
 BENCHMARK(integral_division);
 
 /**
- *  Division takes around ~10 CPU cycles or @b 2.5 ns. However, if the divisor
+ *  Division takes around ~10 CPU cycles or @b 2.5ns. However, if the divisor
  *  is known at compile time, the compiler can replace the division with
  *  faster shift and multiply instructions — even for large prime numbers
  *  like  `2147483647`.
@@ -747,7 +747,7 @@ BENCHMARK(integral_division_by_constexpr);
  *  and multiplications).
  *
  *  To ensure the division is evaluated at runtime, forcing the compiler to
- *  treat the divisor as a mutable value, wrap it with `std::launder`. This
+ *  treat the divisor as a mutable value, wrap it with @b `std::launder`. This
  *  prevents constant propagation and keeps the benchmark realistic.
  */
 #include <new> // `std::launder`
@@ -822,8 +822,8 @@ BENCHMARK(bits_population_count_core_i7);
 
 /**
  *  The performance difference is substantial — a @b 3x improvement:
- *  - Core 2 variant: 2.4 ns
- *  - Core i7 variant: 0.8 ns
+ *  - Core 2 variant: 2.4ns
+ *  - Core i7 variant: 0.8ns
  *
  *  Fun fact: Only a few integer operations on select AMD CPUs can take as long
  *  as @b ~100 CPU cycles. This includes BMI2 bit-manipulation instructions such
@@ -833,6 +833,8 @@ BENCHMARK(bits_population_count_core_i7);
  */
 
 #pragma endregion // Expensive Integer Operations
+
+#pragma region Compute vs Memory Bounds with Matrix Multiplications
 
 /**
  *  Understanding common algorithmic design patterns across various computational
@@ -854,8 +856,6 @@ BENCHMARK(bits_population_count_core_i7);
  *
  *  Let's emulate such operations and explore the underlying principles.
  */
-
-#pragma region Compute vs Memory Bounds with Matrix Multiplications
 
 struct f32x4x4_t {
     float scalars[4][4];
@@ -892,7 +892,7 @@ BENCHMARK(f32x4x4_matmul);
  *  additions. The asymptotic complexity is O(N^3), with the operation count scaling
  *  cubically with the matrix side. Surprisingly, the naive kernel is fully unrolled
  *  and vectorized by the compiler, achieving @b exceptional_performance:
- *  @b ~3.1 ns for 112 arithmetic operations (64 multiplications + 48 additions).
+ *  @b ~3.1ns for 112 arithmetic operations (64 multiplications + 48 additions).
  *
  *  Most of these operations are data-parallel (each cell is independent of others),
  *  enabling the CPU to execute them in parallel. Since the matrix size is small and
@@ -1047,7 +1047,7 @@ BENCHMARK(f32x4x4_matmul_sse41);
 #endif // defined(__SSE2__)
 
 /**
- *  The result is @b 19.6 ns compared to the @b 3.1 ns from the unrolled kernel.
+ *  The result is @b 19.6ns compared to the @b 3.1ns from the unrolled kernel.
  *  It turns out we were not as clever as we thought. Disassembling the unrolled
  *  kernel reveals that the compiler was already optimizing it better than we did.
  *  Each line compiles into a series of efficient instructions like:
@@ -1136,7 +1136,7 @@ BENCHMARK(f32x4x4_matmul_avx512);
 #endif // defined(__AVX512F__)
 
 /**
- *  The result is @b 2.8 ns on Sapphire Rapids—a modest 10% improvement. To
+ *  The result is @b 2.8ns on Sapphire Rapids—a modest 10% improvement. To
  *  fully leverage AVX-512, we need larger matrices where horizontal reductions
  *  don't dominate latency. For small sizes like 4x4, the wide ZMM registers
  *  aren't fully utilized.
@@ -1144,17 +1144,19 @@ BENCHMARK(f32x4x4_matmul_avx512);
  *  As an exercise, try implementing matrix multiplication for 3x3 matrices.
  *  Despite requiring fewer operations (27 multiplications and 18 additions
  *  compared to 64 multiplications and 48 additions for 4x4), the compiler
- *  may peak at @b 5.3 ns — whopping @b 71% slower for a @b 60% smaller task!
+ *  may peak at @b 5.3ns — whopping @b 71% slower for a @b 60% smaller task!
  *
  *  AVX-512 includes advanced instructions like `_mm512_mask_compressstoreu_ps`
  *  and `_mm512_maskz_expandloadu_ps`, which could be used with a mask like
  *  @b 0b0000'0111'0111'0111 to handle 3x3 matrices. However, their high latency
- *  means the performance will still degrade—@b around 5 ns in practice.
+ *  means the performance will still degrade—@b around 5ns in practice.
  *
  *  Benchmark everything! Don't assume less work translates to faster execution.
  */
 
 #pragma endregion // Compute vs Memory Bounds with Matrix Multiplications
+
+#pragma region Alignment of Memory Accesses
 
 /**
  *  When designing high-performance kernels, memory alignment is crucial.
@@ -1176,8 +1178,6 @@ BENCHMARK(f32x4x4_matmul_avx512);
  *  - Reading cache properties with platform-specific APIs.
  *  - Flushing the CPU cache between runs to ensure consistent results.
  */
-
-#pragma region Alignment of Memory Accesses
 
 #include <cassert>  // `assert`
 #include <fstream>  // `std::ifstream`
@@ -1289,8 +1289,9 @@ template <bool aligned_>
 static void memory_access(bm::State &state) {
     constexpr std::size_t typical_l2_size = 1024u * 1024u;
     std::size_t const cache_line_width = fetch_cache_line_width();
-    assert(cache_line_width > 0 && __builtin_popcountll(cache_line_width) == 1 &&
-           "The cache line width must be a power of two greater than 0");
+    assert( //
+        cache_line_width > 0 && __builtin_popcountll(cache_line_width) == 1 &&
+        "The cache line width must be a power of two greater than 0");
 
     // We are using a fairly small L2-cache-sized buffer to show, that this is
     // not just about Big Data. Anything beyond a few megabytes with irregular
@@ -1360,13 +1361,15 @@ std::size_t parse_size_string(std::string const &str) {
 
 #pragma endregion // - Numerics
 
+#pragma region - Pipelines and Abstractions
+
 /**
  *  Designing efficient kernels is only the first step; composing them
  *  into full programs without losing performance is the real challenge.
  *
  *  Consider a hypothetical numeric processing pipeline:
  *
- *    1. Generate all integers in a given range (e.g., [1, 33]).
+ *    1. Generate all integers in a given range (e.g., [1, 49]).
  *    2. Filter out integers that are perfect squares.
  *    3. Expand each remaining number into its prime factors.
  *    4. Sum all prime factors from the filtered numbers.
@@ -1378,8 +1381,8 @@ std::size_t parse_size_string(std::string const &str) {
  *    - C++20 coroutines using a lightweight generator.
  *    - C++20 ranges with a lazily evaluated factorization.
  */
-
-#pragma region - Pipelines and Abstractions
+constexpr std::uint64_t pipe_start = 3;
+constexpr std::uint64_t pipe_end = 49;
 
 /**
  *  @brief  Checks if a number is a power of two.
@@ -1399,16 +1402,13 @@ inline bool is_power_of_three(std::uint64_t x) noexcept {
     return x > 0 && max_power_of_three % x == 0;
 }
 
-constexpr std::uint64_t pipe_start = 3;
-constexpr std::uint64_t pipe_end = 49;
-
 #pragma region Coroutines and Asynchronous Programming
 
 /**
  *  @brief  Supplies the prime factors to a template-based callback.
  */
 template <typename callback_type_>
-[[gnu::always_inline]] inline void prime_factors_cpp11( //
+[[gnu::always_inline]] inline void prime_factors_lambdas( //
     std::uint64_t input, callback_type_ &&callback) noexcept {
     // Handle factor 2 separately
     while ((input & 1) == 0) {
@@ -1434,7 +1434,7 @@ static void pipeline_cpp11_lambdas(bm::State &state) {
         sum = 0, count = 0;
         for (std::uint64_t value = pipe_start; value <= pipe_end; ++value) {
             if (!is_power_of_two(value) && !is_power_of_three(value))
-                prime_factors_cpp11(value, [&](std::uint64_t factor) { sum += factor, count++; });
+                prime_factors_lambdas(value, [&](std::uint64_t factor) { sum += factor, count++; });
         }
         bm::DoNotOptimize(sum);
     }
@@ -1466,7 +1466,7 @@ static void filter_stl( //
 }
 
 static void prime_factors_stl(std::uint64_t input, std::function<void(std::uint64_t)> const &callback) {
-    prime_factors_cpp11(input, callback);
+    prime_factors_lambdas(input, callback);
 }
 
 static void pipeline_cpp11_stl(bm::State &state) {
@@ -1725,10 +1725,10 @@ BENCHMARK(pipeline_cpp20_ranges);
 /**
  *  The results for the input range [3, 49] are as follows:
  *
- *      - pipeline_cpp11_lambdas:      @b 295ns
- *      - pipeline_cpp11_stl:          @b 765ns
- *      - pipeline_cpp20_coroutines:   @b 712ns
- *      - pipeline_cpp20_ranges:       @b 216ns
+ *      - `pipeline_cpp11_lambdas`:      @b 295ns
+ *      - `pipeline_cpp11_stl`:          @b 765ns
+ *      - `pipeline_cpp20_coroutines`:   @b 712ns
+ *      - `pipeline_cpp20_ranges`:       @b 216ns
  *
  *  Why is STL slower than C++11 lambdas? STL's `std::function` allocates memory!
  *  Why are coroutines slower than lambdas? Coroutines allocate state and have
@@ -1752,10 +1752,10 @@ BENCHMARK(pipeline_cpp20_ranges);
  *  lazy and don't need to capture anything. On the practical side, when implementing
  *  ranges, make sure to avoid branching even more than with regular code.
  *
- *  @see Standard Ranges by Eric Niebler: https://ericniebler.com/2018/12/05/standard-ranges/
- *  @see Should we stop writing functions? by Jonathan Müller
+ *  @see "Standard Ranges" by Eric Niebler: https://ericniebler.com/2018/12/05/standard-ranges/
+ *  @see "Should we stop writing functions?"" by Jonathan Müller:
  *       https://www.think-cell.com/en/career/devblog/should-we-stop-writing-functions
- *  @see Lambdas, Nested Functions, and Blocks, oh my! by JeanHeyd Meneide:
+ *  @see "Lambdas, Nested Functions, and Blocks, oh my!" by JeanHeyd Meneide:
  *       https://thephd.dev/lambdas-nested-functions-block-expressions-oh-my
  */
 
@@ -1768,14 +1768,14 @@ BENCHMARK(pipeline_cpp20_ranges);
 
 #pragma endregion // Variants, Tuples, and State Machines
 
+#pragma region Virtual Functions and Polymorphism
+
 /**
  *  Now that we've explored how to write modern, performant C++ code,
  *  let's dive into how @b not to do it. Ironically, this style of programming
  *  is still taught in universities and used in legacy systems across the industry.
  *  If you see something like this in a codebase at a prospective job — run 🙂
  */
-
-#pragma region Virtual Functions and Polymorphism
 
 #include <memory> // `std::unique_ptr`
 
@@ -1810,7 +1810,7 @@ class prime_factors_virtual : public base_virtual_class {
   public:
     void process(std::vector<std::uint64_t> &data) const override {
         std::vector<std::uint64_t> expanded;
-        for (auto input : data) prime_factors_cpp11(input, [&](std::uint64_t factor) { expanded.push_back(factor); });
+        for (auto input : data) prime_factors_lambdas(input, [&](std::uint64_t factor) { expanded.push_back(factor); });
         data.swap(expanded);
     }
 };
@@ -1953,9 +1953,30 @@ static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
 
 #pragma endregion // Continuous Memory
 
-#pragma region Trees and Graphs
+#pragma region Concurrent Trees, Graphs, and Data Layouts
 
-#pragma endregion // Trees and Graphs
+/**
+ *  We already understand the cost of accessing non-contiguous memory, cache misses,
+ *  pointer chasing, split loads, data locality, and even parallelism, and asynchrony,
+ *  but it's not the same as concurrency and concurrent data-structures.
+ *
+ *  Let's imagine a somewhat realistic app, that will be analyzing some sparse graph
+ *  data-structure concurrently.
+ *
+ *  - Typical weighted directed graph structure, built on nested @b `std::unordered_map`s.
+ *  - Cleaner, single-level thread-safe @b `std::map` with mutexes.
+ *  - Flat design with userspace @b `std::atomic` locks.
+ */
+
+#include <map>          // `std::map`
+#include <mutex>        // `std::mutex`
+#include <shared_mutex> // `std::shared_mutex`
+
+std::unordered_map<std::uint32_t, std::unordered_map<std::uint32_t, float>> graph;
+
+#include <atomic>
+
+#pragma endregion // Concurrent Trees, Graphs, and Data Layouts
 
 #pragma endregion // - Structures, Tuples, ADTs, AOS, SOA
 
@@ -2200,16 +2221,19 @@ static void errors_with_status(bm::State &state) {
 BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(2);
 BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(8);
 
+/**
+ *  - Throwing an STL exception: @b 268ns single-threaded, @b 815ns multi-threaded.
+ *  - Returning an STL error code: @b 7ns single-threaded, @b 24ns multi-threaded.
+ *  - Returning a custom status code: @b 4ns single-threaded, @b 15ns multi-threaded.
+ */
+
 #pragma endregion // Errors
 
 #pragma region Logs
 
 /**
- *  - Throwing an STL exception: @b 268 ns single-threaded, @b 815 ns multi-threaded.
- *  - Returning an STL error code: @b 7 ns single-threaded, @b 24 ns multi-threaded.
- *  - Returning a custom status code: @b 4 ns single-threaded, @b 15 ns multi-threaded.
- *
- *  Similarly, logging can be done in different ways. Nice logs may look like this:
+ *  Similar to error handling, logging can be done in different ways.
+ *  Nice logs may look like this:
  *
  *      [time] | [filename]:[source-line] <[code]> "[message]"
  *
@@ -2353,9 +2377,9 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
 
 /**
  *  The results for the logging benchmarks are as follows:
- *  - `log_printf`: @b 321 ns
- *  - `log_format`: @b 416 ns
- *  - `log_fmt`: @b 171 ns
+ *  - `log_printf`: @b 321ns
+ *  - `log_format`: @b 416ns
+ *  - `log_fmt`: @b 171ns
  *
  *  The `std::format` is based on the `fmt`, but it's clearly very far behind.
  *  The lack of compile-time format definitions and custom allocators support
