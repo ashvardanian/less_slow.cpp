@@ -2224,100 +2224,104 @@ BENCHMARK(errors_with_status)->MinTime(2)->Threads(8);
 
 using std::string_view_literals::operator""sv;
 
-static std::size_t log_with_printf(        //
-    char *buffer, std::size_t buffer_size, //
-    std::source_location const &location, int code, std::string_view message) noexcept {
+struct log_printf_t {
+    std::size_t operator()(                    //
+        char *buffer, std::size_t buffer_size, //
+        std::source_location const &location, int code, std::string_view message) const noexcept {
 
-    auto now = std::chrono::high_resolution_clock::now();
-    auto time_since_epoch = now.time_since_epoch();
+        auto now = std::chrono::high_resolution_clock::now();
+        auto time_since_epoch = now.time_since_epoch();
 
-    // Extract seconds and milliseconds
-    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
-    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
+        // Extract seconds and milliseconds
+        auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
+        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
 
-    // Format as ISO 8601: YYYY-MM-DDTHH:MM:SS.mmm
-    auto time_t_now = std::chrono::system_clock::to_time_t(now);
-    auto tm = std::gmtime(&time_t_now); // UTC only, no local timezone dependency
+        // Format as ISO 8601: YYYY-MM-DDTHH:MM:SS.mmm
+        auto time_t_now = std::chrono::system_clock::to_time_t(now);
+        auto tm = std::gmtime(&time_t_now); // UTC only, no local timezone dependency
 
-    int count_bytes = std::snprintf( //
-        buffer, buffer_size,
-        "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ | "                                     // time format
-        "%s:%d <%03d> "                                                              // location and code format
-        "\"%.*s\"\n",                                                                // message format
-        tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,                             // date
-        tm->tm_hour, tm->tm_min, tm->tm_sec, static_cast<int>(milliseconds.count()), // time
-        location.file_name(), location.line(), code,                                 // location and code
-        static_cast<int>(message.size()), message.data()                             // message of known length
-    );
-    return static_cast<std::size_t>(count_bytes);
-}
+        int count_bytes = std::snprintf( //
+            buffer, buffer_size,
+            "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ | "                                     // time format
+            "%s:%d <%03d> "                                                              // location and code format
+            "\"%.*s\"\n",                                                                // message format
+            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,                             // date
+            tm->tm_hour, tm->tm_min, tm->tm_sec, static_cast<int>(milliseconds.count()), // time
+            location.file_name(), location.line(), code,                                 // location and code
+            static_cast<int>(message.size()), message.data()                             // message of known length
+        );
+        return static_cast<std::size_t>(count_bytes);
+    }
+};
 
 #include <format> // `std::format_to_n`
 
-static std::size_t log_with_format(        //
-    char *buffer, std::size_t buffer_size, //
-    std::source_location const &location, int code, std::string_view message) noexcept {
+struct log_format_t {
+    std::size_t operator()(                    //
+        char *buffer, std::size_t buffer_size, //
+        std::source_location const &location, int code, std::string_view message) const noexcept {
 
-    auto now = std::chrono::high_resolution_clock::now();
-    auto time_since_epoch = now.time_since_epoch();
+        auto now = std::chrono::high_resolution_clock::now();
+        auto time_since_epoch = now.time_since_epoch();
 
-    // Extract seconds and milliseconds
-    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
-    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
+        // Extract seconds and milliseconds
+        auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
+        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
 
-    // ISO 8601 defines the format as: YYYY-MM-DDTHH:MM:SS.mmm
-    // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
-    // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
-    // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
-    std::format_to_n_result<char *> result = std::format_to_n( //
-        buffer, buffer_size,
-        "{:%FT%R}:{:0>2}.{:0>3}Z | "                     // time format
-        "{}:{} <{:0>3}> "                                // location and code format
-        "\"{}\"\n",                                      // message format
-        now, static_cast<unsigned int>(seconds.count()), // date and time
-        static_cast<unsigned int>(milliseconds.count()), // milliseconds
-        location.file_name(), location.line(), code,     // location and code
-        message                                          // message of known length
-    );
-    return static_cast<std::size_t>(result.size);
-}
+        // ISO 8601 defines the format as: YYYY-MM-DDTHH:MM:SS.mmm
+        // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
+        // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
+        // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
+        std::format_to_n_result<char *> result = std::format_to_n( //
+            buffer, buffer_size,
+            "{:%FT%R}:{:0>2}.{:0>3}Z | "                     // time format
+            "{}:{} <{:0>3}> "                                // location and code format
+            "\"{}\"\n",                                      // message format
+            now, static_cast<unsigned int>(seconds.count()), // date and time
+            static_cast<unsigned int>(milliseconds.count()), // milliseconds
+            location.file_name(), location.line(), code,     // location and code
+            message                                          // message of known length
+        );
+        return static_cast<std::size_t>(result.size);
+    }
+};
 
 #include <fmt/chrono.h>  // formatting for `std::chrono` types
 #include <fmt/compile.h> // compile-time format strings
 #include <fmt/core.h>    // `std::format_to_n`
 
-static std::size_t log_with_fmt(           //
-    char *buffer, std::size_t buffer_size, //
-    std::source_location const &location, int code, std::string_view message) noexcept {
+struct log_fmt_t {
+    std::size_t operator()(                    //
+        char *buffer, std::size_t buffer_size, //
+        std::source_location const &location, int code, std::string_view message) const noexcept {
+        auto now = std::chrono::high_resolution_clock::now();
+        auto time_since_epoch = now.time_since_epoch();
 
-    auto now = std::chrono::high_resolution_clock::now();
-    auto time_since_epoch = now.time_since_epoch();
+        // Extract seconds and milliseconds
+        auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
+        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
 
-    // Extract seconds and milliseconds
-    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch);
-    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch) - seconds;
+        // ISO 8601 defines the format as: YYYY-MM-DDTHH:MM:SS.mmm
+        // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
+        // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
+        // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
+        fmt::format_to_n_result<char *> result = fmt::format_to_n( //
+            buffer, buffer_size,
+            FMT_COMPILE(                                     //
+                "{:%FT%R}:{:0>2}.{:0>3}Z | "                 // time format
+                "{}:{} <{:0>3}> "                            // location and code format
+                "\"{}\"\n"),                                 // message format
+            now, static_cast<unsigned int>(seconds.count()), // date and time
+            static_cast<unsigned int>(milliseconds.count()), // milliseconds
+            location.file_name(), location.line(), code,     // location and code
+            message                                          // message of known length
+        );
+        return static_cast<std::size_t>(result.size);
+    }
+};
 
-    // ISO 8601 defines the format as: YYYY-MM-DDTHH:MM:SS.mmm
-    // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
-    // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
-    // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
-    fmt::format_to_n_result<char *> result = fmt::format_to_n( //
-        buffer, buffer_size,
-        FMT_COMPILE(                                     //
-            "{:%FT%R}:{:0>2}.{:0>3}Z | "                 // time format
-            "{}:{} <{:0>3}> "                            // location and code format
-            "\"{}\"\n"),                                 // message format
-        now, static_cast<unsigned int>(seconds.count()), // date and time
-        static_cast<unsigned int>(milliseconds.count()), // milliseconds
-        location.file_name(), location.line(), code,     // location and code
-        message                                          // message of known length
-    );
-    return static_cast<std::size_t>(result.size);
-}
-
-typedef std::size_t (*logger_type)(char *, std::size_t, std::source_location const &, int, std::string_view);
-
-static void logging(bm::State &state, logger_type logger) {
+template <typename logger_type_>
+static void logging(bm::State &state) {
     struct {
         int code;
         std::string_view message;
@@ -2327,6 +2331,7 @@ static void logging(bm::State &state, logger_type logger) {
         {113, "No route to host"sv},
     };
     char buffer[1024];
+    logger_type_ logger;
     std::size_t iteration_index = 0;
     std::size_t bytes_logged = 0;
     for (auto _ : state) {
@@ -2339,13 +2344,20 @@ static void logging(bm::State &state, logger_type logger) {
     state.SetBytesProcessed(bytes_logged);
 }
 
-BENCHMARK_CAPTURE(logging, &log_with_printf)->MinTime(2);
-BENCHMARK_CAPTURE(logging, &log_with_format)->MinTime(2);
-BENCHMARK_CAPTURE(logging, &log_with_fmt)->MinTime(2);
+BENCHMARK(logging<log_printf_t>)->Name("log_printf")->MinTime(2);
+BENCHMARK(logging<log_format_t>)->Name("log_format")->MinTime(2);
+BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
 
-BENCHMARK_CAPTURE(logging, &log_with_printf)->MinTime(2)->Threads(8);
-BENCHMARK_CAPTURE(logging, &log_with_format)->MinTime(2)->Threads(8);
-BENCHMARK_CAPTURE(logging, &log_with_fmt)->MinTime(2)->Threads(8);
+/**
+ *  The results for the logging benchmarks are as follows:
+ *  - `log_printf`: @b 321 ns
+ *  - `log_format`: @b 416 ns
+ *  - `log_fmt`: @b 171 ns
+ *
+ *  The `std::format` is based on the `fmt`, but it's clearly very far behind.
+ *  The lack of compile-time format definitions and custom allocators support
+ *  make the adaptation unusable for high-performance logging.
+ */
 
 #pragma endregion // Logs
 
