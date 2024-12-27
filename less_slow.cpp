@@ -630,9 +630,11 @@ static void f64_sin_maclaurin(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin);
 
 /**
- *  Result: latency reduction from @b 31ns down to @b 21ns.
+ *  Result: latency reduction from @b 31ns down to @b 21ns on Intel.
+ *  But on Apple M2 Pro, the latency grew from @b 4.8ns to @b 15.2ns 🤯
+ *  Doesn't feel like a win!
  *
- *  The `std::pow` function is highly generic and not optimized for small,
+ *  The @b `std::pow` function is highly generic and not optimized for small,
  *  constant integer exponents. We can implement a specialized version for
  *  faster @b and slightly more accurate results.
  */
@@ -650,7 +652,9 @@ static void f64_sin_maclaurin_powless(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin_powless);
 
 /**
- *  Result: latency reduction to @b 2ns - a @b 15x speedup over the standard!
+ *  Result: latency reduction to @b 2ns - a @b 15x speedup on Intel.
+ *  On Apple M2 Pro, the latency dropped from @b 15.2ns to @b 1.1ns 🚀
+ *  Now this is a win!
  *
  *  We can force the compiler to bypass IEEE-754 compliance checks using
  *  "fast-math" attributes, enabling aggressive floating-point optimizations.
@@ -692,7 +696,8 @@ FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
 BENCHMARK(f64_sin_maclaurin_with_fast_math);
 
 /**
- *  Result: latency of @b 0.8ns - almost @b 40x faster than the standard!
+ *  Result: latency of @b 0.8ns - almost @b 40x faster than the standard
+ *  on Intel, but on Arm the result remained unchanged, the same @b 1.1ns.
  *
  *  Advanced libraries like SimSIMD and SLEEF can achieve even better
  *  performance through SIMD-optimized implementations, sometimes trading
@@ -1179,12 +1184,12 @@ BENCHMARK(f32x4x4_matmul_avx512);
  *  - Flushing the CPU cache between runs to ensure consistent results.
  */
 
-#include <cassert>  // `assert`
-#include <fstream>  // `std::ifstream`
-#include <iterator> // `std::random_access_iterator_tag`
-#include <memory>   // `std::assume_aligned`
-#include <string>   // `std::string`, `std::stoull`
-
+#include <cassert>      // `assert`
+#include <fstream>      // `std::ifstream`
+#include <iterator>     // `std::random_access_iterator_tag`
+#include <memory>       // `std::assume_aligned`
+#include <string>       // `std::string`, `std::stoull`
+#include <sys/sysctl.h> // `sysctlbyname`
 /**
  *  @brief  Reads the contents of a file from the specified path into a string.
  */
@@ -1258,12 +1263,17 @@ class strided_ptr {
     strided_ptr(std::byte *data, std::size_t stride_bytes) : data_(data), stride_(stride_bytes) {
         assert(data_ && "Pointer must not be null, as NULL arithmetic is undefined");
     }
+#if defined(__cpp_lib_assume_aligned) // Not available in Apple Clang
     reference operator*() const noexcept {
         return *std::launder(std::assume_aligned<1>(reinterpret_cast<pointer>(data_)));
     }
     reference operator[](difference_type i) const noexcept {
         return *std::launder(std::assume_aligned<1>(reinterpret_cast<pointer>(data_ + i * stride_)));
     }
+#else
+    reference operator*() const noexcept { return *reinterpret_cast<pointer>(data_); }
+    reference operator[](difference_type i) const noexcept { return *reinterpret_cast<pointer>(data_ + i * stride_); }
+#endif // defined(__cpp_lib_assume_aligned)
 
     // clang-format off
     pointer operator->() const noexcept { return &operator*(); }
@@ -1594,6 +1604,7 @@ BENCHMARK(pipeline_cpp20_coroutines);
 #pragma endregion // Coroutines and Asynchronous Programming
 
 #pragma region Ranges and Iterators
+#if defined(__cpp_lib_ranges)
 
 /**
  *  C++20 ranges are a double-edged sword. They offer powerful abstractions,
@@ -1723,18 +1734,25 @@ static void pipeline_cpp20_ranges(bm::State &state) {
 BENCHMARK(pipeline_cpp20_ranges);
 
 /**
- *  The results for the input range [3, 49] are as follows:
+ *  The results for the input range [3, 49] on Intel Sapphire Rapids are as follows:
  *
  *      - `pipeline_cpp11_lambdas`:      @b 295ns
  *      - `pipeline_cpp11_stl`:          @b 765ns
  *      - `pipeline_cpp20_coroutines`:   @b 712ns
  *      - `pipeline_cpp20_ranges`:       @b 216ns
  *
+ *  On Apple M2 Pro:
+ *
+ *      - `pipeline_cpp11_lambdas`:      @b 114ns
+ *      - `pipeline_cpp11_stl`:          @b 547ns
+ *      - `pipeline_cpp20_coroutines`:   @b 705ns
+ *      - `pipeline_cpp20_ranges`:       @b N/A with Apple Clang
+ *
  *  Why is STL slower than C++11 lambdas? STL's `std::function` allocates memory!
  *  Why are coroutines slower than lambdas? Coroutines allocate state and have
  *  additional overhead for resuming and suspending. Those are fairly simple to grasp.
  *
- *  But why are ranges faster than lambdas? If that happens, the primary cause is
+ *  But how can ranges be faster than lambdas? If that happens, the primary cause is
  *  the cost of moving data from registers to stack and back. Lambdas are closures,
  *  they capture their environment, and need to address it using the `rsp` register
  *  on x86. So if you see many `mov`-es and `rsp` arithmetic like:
@@ -1759,6 +1777,7 @@ BENCHMARK(pipeline_cpp20_ranges);
  *       https://thephd.dev/lambdas-nested-functions-block-expressions-oh-my
  */
 
+#endif            // defined(__cpp_lib_ranges)
 #pragma endregion // Ranges and Iterators
 
 #pragma region Variants, Tuples, and State Machines
@@ -1966,15 +1985,19 @@ static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
  *  - Typical weighted directed graph structure, built on nested @b `std::unordered_map`s.
  *  - Cleaner, single-level thread-safe @b `std::map` with mutexes.
  *  - Flat design with userspace @b `std::atomic` locks.
+ *
+ *  In code, the raw structure may look like:
+ *
+ *  - `std::unordered_map<std::uint32_t, std::unordered_map<std::uint32_t, float>>`
+ *  - `std::map<std::pair<std::uint32_t, std::uint32_t>, float>`
+ *  - `std::vector<std::tuple<std::uint32_t, std::uint32_t, float>>`
  */
 
 #include <map>          // `std::map`
 #include <mutex>        // `std::mutex`
 #include <shared_mutex> // `std::shared_mutex`
 
-std::unordered_map<std::uint32_t, std::unordered_map<std::uint32_t, float>> graph;
-
-#include <atomic>
+#include <atomic> // `std::atomic`
 
 #pragma endregion // Concurrent Trees, Graphs, and Data Layouts
 
@@ -2222,14 +2245,21 @@ BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(
 BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(8);
 
 /**
+ *  On Intel Sapphire Rapids:
  *  - Throwing an STL exception: @b 268ns single-threaded, @b 815ns multi-threaded.
  *  - Returning an STL error code: @b 7ns single-threaded, @b 24ns multi-threaded.
  *  - Returning a custom status code: @b 4ns single-threaded, @b 15ns multi-threaded.
+ *
+ *  On Apple M2 Pro:
+ *  - Throwing an STL exception: @b 728ns single-threaded, @b 837ns multi-threaded.
+ *  - Returning an STL error code: @b 12ns single-threaded, @b 13ns multi-threaded.
+ *  - Returning a custom status code: @b 7ns single-threaded, @b 7ns multi-threaded.
  */
 
 #pragma endregion // Errors
 
 #pragma region Logs
+#if defined(__cpp_lib_source_location)
 
 /**
  *  Similar to error handling, logging can be done in different ways.
@@ -2386,6 +2416,7 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  *  make the adaptation unusable for high-performance logging.
  */
 
+#endif            // defined(__cpp_lib_source_location)
 #pragma endregion // Logs
 
 #pragma endregion // - Exceptions, Backups, Logging
