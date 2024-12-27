@@ -1,8 +1,9 @@
 {
   "cSpell.words": [
     "ashvardanian",
-    "clflush",
+    "asynchrony",
     "bootcamps",
+    "clflush",
     "coro",
     "CUDA",
     "excerise",
@@ -16,6 +17,7 @@
     "Müller",
     "NVCC",
     "popcountll",
+    "prefetcher",
     "reorderable",
     "SLEEF",
     "StringZilla",
