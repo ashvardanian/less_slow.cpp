@@ -1184,12 +1184,16 @@ BENCHMARK(f32x4x4_matmul_avx512);
  *  - Flushing the CPU cache between runs to ensure consistent results.
  */
 
-#include <cassert>      // `assert`
-#include <fstream>      // `std::ifstream`
-#include <iterator>     // `std::random_access_iterator_tag`
-#include <memory>       // `std::assume_aligned`
-#include <string>       // `std::string`, `std::stoull`
-#include <sys/sysctl.h> // `sysctlbyname`
+#include <cassert>  // `assert`
+#include <fstream>  // `std::ifstream`
+#include <iterator> // `std::random_access_iterator_tag`
+#include <memory>   // `std::assume_aligned`
+#include <string>   // `std::string`, `std::stoull`
+
+#if defined(__APPLE__)
+#include <sys/sysctl.h> // `sysctlbyname` on macOS
+#endif
+
 /**
  *  @brief  Reads the contents of a file from the specified path into a string.
  */
