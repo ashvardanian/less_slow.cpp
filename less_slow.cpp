@@ -2258,6 +2258,14 @@ BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(
  *  - Throwing an STL exception: @b 728ns single-threaded, @b 837ns multi-threaded.
  *  - Returning an STL error code: @b 12ns single-threaded, @b 13ns multi-threaded.
  *  - Returning a custom status code: @b 7ns single-threaded, @b 7ns multi-threaded.
+ *
+ *  Those numbers explain, why over 20% of the industry members explicitly ban exceptions
+ *  in their codebases, according to the 2020 Developer Ecosystem Survey by JetBrains.
+ *
+ *  @see Better "Goodput" Performance through C++ Exception Handling from ScyllaDB:
+ *       https://www.scylladb.com/2024/05/14/better-goodput-performance-through-c-exception-handling/
+ *  @see The State of Developer Ecosystem 2020 by JetBrains:
+ *       https://www.jetbrains.com/lp/devecosystem-2020/cpp/
  */
 
 #pragma endregion // Errors
