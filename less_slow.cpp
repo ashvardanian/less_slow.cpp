@@ -472,6 +472,13 @@ BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 4096);
  *  If you try pushing the size further, the program will likely @b crash due
  *  to @b stack_overflow. The recursive version is limited by the stack size, while
  *  the iterative version can handle much larger inputs.
+ *
+ *  As can be seen from our benchmarks, the STL implementation of `std::sort`
+ *  is more efficient than our naive kernels, and it's only one of many expressive
+ *  solutions in the @b <algorithm> header.
+ *
+ *  @see "105 STL Algorithms in Less Than an Hour" by Jonathan Boccara at CppCon 2018
+ *       https://youtu.be/2olsGf6JIkU?si=8haqPTNVDBTtPBYe
  */
 
 #pragma endregion // Recursion
@@ -635,8 +642,18 @@ BENCHMARK(f64_sin_maclaurin);
  *  Doesn't feel like a win!
  *
  *  The @b `std::pow` function is highly generic and not optimized for small,
- *  constant integer exponents. We can implement a specialized version for
- *  faster @b and slightly more accurate results.
+ *  constant integer exponents. It can be the case, that:
+ *
+ *      - `std::pow(1.00000000000001, 1.4)` takes 53ns
+ *      - `std::pow(1.00000000000001, 1.5)` takes 63,348ns (1000x slower)
+ *
+ *  We can implement a specialized version for faster @b and slightly more
+ *  accurate results, targeting only our specific integer powers.
+ *
+ *  @see "Slow power computation by 64-bit glibc" by Jason Summers
+ *       https://entropymine.com/imageworsener/slowpow/
+ *  @see "When a Microsecond Is an Eternity" by Carl Cook at CppCon 2017
+ *       https://youtu.be/NH1Tta7purM?si=hfbsB8CDHsPBuFwu
  */
 
 static void f64_sin_maclaurin_powless(bm::State &state) {
@@ -1995,6 +2012,10 @@ static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
  *  - `std::unordered_map<std::uint32_t, std::unordered_map<std::uint32_t, float>>`
  *  - `std::map<std::pair<std::uint32_t, std::uint32_t>, float>`
  *  - `std::vector<std::tuple<std::uint32_t, std::uint32_t, float>>`
+ *
+ *  @see "Designing a Fast, Efficient, Cache-friendly Hash Table, Step by Step"
+ *       by Matt Kulukundis at CppCon 2017
+ *       https://youtu.be/ncHmEUmJZf4?si=TJFpGULOsONurBge
  */
 
 #include <map>          // `std::map`
@@ -2262,10 +2283,13 @@ BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(
  *  Those numbers explain, why over 20% of the industry members explicitly ban exceptions
  *  in their codebases, according to the 2020 Developer Ecosystem Survey by JetBrains.
  *
- *  @see Better "Goodput" Performance through C++ Exception Handling from ScyllaDB:
- *       https://www.scylladb.com/2024/05/14/better-goodput-performance-through-c-exception-handling/
- *  @see The State of Developer Ecosystem 2020 by JetBrains:
+ *  @see De-fragmenting C++: Making Exceptions and RTTI More Affordable and Usable
+ *       by Herb Sutter at CppCon 2019
+ *       https://youtu.be/ARYP83yNAWk?si=RB6_hAGc20h5JVVk
+ *  @see The State of Developer Ecosystem 2020 from JetBrains
  *       https://www.jetbrains.com/lp/devecosystem-2020/cpp/
+ *  @see Better "Goodput" Performance through C++ Exception Handling from ScyllaDB
+ *       https://www.scylladb.com/2024/05/14/better-goodput-performance-through-c-exception-handling/
  */
 
 #pragma endregion // Errors
@@ -2426,6 +2450,10 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  *  The `std::format` is based on the `fmt`, but it's clearly very far behind.
  *  The lack of compile-time format definitions and custom allocators support
  *  make the adaptation unusable for high-performance logging.
+ *
+ *  @see {fmt} is Addictive! Using {fmt} and spdlog
+ *       by Jason Turner for C++ Weekly - Ep 135.
+ *       https://youtu.be/KeS1ehp9IiI?si=a0ZElK23yQxOUQ44
  */
 
 #endif            // defined(__cpp_lib_source_location)

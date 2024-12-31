@@ -1,6 +1,9 @@
-# _Less Slow_ C++
+# Learning to Write _Less Slow_ C, C++, and Assembly Code
 
-Much of modern code suffers from common pitfalls: bugs, security vulnerabilities, and __performance bottlenecks__.
+> The benchmarks in this repository don't aim to cover every topic fully, but they help form a mindset and intuition for performance-oriented software design.
+> For higher-level abstractions and languages, check out [`less_slow.rs`](https://github.com/ashvardanian/less_slow.rs) and [`less_slow.py`](https://github.com/ashvardanian/less_slow.py).
+
+Much modern code suffers from common pitfalls, such as bugs, security vulnerabilities, and __performance bottlenecks__.
 University curricula often teach outdated concepts, while bootcamps oversimplify crucial software development principles.
 
 ![Less Slow C++](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/less_slow.cpp.jpg?raw=true)
@@ -63,8 +66,3 @@ Alternatively, use the Linux `perf` tool for performance counter collection:
 ```sh
 sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF build_release/less_slow --benchmark_enable_random_interleaving=true --benchmark_filter=super_sort
 ```
-
-## Further Reading
-
-Many of the examples here are condensed versions of the articles on my ["Less Slow" blog](https://ashvardanian.com/tags/less-slow/) and many related repositories on my [GitHub profile](https://github.com/ashvardanian).
-If you are also practicing Rust, you may find the ["Less Slow Rust"](https://github.com/ashvardanian/less_slow.rs) repository interesting.
