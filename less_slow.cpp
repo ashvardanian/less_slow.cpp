@@ -588,6 +588,44 @@ BENCHMARK(cache_misses_cost<access_order::random>)
 
 #pragma endregion // Cache Misses
 
+#pragma region Return Value Optimization
+
+/**
+ *  The Return Value Optimization (RVO) is a compiler optimization that elides
+ *  the copy constructor and destructor calls when returning a local object by
+ *  value. This optimization is crucial for performance, especially when dealing
+ *  with heavy objects.
+ */
+#include <optional> // `std::optional`
+
+std::optional<std::string> make_heavy_object_mutable() {
+    std::string x(1024, 'x');
+    return x;
+}
+
+std::optional<std::string> make_heavy_object_immutable() {
+    std::string const x(1024, 'x'); //! `const` is the only difference
+    return x;
+}
+
+static void rvo_friendly(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(make_heavy_object_mutable());
+}
+
+static void rvo_impossible(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(make_heavy_object_immutable());
+}
+
+BENCHMARK(rvo_friendly);
+BENCHMARK(rvo_impossible);
+
+/**
+ *  Despite intuition, marking a local object as `const` hurts our performance.
+ *  The RVO-friendly version takes 21ns, while the second one takes 36ns, @b 70% longer!
+ */
+
+#pragma endregion // Return Value Optimization
+
 #pragma endregion // - Basics
 
 #pragma region - Numerics
