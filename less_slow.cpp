@@ -1991,6 +1991,28 @@ BENCHMARK(packaging_stl_tuple)->MinTime(2);
 static_assert(!std::is_trivially_copyable_v<std::pair<int, float>>);
 static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
 
+/**
+ *  Coming from high-level type-punned languages, some junior developers are inclined
+ *  to use `std::vector<std::any>` objects to define generic sequences. That's a horrible
+ *  practice.
+ */
+#include <any> // `std::any`
+
+static void packaging_stl_any(bm::State &state) {
+    std::vector<std::any> a, b;
+    a.resize(1'000'000);
+    std::generate(a.begin(), a.end(), [] { return std::any(std::pair<int, float> {}); });
+    for (auto _ : state) bm::DoNotOptimize(b = a);
+}
+
+BENCHMARK(packaging_stl_any)->MinTime(2);
+
+/**
+ *  Wrapping our STL pairs into `std::any` 10x the latency from 600 microseconds to 6 milliseconds.
+ *  It's a design shortcut that almost always leads to a @b technical_debt, and coincidentally, can
+ *  make your code 10x slower.
+ */
+
 #pragma endregion // Continuous Memory
 
 #pragma region Concurrent Trees, Graphs, and Data Layouts
