@@ -2053,7 +2053,41 @@ BENCHMARK(packaging_stl_any)->MinTime(2);
 
 #pragma endregion // Continuous Memory
 
-#pragma region Concurrent Trees, Graphs, and Data Layouts
+#pragma region Strings
+
+/**
+ *  Many string libraries, including STL, Folly, and StringZilla, use a technique
+ *  called "Small String Optimization" (SSO). It's a way to store small strings
+ *  directly inside the string object, avoiding dynamic memory allocation.
+ *
+ *  Even though the `std::string::string(size_t, char)` constructor is not explicitly
+ *  exception-safe, if you only use it for small strings, it won't throw a `bad_alloc`.
+ *
+ *  You empirically determine the capacity of the SSO buffer by running this benchmark.
+ *  In `libstdc++` in GCC 13 it will be 15 bytes, while `sizeof(std::string)` is 32 bytes.
+ *  In `libc++` in Clang 17 it will be 22 bytes, while `sizeof(std::string)` is 24 bytes.
+ *  In StringZilla it is 22 bytes, while `sizeof(sz::string)` is 32 bytes.
+ *
+ *  @see "The strange details of std::string at Facebook"
+ *       by Nicholas Ormrod at CppCon 2016:
+ *       https://youtu.be/kPR8h4-qZdk?si=__SQ3f-x-SUWkyzr
+ *  @see Small String Optimization in StringZilla:
+ *       https://github.com/ashvardanian/stringzilla?tab=readme-ov-file#memory-ownership-and-small-string-optimization
+ */
+
+static void small_string(bm::State &state) {
+    std::size_t length = static_cast<std::size_t>(state.range(0));
+    for (auto _ : state) bm::DoNotOptimize(std::string(length, 'x'));
+}
+
+// clang-format off
+BENCHMARK(small_string)
+    ->Arg(7)->Arg(8)->Arg(15)->Arg(16)
+    ->Arg(22)->Arg(23)->Arg(24)->Arg(25)
+    ->Arg(31)->Arg(32)->Arg(33);
+// clang-format on
+
+#pragma endregion // Strings
 
 /**
  *  We already understand the cost of accessing non-contiguous memory, cache misses,
