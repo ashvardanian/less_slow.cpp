@@ -688,9 +688,9 @@ BENCHMARK(f64_sin_maclaurin);
  *  We can implement a specialized version for faster @b and slightly more
  *  accurate results, targeting only our specific integer powers.
  *
- *  @see "Slow power computation by 64-bit glibc" by Jason Summers
+ *  @see "Slow power computation by 64-bit glibc" by Jason Summers:
  *       https://entropymine.com/imageworsener/slowpow/
- *  @see "When a Microsecond Is an Eternity" by Carl Cook at CppCon 2017
+ *  @see "When a Microsecond Is an Eternity" by Carl Cook at CppCon 2017:
  *       https://youtu.be/NH1Tta7purM?si=hfbsB8CDHsPBuFwu
  */
 
@@ -728,7 +728,7 @@ BENCHMARK(f64_sin_maclaurin_powless);
  *  long chains of arithmetic operations, with a arguments significantly
  *  differing in magnitude, you may get highly inaccurate results.
  *
- *  @see Beware of fast-math: https://simonbyrne.github.io/notes/fastmath/
+ *  @see "Beware of fast-math" by Simon Byrne: https://simonbyrne.github.io/notes/fastmath/
  */
 #if defined(__GNUC__) && !defined(__clang__)
 #define FAST_MATH [[gnu::optimize("-ffast-math")]]
@@ -1017,10 +1017,10 @@ BENCHMARK(f32x4x4_matmul_unrolled);
  *  speedup is common with hand-tuned SIMD code, with some operations seeing
  *  10-100x improvements for certain data types.
  *
- *  @see Understanding SIMD: Infinite Complexity of Trivial Problems
- *  https://www.modular.com/blog/understanding-simd-infinite-complexity-of-trivial-problems
- *  @see GCC Compiler vs Human - 119x Faster Assembly
- *  https://ashvardanian.com/posts/gcc-12-vs-avx512fp16/
+ *  @see "Understanding SIMD: Infinite Complexity of Trivial Problems"
+ *       https://www.modular.com/blog/understanding-simd-infinite-complexity-of-trivial-problems
+ *  @see "GCC Compiler vs Human - 119x Faster Assembly"
+ *       https://ashvardanian.com/posts/gcc-12-vs-avx512fp16/
  *
  *  To push the limits of performance further, let's switch from scalar
  *  operations in the unrolled kernel to @b SSE4.1 SIMD instructions—among the
@@ -2343,12 +2343,12 @@ BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(
  *  Those numbers explain, why over 20% of the industry members explicitly ban exceptions
  *  in their codebases, according to the 2020 Developer Ecosystem Survey by JetBrains.
  *
- *  @see De-fragmenting C++: Making Exceptions and RTTI More Affordable and Usable
- *       by Herb Sutter at CppCon 2019
+ *  @see "De-fragmenting C++: Making Exceptions and RTTI More Affordable and Usable"
+ *       by Herb Sutter at CppCon 2019:
  *       https://youtu.be/ARYP83yNAWk?si=RB6_hAGc20h5JVVk
- *  @see The State of Developer Ecosystem 2020 from JetBrains
+ *  @see "The State of Developer Ecosystem 2020" from JetBrains:
  *       https://www.jetbrains.com/lp/devecosystem-2020/cpp/
- *  @see Better "Goodput" Performance through C++ Exception Handling from ScyllaDB
+ *  @see "Better 'Goodput' Performance through C++ Exception Handling" from ScyllaDB:
  *       https://www.scylladb.com/2024/05/14/better-goodput-performance-through-c-exception-handling/
  */
 
@@ -2511,8 +2511,8 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  *  The lack of compile-time format definitions and custom allocators support
  *  make the adaptation unusable for high-performance logging.
  *
- *  @see {fmt} is Addictive! Using {fmt} and spdlog
- *       by Jason Turner for C++ Weekly - Ep 135.
+ *  @see "{fmt} is Addictive! Using {fmt} and spdlog"
+ *       by Jason Turner for C++ Weekly - Ep. 135:
  *       https://youtu.be/KeS1ehp9IiI?si=a0ZElK23yQxOUQ44
  */
 
