@@ -2087,6 +2087,150 @@ BENCHMARK(small_string)
     ->Arg(31)->Arg(32)->Arg(33);
 // clang-format on
 
+/**
+ *  Imagine parsing a config file. Depending on the platform, it may have different
+ *  newline character, but overall understandable structure.
+ */
+static constexpr std::string_view config_text = //
+    "# This is a comment line\r\n"              // Windows newline
+    "host: example.com\n"                       // Posix newline
+    "\n"                                        // ... and a typical empty line
+    "port: 8080\r"                              // Commodore newline
+    "# Another comment\n\r"                     // Accorn newline
+    "path: /api/v1";                            // No trailing newline!
+
+inline std::string_view strip_whitespaces(std::string_view text) noexcept {
+    // Trim leading whitespace
+    while (!text.empty() && std::isspace(text.front())) text.remove_prefix(1);
+    // Trim trailing whitespace
+    while (!text.empty() && std::isspace(text.back())) text.remove_suffix(1);
+    return text;
+}
+
+template <typename callback_type_>
+void split(std::string_view text, std::string_view delimiters, callback_type_ callback) noexcept {
+    std::size_t const n = text.size();
+    std::size_t start = 0;
+
+    for (std::size_t i = 0; i < n;) {
+        // If current char is a delimiter, we just finished a token.
+        if (delimiters.find(text[i]) != std::string_view::npos) {
+            // Token is [start, i)
+            if (i > start) callback(text.substr(start, i - start));
+            // Skip over any consecutive delimiters
+            while (i < n && delimiters.find(text[i]) != std::string_view::npos) ++i;
+            // Next token starts after the last delimiter
+            start = i;
+        }
+        else { ++i; }
+    }
+
+    // Handle any leftover token if text doesn't end with a delimiter
+    if (start < n) callback(text.substr(start));
+}
+
+std::pair<std::string_view, std::string_view> split_key_value(std::string_view line) {
+    // Find the first colon (':'), which we treat as the key/value boundary
+    auto pos = line.find(':');
+    if (pos == std::string_view::npos) return {};
+    // Trim key and value separately
+    auto key = strip_whitespaces(line.substr(0, pos));
+    auto value = strip_whitespaces(line.substr(pos + 1));
+    // Store them in a pair
+    return std::make_pair(key, value);
+}
+
+void config_parse_cpp11(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
+    split(config_text, "\r\n", [&](std::string_view line) {
+        if (line.empty() || line.front() == '#') return; // Skip empty lines or comments
+        auto [key, value] = split_key_value(line);
+        if (key.empty() || value.empty()) return; // Skip invalid lines
+        settings.emplace_back(key, value);
+    });
+}
+
+void parsing_stl(bm::State &state) {
+    std::vector<std::pair<std::string, std::string>> settings;
+    for (auto _ : state) {
+        settings.clear();
+        config_parse_cpp11(config_text, settings);
+        bm::DoNotOptimize(settings);
+    }
+    state.counters["pairs/s"] = bm::Counter(settings.size() * state.iterations(), bm::Counter::kIsRate);
+}
+
+BENCHMARK(parsing_stl);
+
+/**
+ *  The STL's `std::ranges::views::split` won't compile with a predicate lambda,
+ *  but Eric Niebler's `ranges-v3` library has a `split_when` that does.
+ *  It is also compatible with C++14 and newer, so we don't need C++20.
+ */
+#include <range/v3/view/filter.hpp>
+#include <range/v3/view/split_when.hpp>
+#include <range/v3/view/transform.hpp>
+
+void config_parse_cpp14(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
+    namespace rv = ranges::views;
+    auto is_newline = [](char c) { return c == '\n' || c == '\r'; };
+    auto lines =                     //
+        config_text |                //
+        rv::split_when(is_newline) | //
+        rv::transform([](auto &&subrange) {
+            // We need to transfrom a sequence of characters back into string-views!
+            // https://stackoverflow.com/a/48403210/2766161
+            auto const size = ranges::distance(subrange);
+            // `&*subrange.begin()` is UB if the range is empty:
+            return size ? std::string_view(&*subrange.begin(), size) : std::string_view();
+        }) |
+        // Skip comments and empty lines
+        rv::filter([](std::string_view line) { return !line.empty() && line.front() != '#'; }) |
+        rv::transform(split_key_value) |
+        // Skip invalid lines
+        rv::filter([](auto &&kv) { return !kv.first.empty() && !kv.second.empty(); });
+    for (auto [key, value] : std::move(lines)) settings.emplace_back(key, value);
+}
+
+void parsing_ranges(bm::State &state) {
+    std::vector<std::pair<std::string, std::string>> settings;
+    for (auto _ : state) {
+        settings.clear();
+        config_parse_cpp14(config_text, settings);
+        bm::DoNotOptimize(settings);
+    }
+    state.counters["pairs/s"] = bm::Counter(settings.size() * state.iterations(), bm::Counter::kIsRate);
+}
+
+BENCHMARK(parsing_ranges);
+
+#include <stringzilla/stringzilla.hpp>
+
+void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
+    namespace sz = ashvardanian::stringzilla;
+
+    auto newlines = sz::char_set("\r\n");
+    auto whitespaces = sz::whitespaces_set();
+
+    for (sz::string_view line : sz::string_view(config_text).split(newlines)) {
+        if (line.empty() || line.front() == '#') continue; // Skip empty lines or comments
+        auto [key, delimiter, value] = line.partition(':');
+        if (key.empty() || value.empty()) continue; // Skip invalid lines
+        settings.emplace_back(key.strip(whitespaces), value.strip(whitespaces));
+    }
+}
+
+void parsing_sz(bm::State &state) {
+    std::vector<std::pair<std::string, std::string>> settings;
+    for (auto _ : state) {
+        settings.clear();
+        config_parse_sz(config_text, settings);
+        bm::DoNotOptimize(settings);
+    }
+    state.counters["pairs/s"] = bm::Counter(settings.size() * state.iterations(), bm::Counter::kIsRate);
+}
+
+BENCHMARK(parsing_sz);
+
 #pragma endregion // Strings
 
 /**

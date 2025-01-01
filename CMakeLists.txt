@@ -57,17 +57,18 @@ include(FetchContent)
 
 # Fetch FMT for logging, as `std::format` is not feature-complete yet
 FetchContent_Declare(
-  fmt
+  VictorZverovichFMT
   GIT_REPOSITORY https://github.com/fmtlib/fmt.git
   GIT_TAG 11.1.0)
-FetchContent_MakeAvailable(fmt)
+FetchContent_MakeAvailable(VictorZverovichFMT)
+
 
 # Fetch GTest, as its needed for GBenchmark https://stackoverflow.com/a/60417587
 FetchContent_Declare(
-  googletest
+  GoogleTest
   GIT_REPOSITORY https://github.com/google/googletest.git
   GIT_TAG v1.15.2)
-FetchContent_MakeAvailable(googletest)
+FetchContent_MakeAvailable(GoogleTest)
 
 # Suppress building tests of Google Benchmark to accelerate builds.
 set(BENCHMARK_ENABLE_TESTING
@@ -100,10 +101,10 @@ endif()
 # Fetch GBenchmark and suppress internal tests.
 # https://github.com/google/benchmark/blob/main/docs/user_guide.md#using-register-benchmark
 FetchContent_Declare(
-  googlebenchmark
+  GoogleBenchmark
   GIT_REPOSITORY https://github.com/google/benchmark.git
   GIT_TAG v1.9.1)
-FetchContent_MakeAvailable(googlebenchmark)
+FetchContent_MakeAvailable(GoogleBenchmark)
 
 # Remove the Google Benchmark's "built in debug warning".
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -113,7 +114,7 @@ endif()
 # We need TBB for Parallel CPU Algorithms in GCC.
 # https://github.com/oneapi-src/oneTBB/blob/onetbb_2021/cmake/README.md
 FetchContent_Declare(
-  TBB
+  IntelTBB
   GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB.git
   GIT_TAG master)
 
@@ -121,7 +122,21 @@ FetchContent_Declare(
 set(TBB_TEST
     OFF
     CACHE BOOL "Do not build TBB tests" FORCE)
-FetchContent_MakeAvailable(TBB)
+FetchContent_MakeAvailable(IntelTBB)
+
+# Fetch "range-v3" for lazy views, as `std::ranges` is not feature-complete yet
+FetchContent_Declare(
+  EricNieblerRangeV3
+  GIT_REPOSITORY https://github.com/ericniebler/range-v3
+  GIT_TAG master)
+FetchContent_MakeAvailable(EricNieblerRangeV3)
+
+# Fetch "stringzilla" to extend `std::string_view` functionality
+FetchContent_Declare(
+  AshVardanianStringZilla
+  GIT_REPOSITORY https://github.com/ashvardanian/stringzilla
+  GIT_TAG main)
+FetchContent_MakeAvailable(AshVardanianStringZilla)
 
 # Add dependencies
 find_package(Threads REQUIRED)
@@ -129,7 +144,9 @@ find_package(OpenMP)
 
 add_executable(less_slow less_slow.cpp)
 set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(less_slow pthread benchmark fmt)
+target_link_libraries(less_slow pthread benchmark::benchmark fmt::fmt)
+target_link_libraries(less_slow range-v3) 
+target_link_libraries(less_slow stringzilla) 
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(less_slow TBB::tbb)

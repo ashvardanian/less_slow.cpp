@@ -45,7 +45,9 @@ build_release/less_slow                                     # Run the benchmarks
 > The build will pull and compile several third-party dependencies. 
 > Google [Benchmark](https://github.com/google/benchmark) is used for profiling.
 > Intel's [oneTBB](https://github.com/uxlfoundation/oneTBB) is used as the Parallel STL backend.
-> Victor Zverovich's [fmt](https://github.com/fmtlib/fmt) replaces `std::format` for logging.
+> Eric Niebler's [Range-v3](https://github.com/ericniebler/range-v3) extends `std::ranges`.
+> Ash Vardanian's [StringZilla](https://github.com/ashvardanian/stringzilla) is used for string manipulation.
+> Victor Zverovich's [fmt](https://github.com/fmtlib/fmt) extends `std::format` for logging.
 
 To control the output or run specific benchmarks, use the following flags:
 
