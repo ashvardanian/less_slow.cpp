@@ -13,8 +13,15 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--benchmark_filter=loop"
-    ],
-    "environment": [
+      ],
+      "setupCommands": [
+        { // Display content in STL containers pretty
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ],
+      "environment": [
         {
           "name": "ASAN_OPTIONS",
           "value": "detect_leaks=0:atexit=1:strict_init_order=1:strict_string_checks=1"
