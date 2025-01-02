@@ -2088,18 +2088,31 @@ BENCHMARK(small_string)
 // clang-format on
 
 /**
- *  Imagine parsing a config file. Depending on the platform, it may have different
- *  newline character, but overall understandable structure.
+ *  One of the most common practical tasks in programming is parsing text.
+ *  Even with `std::string` Small String Optimization, it's still wiser to use
+ *  simpler structures, like the C++17 `std::string_view`, for read-only access.
+ *
+ *  Still, `std::string_view` and `std::string` both have very limited API and
+ *  are notoriously slow. Even splitting/tokenizing a string is non-trivial
+ *  frequently debated topic.
+ *
+ *  @see Stack Overflow discussion:
+ *       https://stackoverflow.com/questions/236129/how-do-i-iterate-over-the-words-of-a-string
+ *
+ *  Let's try to parse a typical NIX-style config file with key-value pairs,
+ *  averaging the results for a short and a long configuration text.
  */
-static constexpr std::string_view config_text = //
-    "# This is a comment line\r\n"              // Windows newline
-    "host: example.com\n"                       // Posix newline
-    "\n"                                        // ... and a typical empty line
-    "port: 8080\r"                              // Commodore newline
-    "# Another comment\n\r"                     // Accorn newline
-    "path: /api/v1";                            // No trailing newline!
+static constexpr std::string_view short_config_text = //
+    "# This is a comment line\r\n"                    // Windows newline
+    "host: example.com\n"                             // Posix newline
+    "\n"                                              // ... and a typical empty line
+    "port: 8080\r"                                    // Commodore newline
+    "# Another comment\n\r"                           // Accorn newline
+    "path: /api/v1";                                  // No trailing newline!
 
-inline std::string_view strip_whitespaces(std::string_view text) noexcept {
+inline bool is_newline(char c) { return c == '\n' || c == '\r'; }
+
+inline std::string_view strip_spaces(std::string_view text) noexcept {
     // Trim leading whitespace
     while (!text.empty() && std::isspace(text.front())) text.remove_prefix(1);
     // Trim trailing whitespace
@@ -2107,41 +2120,29 @@ inline std::string_view strip_whitespaces(std::string_view text) noexcept {
     return text;
 }
 
-template <typename callback_type_>
-void split(std::string_view text, std::string_view delimiters, callback_type_ callback) noexcept {
-    std::size_t const n = text.size();
-    std::size_t start = 0;
-
-    for (std::size_t i = 0; i < n;) {
-        // If current char is a delimiter, we just finished a token.
-        if (delimiters.find(text[i]) != std::string_view::npos) {
-            // Token is [start, i)
-            if (i > start) callback(text.substr(start, i - start));
-            // Skip over any consecutive delimiters
-            while (i < n && delimiters.find(text[i]) != std::string_view::npos) ++i;
-            // Next token starts after the last delimiter
-            start = i;
-        }
-        else { ++i; }
+template <typename callback_type_, typename predicate_type_>
+void split(std::string_view str, predicate_type_ &&is_delimiter, callback_type_ &&callback) {
+    std::size_t pos = 0;
+    while (pos < str.size()) {
+        auto const next_pos = std::find_if(str.begin() + pos, str.end(), is_delimiter) - str.begin();
+        callback(str.substr(pos, next_pos - pos));
+        pos = static_cast<std::size_t>(next_pos) == str.size() ? str.size() : next_pos + 1;
     }
-
-    // Handle any leftover token if text doesn't end with a delimiter
-    if (start < n) callback(text.substr(start));
 }
 
-std::pair<std::string_view, std::string_view> split_key_value(std::string_view line) {
+std::pair<std::string_view, std::string_view> split_key_value(std::string_view line) noexcept {
     // Find the first colon (':'), which we treat as the key/value boundary
     auto pos = line.find(':');
     if (pos == std::string_view::npos) return {};
     // Trim key and value separately
-    auto key = strip_whitespaces(line.substr(0, pos));
-    auto value = strip_whitespaces(line.substr(pos + 1));
+    auto key = strip_spaces(line.substr(0, pos));
+    auto value = strip_spaces(line.substr(pos + 1));
     // Store them in a pair
     return std::make_pair(key, value);
 }
 
-void config_parse_cpp11(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
-    split(config_text, "\r\n", [&](std::string_view line) {
+void config_parse_stl(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
+    split(config_text, &is_newline, [&](std::string_view line) {
         if (line.empty() || line.front() == '#') return; // Skip empty lines or comments
         auto [key, value] = split_key_value(line);
         if (key.empty() || value.empty()) return; // Skip invalid lines
@@ -2149,30 +2150,32 @@ void config_parse_cpp11(std::string_view config_text, std::vector<std::pair<std:
     });
 }
 
-void parsing_stl(bm::State &state) {
+template <typename string_view_>
+void parsing_stl(bm::State &state, string_view_ config_text) {
+    std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
         settings.clear();
-        config_parse_cpp11(config_text, settings);
+        config_parse_stl(config_text, settings);
         bm::DoNotOptimize(settings);
+        pairs += settings.size();
+        bytes += config_text.size();
     }
-    state.counters["pairs/s"] = bm::Counter(settings.size() * state.iterations(), bm::Counter::kIsRate);
+    state.SetBytesProcessed(bytes);
+    state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
-
-BENCHMARK(parsing_stl);
 
 /**
  *  The STL's `std::ranges::views::split` won't compile with a predicate lambda,
- *  but Eric Niebler's `ranges-v3` library has a `split_when` that does.
+ *  but Eric Niebler's `ranges-v3` library has a `ranges::view::split_when` that does.
  *  It is also compatible with C++14 and newer, so we don't need C++20.
  */
 #include <range/v3/view/filter.hpp>
 #include <range/v3/view/split_when.hpp>
 #include <range/v3/view/transform.hpp>
 
-void config_parse_cpp14(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
+void config_parse_ranges(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
     namespace rv = ranges::views;
-    auto is_newline = [](char c) { return c == '\n' || c == '\r'; };
     auto lines =                     //
         config_text |                //
         rv::split_when(is_newline) | //
@@ -2191,17 +2194,20 @@ void config_parse_cpp14(std::string_view config_text, std::vector<std::pair<std:
     for (auto [key, value] : std::move(lines)) settings.emplace_back(key, value);
 }
 
-void parsing_ranges(bm::State &state) {
+template <typename string_view_>
+void parsing_ranges(bm::State &state, string_view_ config_text) {
+    std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
         settings.clear();
-        config_parse_cpp14(config_text, settings);
+        config_parse_ranges(config_text, settings);
         bm::DoNotOptimize(settings);
+        pairs += settings.size();
+        bytes += config_text.size();
     }
-    state.counters["pairs/s"] = bm::Counter(settings.size() * state.iterations(), bm::Counter::kIsRate);
+    state.SetBytesProcessed(bytes);
+    state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
-
-BENCHMARK(parsing_ranges);
 
 #include <stringzilla/stringzilla.hpp>
 
@@ -2214,22 +2220,87 @@ void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::st
     for (sz::string_view line : sz::string_view(config_text).split(newlines)) {
         if (line.empty() || line.front() == '#') continue; // Skip empty lines or comments
         auto [key, delimiter, value] = line.partition(':');
+        key = key.strip(whitespaces);
+        value = value.strip(whitespaces);
         if (key.empty() || value.empty()) continue; // Skip invalid lines
-        settings.emplace_back(key.strip(whitespaces), value.strip(whitespaces));
+        settings.emplace_back(key, value);
     }
 }
 
-void parsing_sz(bm::State &state) {
+template <typename string_view_>
+void parsing_sz(bm::State &state, string_view_ config_text) {
+    std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
         settings.clear();
         config_parse_sz(config_text, settings);
         bm::DoNotOptimize(settings);
+        pairs += settings.size();
+        bytes += config_text.size();
     }
-    state.counters["pairs/s"] = bm::Counter(settings.size() * state.iterations(), bm::Counter::kIsRate);
+    state.SetBytesProcessed(bytes);
+    state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
-BENCHMARK(parsing_sz);
+BENCHMARK_CAPTURE(parsing_stl, short_, short_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parsing_ranges, short_, short_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parsing_sz, short_, short_config_text)->MinTime(2);
+
+/**
+ *  How big can the difference be? Surely, SIMD is only relevant for Big Data?
+ *  On the tiny config with just 3 fields and under 100 bytes in total:
+ *
+ *  - `parsing_stl`:    @b 179 ns
+ *  - `parsing_ranges`: @b 559 ns
+ *  - `parsing_sz`:     @b 115 ns
+ *
+ *  How about larger files?
+ */
+
+static constexpr std::string_view long_config_text = R"(
+# Server Configuration
+primary_host: api-main-prod-eu-west-1.company.com
+secondary_host: api-backup-prod-eu-west-1.company.com
+port: 443
+base_path: /services/v2/resource/data-access-layer
+connection_timeout: 120000
+
+# Database Configuration
+database_host: db-prod-eu-west-1.cluster.company.internal
+database_port: 3306
+database_username: api_service_user
+database_password: 8kD3jQ!9Fs&2P
+database_name: analytics_reporting
+
+# Logging Configuration
+log_file_path: /var/log/api/prod/services/access.log
+log_rotation_strategy: size_based
+log_retention_period: 30_days
+
+# Feature Toggles
+new_auth_flow: enabled
+legacy_support: disabled
+dark_mode_experiment: enabled
+
+# Monitoring Configuration
+metrics_endpoint: metrics.company.com/v2/ingest
+alerting_thresholds: critical:90, warning:75, info:50
+dashboard_url: https://dashboard.company.com/api/monitoring/prod
+)";
+
+BENCHMARK_CAPTURE(parsing_stl, long_, long_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parsing_ranges, long_, long_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parsing_sz, long_, long_config_text)->MinTime(2);
+
+/**
+ *  The gap widens:
+ *
+ *  - `parsing_stl`:    @b 1606 ns
+ *  - `parsing_ranges`: @b 6862 ns
+ *  - `parsing_sz`:     @b 666 ns
+ *
+ *  Hell of a result if you ask me :)
+ */
 
 #pragma endregion // Strings
 
