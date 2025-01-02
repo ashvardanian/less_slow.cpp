@@ -855,6 +855,7 @@ BENCHMARK(integral_division_with_doubles);
 
 #if defined(__GNUC__) && !defined(__clang__)
 
+#if defined(__x86_64__) || defined(__i386__)
 [[gnu::target("arch=core2")]]
 int bits_popcount_emulated(std::uint64_t x) {
     return __builtin_popcountll(x);
@@ -864,20 +865,31 @@ int bits_popcount_emulated(std::uint64_t x) {
 int bits_popcount_native(std::uint64_t x) {
     return __builtin_popcountll(x);
 }
+#elif defined(__aarch64__)
+[[gnu::target("arch=armv8-r")]]
+int bits_popcount_emulated(std::uint64_t x) {
+    return __builtin_popcountll(x);
+}
 
-static void bits_population_count_core_2(bm::State &state) {
+[[gnu::target("arch=armv8-a")]]
+int bits_popcount_native(std::uint64_t x) {
+    return __builtin_popcountll(x);
+}
+#endif
+
+static void bits_population_count_emulated(bm::State &state) {
     auto a = static_cast<std::uint64_t>(std::rand());
     for (auto _ : state) bm::DoNotOptimize(bits_popcount_emulated(++a));
 }
 
-BENCHMARK(bits_population_count_core_2);
+BENCHMARK(bits_population_count_emulated);
 
-static void bits_population_count_core_i7(bm::State &state) {
+static void bits_population_count_native(bm::State &state) {
     auto a = static_cast<std::uint64_t>(std::rand());
     for (auto _ : state) bm::DoNotOptimize(bits_popcount_native(++a));
 }
 
-BENCHMARK(bits_population_count_core_i7);
+BENCHMARK(bits_population_count_native);
 #endif
 
 /**
