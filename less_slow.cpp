@@ -856,6 +856,7 @@ BENCHMARK(integral_division_with_doubles);
 
 #if defined(__GNUC__) && !defined(__clang__)
 
+#if defined(__x86_64__) || defined(__i386__)
 [[gnu::target("arch=core2")]]
 int bits_popcount_emulated(std::uint64_t x) {
     return __builtin_popcountll(x);
@@ -865,20 +866,31 @@ int bits_popcount_emulated(std::uint64_t x) {
 int bits_popcount_native(std::uint64_t x) {
     return __builtin_popcountll(x);
 }
+#elif defined(__aarch64__)
+[[gnu::target("arch=armv8-r")]]
+int bits_popcount_emulated(std::uint64_t x) {
+    return __builtin_popcountll(x);
+}
 
-static void bits_population_count_core_2(bm::State &state) {
+[[gnu::target("arch=armv8-a")]]
+int bits_popcount_native(std::uint64_t x) {
+    return __builtin_popcountll(x);
+}
+#endif
+
+static void bits_population_count_emulated(bm::State &state) {
     auto a = static_cast<std::uint64_t>(std::rand());
     for (auto _ : state) bm::DoNotOptimize(bits_popcount_emulated(++a));
 }
 
-BENCHMARK(bits_population_count_core_2);
+BENCHMARK(bits_population_count_emulated);
 
-static void bits_population_count_core_i7(bm::State &state) {
+static void bits_population_count_native(bm::State &state) {
     auto a = static_cast<std::uint64_t>(std::rand());
     for (auto _ : state) bm::DoNotOptimize(bits_popcount_native(++a));
 }
 
-BENCHMARK(bits_population_count_core_i7);
+BENCHMARK(bits_population_count_native);
 #endif
 
 /**
@@ -1354,6 +1366,15 @@ class strided_ptr {
     friend bool operator>=(strided_ptr const &a, strided_ptr const &b) noexcept { return !(a < b); }
     // clang-format on
 };
+
+#if defined(__aarch64__)
+/**
+ *  @brief  Helper derived from `__aarch64_sync_cache_range` in `libgcc`, used to
+ *          @b flush the cache on Arm64, where the x86 `_mm_clflush` intrinsic is not available.
+ *  @param  address The address to flush from the cache, must be aligned to the cache line size.
+ */
+void _mm_clflush(void const *address) { asm volatile("dc\tcvau, %0" : : "r"(address) : "memory"); }
+#endif
 
 template <bool aligned_>
 static void memory_access(bm::State &state) {
