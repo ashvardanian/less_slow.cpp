@@ -186,9 +186,9 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(8);
  *  contention and kills performance under multi-threaded workloads.
  *
  *  @see GlibC implementation:
- *  https://code.woboq.org/userspace/glibc/stdlib/random.c.html#291
- *  @see Faster random integer generation with batching by Daniel Lemire:
- *  https://lemire.me/blog/2024/08/17/faster-random-integer-generation-with-batching/
+ *       https://code.woboq.org/userspace/glibc/stdlib/random.c.html#291
+ *  @see "Faster random integer generation with batching" by Daniel Lemire:
+ *       https://lemire.me/blog/2024/08/17/faster-random-integer-generation-with-batching/
  */
 
 #pragma endregion // How to Benchmark and Randomness
@@ -259,8 +259,7 @@ BENCHMARK(sorting)->Args({8196, false})->Args({8196, true});
  *  To check for support, the @b `__cpp_lib_parallel_algorithm` standard
  *  feature testing macro can be used.
  *
- *  @see More feature testing macros:
- *  https://en.cppreference.com/w/cpp/utility/feature_test
+ *  @see Feature testing macros: https://en.cppreference.com/w/cpp/utility/feature_test
  */
 
 #if defined(__cpp_lib_parallel_algorithm)
@@ -329,6 +328,11 @@ BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
  *
  *  As demonstrated, scaling isn't strictly linear, especially for tasks
  *  that aren't fully data-parallel.
+ *
+ *  @see "105 STL Algorithms in Less Than an Hour" by Jonathan Boccara at CppCon 2018:
+ *       https://youtu.be/2olsGf6JIkU
+ *  @see "The C++17 Parallel Algorithms Library and Beyond"
+ *       by Bryce Adelstein Lelbach at CppCon 2016: https://youtu.be/Vck6kzWjY88
  */
 
 #endif // defined(__cpp_lib_parallel_algorithm)
@@ -476,9 +480,6 @@ BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 4096);
  *  As can be seen from our benchmarks, the STL implementation of `std::sort`
  *  is more efficient than our naive kernels, and it's only one of many expressive
  *  solutions in the @b <algorithm> header.
- *
- *  @see "105 STL Algorithms in Less Than an Hour" by Jonathan Boccara at CppCon 2018
- *       https://youtu.be/2olsGf6JIkU?si=8haqPTNVDBTtPBYe
  */
 
 #pragma endregion // Recursion
@@ -691,7 +692,7 @@ BENCHMARK(f64_sin_maclaurin);
  *  @see "Slow power computation by 64-bit glibc" by Jason Summers:
  *       https://entropymine.com/imageworsener/slowpow/
  *  @see "When a Microsecond Is an Eternity" by Carl Cook at CppCon 2017:
- *       https://youtu.be/NH1Tta7purM?si=hfbsB8CDHsPBuFwu
+ *       https://youtu.be/NH1Tta7purM
  */
 
 static void f64_sin_maclaurin_powless(bm::State &state) {
@@ -2069,8 +2070,7 @@ BENCHMARK(packaging_stl_any)->MinTime(2);
  *  In StringZilla it is 22 bytes, while `sizeof(sz::string)` is 32 bytes.
  *
  *  @see "The strange details of std::string at Facebook"
- *       by Nicholas Ormrod at CppCon 2016:
- *       https://youtu.be/kPR8h4-qZdk?si=__SQ3f-x-SUWkyzr
+ *       by Nicholas Ormrod at CppCon 2016: https://youtu.be/kPR8h4-qZdk
  *  @see Small String Optimization in StringZilla:
  *       https://github.com/ashvardanian/stringzilla?tab=readme-ov-file#memory-ownership-and-small-string-optimization
  */
@@ -2593,8 +2593,7 @@ BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(
  *  in their codebases, according to the 2020 Developer Ecosystem Survey by JetBrains.
  *
  *  @see "De-fragmenting C++: Making Exceptions and RTTI More Affordable and Usable"
- *       by Herb Sutter at CppCon 2019:
- *       https://youtu.be/ARYP83yNAWk?si=RB6_hAGc20h5JVVk
+ *       by Herb Sutter at CppCon 2019: https://youtu.be/ARYP83yNAWk
  *  @see "The State of Developer Ecosystem 2020" from JetBrains:
  *       https://www.jetbrains.com/lp/devecosystem-2020/cpp/
  *  @see "Better 'Goodput' Performance through C++ Exception Handling" from ScyllaDB:
@@ -2761,8 +2760,9 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  *  make the adaptation unusable for high-performance logging.
  *
  *  @see "{fmt} is Addictive! Using {fmt} and spdlog"
- *       by Jason Turner for C++ Weekly - Ep. 135:
- *       https://youtu.be/KeS1ehp9IiI?si=a0ZElK23yQxOUQ44
+ *       by Jason Turner for C++ Weekly - Ep. 135: https://youtu.be/KeS1ehp9IiI
+ *  @see "A modern formatting library for C++" by Victor Zverovich at CppCon 2017:
+ *       https://youtu.be/ptba_AqFYCM
  */
 
 #endif            // defined(__cpp_lib_source_location)
