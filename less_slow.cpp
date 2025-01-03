@@ -2304,36 +2304,47 @@ BENCHMARK_CAPTURE(parsing_sz, long_, long_config_text)->MinTime(2);
 
 #pragma endregion // Strings
 
+#pragma region Trees, Graphs, and Data Layouts
 /**
  *  We already understand the cost of accessing non-contiguous memory, cache misses,
  *  pointer chasing, split loads, data locality, and even parallelism, and asynchrony,
  *  but it's not the same as concurrency and concurrent data-structures.
  *
  *  Let's imagine a somewhat realistic app, that will be analyzing some sparse graph
- *  data-structure concurrently.
+ *  data-structure.
  *
- *  - Typical weighted directed graph structure, built on nested @b `std::unordered_map`s.
- *  - Cleaner, single-level thread-safe @b `std::map` with mutexes.
- *  - Flat design with userspace @b `std::atomic` locks.
+ *  1. Typical weighted directed graph structure, built on nested @b `std::unordered_map`s.
+ *  2. More memory-friendly 2-level @b `absl::flat_hash_map` using Google's Abseil library.
+ *  3. Cleaner, single-level @b `std::map` with transparent comparison function.
+ *  4. Flat design on top of a @b `absl::flat_hash_set` of tuples, taking the best of 2 and 3.
  *
  *  In code, the raw structure may look like:
  *
- *  - `std::unordered_map<std::uint32_t, std::unordered_map<std::uint32_t, float>>`
- *  - `std::map<std::pair<std::uint32_t, std::uint32_t>, float>`
- *  - `std::vector<std::tuple<std::uint32_t, std::uint32_t, float>>`
+ *  1. `std::unordered_map<std::uint16_t, std::unordered_map<std::uint16_t, float>>`
+ *  2. `absl::flat_hash_map<std::uint16_t, absl::flat_hash_map<std::uint16_t, float>>`
+ *  3. `std::map<std::pair<std::uint16_t, std::uint16_t>, float, ...>`
+ *  4. `std::flat_hash_set<std::tuple<std::uint16_t, std::uint16_t, float>, ...>`
+ *
+ *  ... but we may want to use more expressive type aliases.
  *
  *  @see "Designing a Fast, Efficient, Cache-friendly Hash Table, Step by Step"
- *       by Matt Kulukundis at CppCon 2017
- *       https://youtu.be/ncHmEUmJZf4?si=TJFpGULOsONurBge
+ *       by Matt Kulukundis at CppCon 2017: https://youtu.be/ncHmEUmJZf4
  */
 
-#include <map>          // `std::map`
+#pragma endregion // Trees, Graphs, and Data Layouts
+
+#pragma region Concurrent Data Structures
+
+/**
+ *  @see "C++ atomics, from basic to advanced. What do they really do?"
+ *       by Fedor Pikus at CppCon 2017: https://youtu.be/ZQFzMfHIxng
+ */
+
+#include <atomic>       // `std::atomic`
 #include <mutex>        // `std::mutex`
 #include <shared_mutex> // `std::shared_mutex`
 
-#include <atomic> // `std::atomic`
-
-#pragma endregion // Concurrent Trees, Graphs, and Data Layouts
+#pragma endregion // Concurrent Data Structures
 
 #pragma endregion // - Structures, Tuples, ADTs, AOS, SOA
 
