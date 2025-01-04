@@ -337,6 +337,82 @@ BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
 
 #endif // defined(__cpp_lib_parallel_algorithm)
 
+#if defined(_OPENMP)
+/**
+ *  An alternative to "Parallel STL" is to design a custom parallel solution
+ *  using some thread pool or task scheduler. The most common approach is to
+ *  divide the input into blocks that can be processed independently and then
+ *  implement a tree-like parallel aggregation of partial results.
+ *
+ *  Many thread pools exist, including the underlying Intel's @b oneTBB,
+ *  as well as OpenMP. The latter is not a library, but a broadly adopted
+ *  set of compiler directives, capable of parallelizing loops and sections.
+ */
+#include <omp.h> // `omp_get_max_threads`
+
+std::size_t round_to_multiple(std::size_t value, std::size_t multiple) {
+    return ((value + multiple - 1) / multiple) * multiple;
+}
+
+static void sorting_with_openmp(bm::State &state) {
+
+    auto const length = static_cast<std::size_t>(state.range(0));
+    auto const chunks = static_cast<std::size_t>(omp_get_max_threads());
+    // Let's round up chunk lengths to presumably 64-byte cache lines.
+    auto const chunk_length = round_to_multiple(length / chunks, 64 / sizeof(std::uint32_t));
+    auto const chunk_start_offset = [=](std::size_t i) -> std::size_t {
+        std::size_t offset = i * chunk_length;
+        return offset < length ? offset : length;
+    };
+
+    std::vector<std::uint32_t> array(length);
+    std::iota(array.begin(), array.end(), 1u);
+
+    for (auto _ : state) {
+        std::reverse(array.begin(), array.end());
+
+#pragma omp parallel for
+        // Sort each chunk in parallel
+        for (std::size_t i = 0; i < chunks; i++) {
+            std::size_t start = chunk_start_offset(i);
+            std::size_t finish = chunk_start_offset(i + 1);
+            std::sort(array.begin() + start, array.begin() + finish);
+        }
+
+        // Merge the blocks in a tree-like fashion doubling the size of the merged block each time
+        for (std::size_t merge_step = 1; merge_step < chunks; merge_step *= 2) {
+#pragma omp parallel for
+            for (std::size_t i = 0; i < chunks; i += 2 * merge_step) {
+                std::size_t first_chunk_index = i;
+                std::size_t second_chunk_index = i + merge_step;
+                if (second_chunk_index >= chunks) continue; // No merge needed
+
+                // We use `inplace_merge` as opposed to `std::merge` to avoid extra memory allocations,
+                // but it may not be as fast: https://stackoverflow.com/a/21624819/2766161
+                auto start = chunk_start_offset(first_chunk_index);
+                auto mid = chunk_start_offset(second_chunk_index);
+                auto finish = chunk_start_offset(std::min(second_chunk_index + merge_step, chunks));
+                std::inplace_merge(array.begin() + start, array.begin() + mid, array.begin() + finish);
+            }
+        }
+
+        bm::DoNotOptimize(array.size());
+    }
+
+    state.SetComplexityN(length);
+    state.SetItemsProcessed(length * state.iterations());
+    state.SetBytesProcessed(length * state.iterations() * sizeof(std::uint32_t));
+}
+
+BENCHMARK(sorting_with_openmp)
+    ->RangeMultiplier(4)
+    ->Range(1l << 20, 1l << 28)
+    ->MinTime(10)
+    ->Complexity(bm::oNLogN)
+    ->UseRealTime();
+
+#endif // defined(_OPENMP)
+
 #pragma endregion // Parallelism and Computational Complexity
 
 #pragma region Recursion
