@@ -2123,13 +2123,13 @@ BENCHMARK(small_string)
  *  Let's try to parse a typical NIX-style config file with key-value pairs,
  *  averaging the results for a short and a long configuration text.
  */
-static constexpr std::string_view short_config_text = //
-    "# This is a comment line\r\n"                    // Windows newline
-    "host: example.com\n"                             // Posix newline
-    "\n"                                              // ... and a typical empty line
-    "port: 8080\r"                                    // Commodore newline
-    "# Another comment\n\r"                           // Accorn newline
-    "path: /api/v1";                                  // No trailing newline!
+static constexpr std::string_view short_config_text =    //
+    "# This is a comment line\r\n"                       // Windows newline
+    "host : example.com\n"                               // Posix newline
+    "\n"                                                 // ... and a typical empty line
+    "port: 8080\r"                                       // Commodore newline
+    " # Tricky comment with a : colon in the middle\n\r" // Accorn newline
+    "\tpath :/api/v1";                                   // No trailing newline!
 
 inline bool is_newline(char c) { return c == '\n' || c == '\r'; }
 
@@ -2164,6 +2164,7 @@ std::pair<std::string_view, std::string_view> split_key_value(std::string_view l
 
 void config_parse_stl(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
     split(config_text, &is_newline, [&](std::string_view line) {
+        line = strip_spaces(line);
         if (line.empty() || line.front() == '#') return; // Skip empty lines or comments
         auto [key, value] = split_key_value(line);
         if (key.empty() || value.empty()) return; // Skip invalid lines
@@ -2207,6 +2208,7 @@ void config_parse_ranges(std::string_view config_text, std::vector<std::pair<std
             // `&*subrange.begin()` is UB if the range is empty:
             return size ? std::string_view(&*subrange.begin(), size) : std::string_view();
         }) |
+        rv::transform(strip_spaces) |
         // Skip comments and empty lines
         rv::filter([](std::string_view line) { return !line.empty() && line.front() != '#'; }) |
         rv::transform(split_key_value) |
@@ -2239,6 +2241,7 @@ void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::st
     auto whitespaces = sz::whitespaces_set();
 
     for (sz::string_view line : sz::string_view(config_text).split(newlines)) {
+        line = line.strip(whitespaces);
         if (line.empty() || line.front() == '#') continue; // Skip empty lines or comments
         auto [key, delimiter, value] = line.partition(':');
         key = key.strip(whitespaces);
@@ -2318,7 +2321,7 @@ BENCHMARK_CAPTURE(parsing_sz, long_, long_config_text)->MinTime(2);
  *
  *  - `parsing_stl`:    @b 1606 ns
  *  - `parsing_ranges`: @b 6862 ns
- *  - `parsing_sz`:     @b 666 ns
+ *  - `parsing_sz`:     @b 666 ns 😈
  *
  *  Hell of a result if you ask me :)
  */
