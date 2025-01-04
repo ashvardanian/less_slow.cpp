@@ -1,164 +1,185 @@
 cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 
-# Define the supported languages
+# ------------------------------------------------------------------------------
+# Project Setup
+# ------------------------------------------------------------------------------
 project(less_slow LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_CXX_EXTENSIONS NO)
 
-# Make Release by default
+# Some extra logging for the user:
+message(STATUS "----------------------------------------")
+message(STATUS "CMAKE_SYSTEM_NAME: ${CMAKE_SYSTEM_NAME}")
+message(STATUS "CMAKE_CXX_COMPILER_ID: ${CMAKE_CXX_COMPILER_ID}")
+message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
+message(STATUS "----------------------------------------")
+
+# Default to Release if no build type is set:
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Apple Clang doesn't support `-march=native` flag.
-message(STATUS "CMAKE_SYSTEM_NAME: ${CMAKE_SYSTEM_NAME}")
-message(STATUS "CMAKE_CXX_COMPILER_ID: ${CMAKE_CXX_COMPILER_ID}")
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
-endif()
+# ------------------------------------------------------------------------------
+# Dependencies
+# ------------------------------------------------------------------------------
+find_package(Threads REQUIRED)
+find_package(OpenMP REQUIRED)
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  # Debugging concepts requires a higher depth
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fconcepts-diagnostics-depth=10")
-  # Compiling TBB
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-stringop-overflow")
-  # Force clean code, but it's hard to support across all OSes and compilers!
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
-  # Enable OpenMP
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
-else()
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-pragma")
-endif()
-
-# Inherit the release flags from the default ones
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS}")
-
-# Make it fast by default :)
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
-
-# Less warnings
-set(CMAKE_CXX_FLAGS_RELEASE
-    "${CMAKE_CXX_FLAGS_RELEASE} -Wno-unused-but-set-variable")
-
-# Stable results between recompilations
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -falign-functions=32")
-
-# Inherit the debug flags from the default ones
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS}")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g")
-
-# Add sanitizers
-set(CMAKE_CXX_FLAGS_DEBUG
-    "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address,undefined")
-
-# Load the dependencies only after we've configured the compilation settings
 set(FETCHCONTENT_QUIET OFF)
 include(FetchContent)
 
-# Fetch FMT for logging, as `std::format` is not feature-complete yet
-FetchContent_Declare(
-  VictorZverovichFMT
-  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-  GIT_TAG 11.1.0)
-FetchContent_MakeAvailable(VictorZverovichFMT)
-
-
-# Fetch GTest, as its needed for GBenchmark https://stackoverflow.com/a/60417587
+# GTest (required by Google Benchmark)
 FetchContent_Declare(
   GoogleTest
   GIT_REPOSITORY https://github.com/google/googletest.git
-  GIT_TAG v1.15.2)
+  GIT_TAG v1.15.2
+)
 FetchContent_MakeAvailable(GoogleTest)
 
-# Suppress building tests of Google Benchmark to accelerate builds.
-set(BENCHMARK_ENABLE_TESTING
-    OFF
-    CACHE BOOL "" FORCE)
-set(BENCHMARK_ENABLE_INSTALL
-    OFF
-    CACHE BOOL "" FORCE)
-set(BENCHMARK_ENABLE_DOXYGEN
-    OFF
-    CACHE BOOL "" FORCE)
-set(BENCHMARK_INSTALL_DOCS
-    OFF
-    CACHE BOOL "" FORCE)
-set(BENCHMARK_DOWNLOAD_DEPENDENCIES
-    ON
-    CACHE BOOL "" FORCE)
-set(BENCHMARK_ENABLE_GTEST_TESTS
-    OFF
-    CACHE BOOL "" FORCE)
-set(BENCHMARK_USE_BUNDLED_GTEST
-    ON
-    CACHE BOOL "" FORCE)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  set(BENCHMARK_ENABLE_LIBPFM
-      OFF
-      CACHE BOOL "" FORCE)
-endif()
-
-# Fetch GBenchmark and suppress internal tests.
-# https://github.com/google/benchmark/blob/main/docs/user_guide.md#using-register-benchmark
+# Google Benchmark
 FetchContent_Declare(
   GoogleBenchmark
   GIT_REPOSITORY https://github.com/google/benchmark.git
-  GIT_TAG v1.9.1)
+  GIT_TAG v1.9.1
+)
+
+# Suppress building tests/docs/etc. for faster builds:
+set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_DOXYGEN OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_INSTALL_DOCS OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_DOWNLOAD_DEPENDENCIES ON CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_USE_BUNDLED_GTEST ON CACHE BOOL "" FORCE)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(BENCHMARK_ENABLE_LIBPFM OFF CACHE BOOL "" FORCE)
+endif()
+
 FetchContent_MakeAvailable(GoogleBenchmark)
 
-# Remove the Google Benchmark's "built in debug warning".
+# Remove Google Benchmark's built-in debug warning in Release mode:
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   target_compile_definitions(benchmark PRIVATE NDEBUG)
 endif()
 
-# We need TBB for Parallel CPU Algorithms in GCC.
-# https://github.com/oneapi-src/oneTBB/blob/onetbb_2021/cmake/README.md
+# Intel TBB for parallel STL algorithms
+# https://github.com/oneapi-src/oneTBB/tree/onetbb_2021
 FetchContent_Declare(
   IntelTBB
   GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB.git
-  GIT_TAG master)
+  GIT_TAG master
+)
 
-# Set the TBB_TEST option to OFF before making it available
-set(TBB_TEST
-    OFF
-    CACHE BOOL "Do not build TBB tests" FORCE)
+# Suppress TBB’s own tests:
+set(TBB_TEST OFF CACHE BOOL "Do not build TBB tests" FORCE)
 FetchContent_MakeAvailable(IntelTBB)
 
-# Fetch "range-v3" for lazy views, as `std::ranges` is not feature-complete yet
+# ------------------------------------------------------------------------------
+# TBB fix for -Wstringop-overflow warnings treated as errors
+# ------------------------------------------------------------------------------
+# The TBB library target is typically called "tbb". We can explicitly disable
+# the `stringop-overflow` warning for TBB only:
+if(TARGET tbb)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(tbb PRIVATE -Wno-stringop-overflow)
+  endif()
+endif()
+
+# FMT for logging, as `std::format` has limited functionality
+FetchContent_Declare(
+  VictorZverovichFMT
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG 11.1.0
+)
+FetchContent_MakeAvailable(VictorZverovichFMT)
+
+# Eric Niebler's `range-v3`, as `std::ranges` have less functionality
 FetchContent_Declare(
   EricNieblerRangeV3
   GIT_REPOSITORY https://github.com/ericniebler/range-v3
-  GIT_TAG master)
+  GIT_TAG master
+)
 FetchContent_MakeAvailable(EricNieblerRangeV3)
 
-# Fetch "stringzilla" to extend `std::string_view` functionality
+# StringZilla to accelerate and extend `std::string_view` functionality
 FetchContent_Declare(
   AshVardanianStringZilla
   GIT_REPOSITORY https://github.com/ashvardanian/stringzilla
-  GIT_TAG main)
+  GIT_TAG main
+)
 FetchContent_MakeAvailable(AshVardanianStringZilla)
 
-# Fetch "ctre" to extend `std::regex` functionality
+# Hana Dusikova's CTRE for compile-time regex, replacing `std::regex`
 FetchContent_Declare(
   HanaDusikovaCTRE
   GIT_REPOSITORY https://github.com/hanickadot/compile-time-regular-expressions
-  GIT_TAG main)
+  GIT_TAG main
+)
 FetchContent_MakeAvailable(HanaDusikovaCTRE)
 
-# Add dependencies
-find_package(Threads REQUIRED)
-find_package(OpenMP REQUIRED)
+# Abseil for flat associative containers, before they arrive in C++26
+FetchContent_Declare(
+  GoogleAbseil
+  GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
+  GIT_TAG 20240722.0 # LTS version
+)
+FetchContent_MakeAvailable(GoogleAbseil)
 
+# ------------------------------------------------------------------------------
+# Main Executable
+# ------------------------------------------------------------------------------
 add_executable(less_slow less_slow.cpp)
 set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(less_slow pthread benchmark::benchmark fmt::fmt)
-target_link_libraries(less_slow range-v3) 
-target_link_libraries(less_slow ctre) 
-target_link_libraries(less_slow stringzilla) 
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_link_libraries(less_slow ${OPENMP_LIBRARIES})
-  target_link_libraries(less_slow TBB::tbb)
+# ------------------------------------------------------------------------------
+# Compiler Flags / Options
+# ------------------------------------------------------------------------------
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  # Apple Clang doesn't support -march=native
+  target_compile_options(less_slow PRIVATE -march=native)
 endif()
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  # A few useful options for GCC:
+  target_compile_options(less_slow PRIVATE
+    -fconcepts-diagnostics-depth=10
+    -Wno-error
+    -fopenmp
+  )
+else()
+  # For other compilers (Clang, MSVC, Intel, etc.)
+  target_compile_options(less_slow PRIVATE
+    -Wno-deprecated-pragma
+  )
+endif()
+
+# Release vs. Debug flags via generator expressions
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(less_slow PRIVATE
+    $<$<CONFIG:Release>:-O3>
+    $<$<CONFIG:Release>:-Wno-unused-but-set-variable>
+    $<$<CONFIG:Release>:-falign-functions=32>
+    $<$<CONFIG:Debug>:-g>
+    $<$<CONFIG:Debug>:-fsanitize=address,undefined>
+  )
+endif()
+
+# ------------------------------------------------------------------------------
+# Link Libraries
+# ------------------------------------------------------------------------------
+target_link_libraries(less_slow
+  PRIVATE
+    Threads::Threads
+    benchmark
+    range-v3
+    ctre
+    fmt
+    stringzilla
+    # There is no `absl` shortcut:
+    # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
+    absl::flat_hash_map
+    $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:TBB::tbb>
+    $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:OpenMP::OpenMP_CXX>
+)
