@@ -138,6 +138,13 @@ FetchContent_Declare(
   GIT_TAG main)
 FetchContent_MakeAvailable(AshVardanianStringZilla)
 
+# Fetch "ctre" to extend `std::regex` functionality
+FetchContent_Declare(
+  HanaDusikovaCTRE
+  GIT_REPOSITORY https://github.com/hanickadot/compile-time-regular-expressions
+  GIT_TAG main)
+FetchContent_MakeAvailable(HanaDusikovaCTRE)
+
 # Add dependencies
 find_package(Threads REQUIRED)
 find_package(OpenMP)
@@ -146,6 +153,7 @@ add_executable(less_slow less_slow.cpp)
 set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(less_slow pthread benchmark::benchmark fmt::fmt)
 target_link_libraries(less_slow range-v3) 
+target_link_libraries(less_slow ctre) 
 target_link_libraries(less_slow stringzilla) 
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

@@ -48,6 +48,7 @@ build_release/less_slow                                     # Run the benchmarks
 > Eric Niebler's [Range-v3](https://github.com/ericniebler/range-v3) extends `std::ranges`.
 > Ash Vardanian's [StringZilla](https://github.com/ashvardanian/stringzilla) is used for string manipulation.
 > Victor Zverovich's [fmt](https://github.com/fmtlib/fmt) extends `std::format` for logging.
+> Hana Dusíková's [CTRE](https://github.com/hanickadot/compile-time-regular-expressions) replaces `std::regex` for regular expressions matching.
 
 To control the output or run specific benchmarks, use the following flags:
 

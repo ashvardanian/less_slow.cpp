@@ -2075,7 +2075,7 @@ BENCHMARK(packaging_stl_any)->MinTime(2);
 
 #pragma endregion // Continuous Memory
 
-#pragma region Strings
+#pragma region Strings, Parsing, and Regular Expressions
 
 /**
  *  Many string libraries, including STL, Folly, and StringZilla, use a technique
@@ -2324,9 +2324,112 @@ BENCHMARK_CAPTURE(parsing_sz, long_, long_config_text)->MinTime(2);
  *  - `parsing_sz`:     @b 666 ns 😈
  *
  *  Hell of a result if you ask me :)
+ *
+ *  Sadly, oftentimes, the developers are too lazy to write a parser,
+ *  and use Regular Expressions as a shortcut. Composing a RegEx pattern
+ *  for our task, we should match 2 groups of characters - the key and the value.
+ *  Those form a single line, with a mandatory colon (':') separator and optional
+ *  whitespaces between tokens.
+ *
+ *  - line start + optional whitespace: `^\s*`
+ *  - capturing the key: `([^#:\s]+)`
+ *  - optional whitespace + colon + optional whitespace: `\s*:\s*`
+ *  - capturing the value: `([^#:\s]+)`
+ *  - optional trailing whitespace: `\s*$`
+ *
+ *  All together: `^\s*([^#:\s]+)\s*:\s*([^#:\s]+)\s*$`
+ *  You can try unpacking it on RegEx101.com: https://regex101.com/
  */
+#include <regex>
 
-#pragma endregion // Strings
+static constexpr std::string_view regex_for_config = R"(^\s*([^#:\s]+)\s*:\s*([^#:\s]+)\s*$)";
+
+void config_parse_regex(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings,
+                        std::regex const &regex_fsm) {
+    auto begin_ptr = config_text.data();
+    auto end_ptr = begin_ptr + config_text.size();
+
+    // Use `std::cregex_iterator` to find all non-overlapping matches
+    // across multiple lines. We rely on "multiline" mode to treat
+    // ^ and $ as line boundaries.
+    std::cregex_iterator it(begin_ptr, end_ptr, regex_fsm);
+    std::cregex_iterator end_it;
+
+    // For each match, capture the "key" and "value" groups.
+    // Group 0 is the full match, 1 and 2 are our key and value.
+    for (; it != end_it; ++it) {
+        std::cmatch const &match = *it;
+        std::string key = match.str(1);
+        std::string value = match.str(2);
+        settings.emplace_back(std::move(key), std::move(value));
+    }
+}
+
+template <typename string_view_>
+void parsing_regex(bm::State &state, string_view_ config_text) {
+    std::size_t pairs = 0, bytes = 0;
+    std::vector<std::pair<std::string, std::string>> settings;
+
+    // Use multiline mode so ^ and $ anchor to line breaks.
+    auto regex_options = std::regex_constants::ECMAScript | std::regex_constants::multiline;
+    // Construct the regex only once. Compilation is expensive!
+    // BTW, there is still no `std::string_view` constructor 🤦‍♂️
+    std::regex regex_fsm(regex_for_config.data(), regex_for_config.size(), regex_options);
+
+    for (auto _ : state) {
+        settings.clear();
+        config_parse_regex(config_text, settings, regex_fsm);
+        bm::DoNotOptimize(settings);
+        pairs += settings.size();
+        bytes += config_text.size();
+    }
+    state.SetBytesProcessed(bytes);
+    state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
+}
+
+BENCHMARK_CAPTURE(parsing_regex, short_, short_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parsing_regex, long_, long_config_text)->MinTime(2);
+
+/**
+ *  Assuming our patterns are known ahead of time, we can use C++ meta-programming
+ *  for compile-time regex generation using expression templates, emitting an
+ *  Assembly that is much more similar to the hand-written specialized parser,
+ *  than a generic regex engine.
+ *
+ *  @see "Compile Time Regular Expressions" by Hana Dusíková at CppCon 2018:
+ *       https://youtu.be/QM3W36COnE4
+ */
+#include <ctre.hpp>
+
+void config_parse_ctre(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
+    // ! CTRE isn't currently handling the $ anchor correctly.
+    for (auto match : ctre::multiline_search_all<R"(^\s*([^#:\s]+)\s*:\s*([^#:\s]+)\s*)">(config_text)) {
+        std::string_view key = match.get<1>().to_view();
+        std::string_view value = match.get<2>().to_view();
+        settings.emplace_back(key, value);
+    }
+}
+
+template <typename string_view_>
+void parsing_ctre(bm::State &state, string_view_ config_text) {
+    std::size_t pairs = 0, bytes = 0;
+    std::vector<std::pair<std::string, std::string>> settings;
+
+    for (auto _ : state) {
+        settings.clear();
+        config_parse_ctre(config_text, settings);
+        bm::DoNotOptimize(settings);
+        pairs += settings.size();
+        bytes += config_text.size();
+    }
+    state.SetBytesProcessed(bytes);
+    state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
+}
+
+BENCHMARK_CAPTURE(parsing_ctre, short_, short_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parsing_ctre, long_, long_config_text)->MinTime(2);
+
+#pragma endregion // Strings, Parsing, and Regular Expressions
 
 #pragma region Trees, Graphs, and Data Layouts
 /**
