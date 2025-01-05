@@ -127,6 +127,22 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(GoogleAbseil)
 
+# Niels Lohmann's JSON for modern JSON parsing
+FetchContent_Declare(
+  NielsLohmannJSON
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(NielsLohmannJSON)
+
+# Ibireme's YYJSON for more flexible & performant C-style parsing
+FetchContent_Declare(
+  IbiremeYYJSON
+  GIT_REPOSITORY https://github.com/ibireme/yyjson.git
+  GIT_TAG 0.10.0
+)
+FetchContent_MakeAvailable(IbiremeYYJSON)
+
 # ------------------------------------------------------------------------------
 # Main Executable
 # ------------------------------------------------------------------------------
@@ -173,13 +189,15 @@ target_link_libraries(less_slow
   PRIVATE
     Threads::Threads
     benchmark
+    fmt::fmt
     range-v3
-    ctre
-    fmt
     stringzilla
+    yyjson
+    ctre
     # There is no `absl` shortcut:
     # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
     absl::flat_hash_map
+    nlohmann_json::nlohmann_json
     $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:TBB::tbb>
     $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:OpenMP::OpenMP_CXX>
 )

@@ -2507,6 +2507,341 @@ BENCHMARK_CAPTURE(parsing_ctre, long_, long_config_text)->MinTime(2);
 
 #pragma endregion // Strings, Parsing, and Regular Expressions
 
+#pragma region JSON, Allocators, and Designing Complex Containers
+
+/**
+ *  There are several well-known libraries for JSON parsing in C/C++.
+ *  The most popular is Niels Lohmann's `nlohmann::json`.
+ *  The fastest for large inputs is Daniel Lemire's `simdjson`, which uses SIMD.
+ *  The most portable is likely @ibireme's `yyjson`, implemented in pure C.
+ *
+ *  All of them are fairly simple to use, but even with the simplest tools,
+ *  most developers never use them "correctly". One of the first things I recommend
+ *  looking at with custom data-structures is how they handle memory allocations and
+ *  checking the ability to @b override the default @b allocator.
+ *
+ *  For example, when processing network packets, we know the Maximum Transmission
+ *  Unit @b (MTU) of the underlying protocol. So the payload of a single a message
+ *  will never exceed the MTU size itself, which are well known for common protocols:
+ *
+ *  - Link Layer:
+ *      - Ethernet: @b 1500 bytes, or 9000 bytes with Jumbo Frames
+ *      - 802.11 Wi-Fi: 2304 bytes excluding headers, often reduced to 1500 bytes
+ *        for compatibility with Ethernet
+ *      - InfiniBand: configurable between 256, 512, 1024, 2048, and @b 4096 bytes
+ *  - Network Layer:
+ *      - IPv4: 576 to 1500 bytes with Path MTU Discovery
+ *      - IPv6: 1280 to 1500 bytes with Path MTU Discovery
+ *  - Transport Layer:
+ *      - TCP: normally up to 1460 bytes of payload, subtracting 20 bytes for the
+ *        IP header and 20 bytes for the TCP header from the most common 1500 bytes
+ *        of Ethernet MTU
+ *      - RDMA: normally 4096, when operating over InfiniBand
+ *
+ *  So, in theory we could benefit greatly from keeping a tiny local arena
+ *  for parsing and introspecting network traffic. Let's try and do this with the
+ *  C and C++ libraries, enumerating all of the JSON sub-objects in a single packet,
+ *  and checking for malicious scripts, like a Cross-Site Scripting (XSS) attack:
+ *
+ *      { "comment": "<script>alert('XSS')</script>" }
+ *
+ *  We will use a typical Twitter-like JSON input.
+ */
+static constexpr std::string_view twitter_json = R"({
+    "statuses": [{
+        "metadata": {
+            "result_type": "recent",
+            "iso_language_code": "ja"
+        },
+        "created_at": "Sun Aug 31 00:29:15 +0000 2014",
+        "id": 505874924095815700,
+        "text": "名前:前田あゆみ\n第一印象:怖っ！\n今の印象:キモい🤣✨\n一言:一生のダチ💖",
+        "user": {
+            "id": 1186275104,
+            "name": "AYUMI",
+            "screen_name": "ayuu0123",
+            "followers_count": 262,
+            "friends_count": 252
+        },
+        "entities": {
+            "user_mentions": [{
+                "screen_name": "aym0566x",
+                "id": 866260188,
+                "name": "前田あゆみ"
+            }],
+            "hashtags": [{
+                "text": "友情",
+                "indices": [32, 35]
+            }]
+        },
+        "lang": "ja"
+    }]
+})";
+
+struct fixed_buffer_arena_t {
+    static constexpr std::size_t capacity = 4096; // Matches RAM page size on most systems
+    std::byte buffer[capacity];
+    std::size_t next_offset = 0;
+    std::size_t total_allocated = 0;
+    std::size_t total_reclaimed = 0;
+};
+
+std::byte *allocate_from_arena(fixed_buffer_arena_t &fixed_buffer_arena, std::size_t size) noexcept {
+    if (fixed_buffer_arena.next_offset + size > fixed_buffer_arena.capacity) return nullptr;
+    void *ptr = fixed_buffer_arena.buffer + fixed_buffer_arena.next_offset;
+    fixed_buffer_arena.next_offset += size;
+    fixed_buffer_arena.total_allocated += size;
+    return static_cast<std::byte *>(ptr);
+}
+
+void deallocate_from_arena(fixed_buffer_arena_t &fixed_buffer_arena, std::byte *ptr, std::size_t size) noexcept {
+    // Check if the pointer is within the buffer range
+    std::byte *start = fixed_buffer_arena.buffer;
+    std::byte *end = fixed_buffer_arena.buffer + fixed_buffer_arena.capacity;
+
+    // Invalid deallocation request is a no-op
+    if (reinterpret_cast<std::byte *>(ptr) < start || reinterpret_cast<std::byte *>(ptr) >= end) return;
+
+    // We can't immediately reclaim memory, but we can track it
+    fixed_buffer_arena.total_reclaimed += size;
+
+    // Reset if all allocated memory has been reclaimed
+    if (fixed_buffer_arena.total_allocated == fixed_buffer_arena.total_reclaimed)
+        fixed_buffer_arena.next_offset = 0, fixed_buffer_arena.total_allocated = 0,
+        fixed_buffer_arena.total_reclaimed = 0;
+}
+
+#include <yyjson.h>
+
+bool contains_xss_in_yyjson(yyjson_val *node) noexcept {
+    if (!node) return false;
+
+    // Handle dictionary-like objects
+    if (yyjson_is_obj(node)) {
+        size_t idx, max;
+        yyjson_val *key, *val;
+        yyjson_obj_foreach(node, idx, max, key, val) {
+            if (contains_xss_in_yyjson(val)) return true;
+        }
+        return false;
+    }
+    // Handle array
+    else if (yyjson_is_arr(node)) {
+        yyjson_val *val;
+        yyjson_arr_iter iter = yyjson_arr_iter_with(node);
+        while ((val = yyjson_arr_iter_next(&iter)))
+            if (contains_xss_in_yyjson(val)) return true;
+        return false;
+    }
+    // Handle string values
+    else if (yyjson_is_str(node)) {
+        std::string_view value(yyjson_get_str(node), yyjson_get_len(node));
+        return value.find("<script>alert('XSS')</script>") != std::string_view::npos;
+    }
+    else { return false; }
+}
+
+/**
+ *  `yyjson` does not only allows to override the allocator, but
+ *  also passes a context object down:
+ *
+ *      void *(* malloc)(void *ctx, size_t size)
+ *      void *(* realloc)(void *ctx, void *ptr, size_t old_size, size_t size)
+ *      void (* free)(void *ctx, void *ptr)
+ *
+ *  We could also use the `yyjson_alc_pool_init`, but let's use our own variant
+ *  to highlight the differences between the libraries.
+ *
+ *  @see YYJSON allocators: https://ibireme.github.io/yyjson/doc/doxygen/html/structyyjson__alc.html
+ */
+
+static void json_parse_yyjson(bm::State &state) {
+
+    // Wrap our custom arena into a `yyjson_alc` structure
+    using arena_t = fixed_buffer_arena_t;
+    arena_t arena;
+    yyjson_alc alc;
+    alc.ctx = &arena;
+
+    //? There is a neat trick that allows us to use a lambda as a C-style function pointer
+    //? by using the unary `+` operator.
+    alc.malloc = +[](void *ctx, size_t size) {
+        return (void *)allocate_from_arena(*static_cast<fixed_buffer_arena_t *>(ctx), size);
+    };
+    alc.realloc = +[](void *ctx, void *ptr, size_t old_size, size_t size) {
+        deallocate_from_arena(*static_cast<arena_t *>(ctx), static_cast<std::byte *>(ptr), old_size);
+        return (void *)allocate_from_arena(*static_cast<arena_t *>(ctx), size);
+    };
+    alc.free = +[](void *ctx, void *ptr) {
+        deallocate_from_arena(*static_cast<arena_t *>(ctx), static_cast<std::byte *>(ptr), 0);
+    };
+
+    // Repeat the checks many times
+    std::size_t bytes_processed = 0;
+    std::size_t peak_memory_usage = 0;
+    for (auto _ : state) {
+        yyjson_doc *doc = yyjson_read(twitter_json.data(), twitter_json.size(), YYJSON_READ_NOFLAG);
+        yyjson_val *root = yyjson_doc_get_root(doc);
+        bm::DoNotOptimize(contains_xss_in_yyjson(root));
+        bytes_processed += twitter_json.size();
+        peak_memory_usage = std::max(peak_memory_usage, arena.total_allocated);
+        yyjson_doc_free(doc);
+    }
+    state.SetBytesProcessed(bytes_processed);
+    state.counters["peak_memory_usage"] = peak_memory_usage;
+}
+
+BENCHMARK(json_parse_yyjson)->MinTime(2);
+
+/**
+ *  The `nlohmann::json` library is designed to be simple and easy to use, but it's
+ *  not the most efficient or flexible. This should be clear even from the interface
+ *  level. Let's design a small `std::allocator` alternative, similar to STL's
+ *  polymorphic allocator, but with a fixed buffer arena and avoiding all of the
+ *  `virtual` nonsense :)
+ */
+#include <nlohmann/json.hpp>
+template <template <typename> typename allocator_>
+
+struct json_containers_for_alloc {
+    // Must allow `map<Key, Value, typename... Args>`, replaces `std::map`
+    template <typename key_type_, typename value_type_, typename...>
+    using object = std::map<key_type_, value_type_, std::less<>, allocator_<std::pair<const key_type_, value_type_>>>;
+
+    // Must allow `vector<Value, typename... Args>`, replaces `std::vector`
+    template <typename value_type_, typename...>
+    using array = std::vector<value_type_, allocator_<value_type_>>;
+
+    using string = std::basic_string<char, std::char_traits<char>, allocator_<char>>;
+};
+
+template <template <typename> typename allocator_>
+using json_with_alloc = nlohmann::basic_json<               //
+    json_containers_for_alloc<allocator_>::template object, // JSON object
+    json_containers_for_alloc<allocator_>::template array,  // JSON array
+    typename json_containers_for_alloc<allocator_>::string, // string type
+    bool,                                                   // boolean type
+    std::int64_t,                                           // integer type
+    std::uint64_t,                                          // unsigned type
+    double,                                                 // float type
+    allocator_,                                             // must allow `allocator<Value>`, replaces `std::allocator`
+    nlohmann::adl_serializer,                               // must allow `serializer<Value>`
+    std::vector<std::uint8_t, allocator_<std::uint8_t>>,    // binary type
+    void                                                    // custom base class
+    >;
+
+/**
+ *  The `allocate_from_arena` and `deallocate_from_arena` are fairly elegant and simple.
+ *  But we have no way of supplying our `fixed_buffer_arena_t` instance to the `nlohmann::json`
+ *  library and it has no mechanism internally to propagate the allocator state to the nested
+ *  containers:
+ *
+ *      switch (t) {
+ *          case value_t::object: {
+ *              AllocatorType<object_t> alloc;
+ *              std::allocator_traits<decltype(alloc)>::destroy(alloc, object);
+ *              std::allocator_traits<decltype(alloc)>::deallocate(alloc, object, 1);
+ *              break;
+ *          }
+ *          case value_t::array: {
+ *              ...
+ *
+ *  So with `nlohmann::json` we are forced to use some singleton @b `thread_local` state,
+ *  which is an immediate @b code-smell, while with `yyjson` we can pass a context object down!
+ */
+
+thread_local fixed_buffer_arena_t local_arena;
+
+template <typename value_type_>
+struct fixed_buffer_allocator {
+    using value_type = value_type_;
+
+    fixed_buffer_allocator() noexcept = default;
+
+    template <typename other_type_>
+    fixed_buffer_allocator(fixed_buffer_allocator<other_type_> const &) noexcept {}
+
+    value_type *allocate(std::size_t n) noexcept(false) {
+        if (auto ptr = allocate_from_arena(local_arena, n * sizeof(value_type)); ptr)
+            return reinterpret_cast<value_type *>(ptr);
+        else
+            throw std::bad_alloc();
+    }
+
+    void deallocate(value_type *ptr, std::size_t n) noexcept {
+        deallocate_from_arena(local_arena, reinterpret_cast<std::byte *>(ptr), n * sizeof(value_type));
+    }
+
+    // Rebind mechanism and comparators are for compatibility with STL containers
+    template <typename other_type_>
+    struct rebind {
+        using other = fixed_buffer_allocator<other_type_>;
+    };
+    bool operator==(fixed_buffer_allocator const &) const noexcept { return true; }
+    bool operator!=(fixed_buffer_allocator const &) const noexcept { return false; }
+};
+
+template <typename json_type_>
+bool contains_xss_nlohmann(json_type_ const &j) noexcept {
+    if (j.is_object()) {
+        for (auto const &it : j.items())
+            if (contains_xss_nlohmann(it.value())) return true;
+        return false;
+    }
+    else if (j.is_array()) {
+        for (auto const &elem : j)
+            if (contains_xss_nlohmann(elem)) return true;
+        return false;
+    }
+    else if (j.is_string()) {
+        using string_t = typename json_type_::string_t;
+        auto const &s = j.template get_ref<string_t const &>();
+        return s.find("<script>alert('XSS')</script>") != string_t::npos;
+    }
+    else { return false; }
+}
+
+using default_json = json_with_alloc<std::allocator>;
+using fixed_buffer_json = json_with_alloc<fixed_buffer_allocator>;
+
+template <typename json_type_>
+static void json_parse_nlohmann(bm::State &state) {
+    std::size_t bytes_processed = 0;
+    std::size_t peak_memory_usage = 0;
+    for (auto _ : state) {
+        json_type_ json = json_type_::parse(twitter_json);
+        bm::DoNotOptimize(contains_xss_nlohmann(json));
+        bytes_processed += twitter_json.size();
+        if constexpr (!std::is_same_v<json_type_, default_json>)
+            peak_memory_usage = std::max(peak_memory_usage, local_arena.total_allocated);
+    }
+    state.SetBytesProcessed(bytes_processed);
+    state.counters["peak_memory_usage"] = peak_memory_usage;
+}
+
+BENCHMARK_TEMPLATE(json_parse_nlohmann, default_json)->MinTime(2)->Name("json_parse_nlohmann<std::allocator>");
+BENCHMARK_TEMPLATE(json_parse_nlohmann, fixed_buffer_json)->MinTime(2)->Name("json_parse_nlohmann<fixed_buffer>");
+
+/**
+ *  The results are as expected:
+ *  - `json_parse_nlohmann<std::allocator>`: ...
+ *  - `json_parse_nlohmann<fixed_buffer>`: ...
+ *  - `json_parse_yyjson`: ...
+ *
+ *  Some of Unum's libraries, like `usearch` can take multiple allocators for
+ *  different parts of a complex hybrid data-structure with clearly divisible
+ *  memory management patterns. A.k.a. part of the structure is append-only,
+ *  and another part is frequently modified, but only in fixed-size blocks,
+ *  perfect for an "arena" allocator.
+ *
+ *  If you are ambitious enough to build advanced memory allocators, check
+ *  out the implementation of `jemalloc`, `mimalloc`, `tcmalloc`, and `hoard`.
+ *
+ *  @see Heap Layers project by Emery Berger: https://github.com/emeryberger/Heap-Layers
+ */
+
+#pragma endregion // JSON, Allocators, and Designing Complex Containers
+
 #pragma region Trees, Graphs, and Data Layouts
 /**
  *  We already understand the cost of accessing non-contiguous memory, cache misses,
