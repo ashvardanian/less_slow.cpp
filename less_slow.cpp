@@ -2544,74 +2544,95 @@ BENCHMARK_CAPTURE(parsing_ctre, long_, long_config_text)->MinTime(2);
  *  and checking for malicious scripts, like a Cross-Site Scripting (XSS) attack:
  *
  *      { "comment": "<script>alert('XSS')</script>" }
- *
- *  We will use a typical Twitter-like JSON input.
  */
-static constexpr std::string_view twitter_json = R"({
-    "statuses": [{
-        "metadata": {
-            "result_type": "recent",
-            "iso_language_code": "ja"
-        },
-        "created_at": "Sun Aug 31 00:29:15 +0000 2014",
-        "id": 505874924095815700,
-        "text": "名前:前田あゆみ\n第一印象:怖っ！\n今の印象:キモい🤣✨\n一言:一生のダチ💖",
-        "user": {
-            "id": 1186275104,
-            "name": "AYUMI",
-            "screen_name": "ayuu0123",
-            "followers_count": 262,
-            "friends_count": 252
-        },
-        "entities": {
-            "user_mentions": [{
-                "screen_name": "aym0566x",
-                "id": 866260188,
-                "name": "前田あゆみ"
-            }],
-            "hashtags": [{
-                "text": "友情",
-                "indices": [32, 35]
-            }]
-        },
-        "lang": "ja"
-    }]
+#include <cstring> // `std::memset`, `std::memmove`
+
+static constexpr std::string_view sample_json = R"({
+    "meta": { "id": 42, "valid": true, "coordinates": [ 0.0, 0.0 ] },
+    "greetings": [
+        { "language": "English", "text": "Hello there! How are you doing on this sunny day?" },
+        { "language": "日本語", "text": "こんにちは！今日は晴れていますが、お元気ですか？" },
+        { "language": "Español", "text": "Hola a todos, ¿cómo estáis hoy tan soleado?" }
+    ]
 })";
 
 struct fixed_buffer_arena_t {
-    static constexpr std::size_t capacity = 4096; // Matches RAM page size on most systems
+    static constexpr std::size_t capacity = 4096;
     std::byte buffer[capacity];
-    std::size_t next_offset = 0;
+
+    /// The offset (in bytes) of the next free location
     std::size_t total_allocated = 0;
+    /// The total bytes "freed" so far
     std::size_t total_reclaimed = 0;
 };
 
-std::byte *allocate_from_arena(fixed_buffer_arena_t &fixed_buffer_arena, std::size_t size) noexcept {
-    if (fixed_buffer_arena.next_offset + size > fixed_buffer_arena.capacity) return nullptr;
-    void *ptr = fixed_buffer_arena.buffer + fixed_buffer_arena.next_offset;
-    fixed_buffer_arena.next_offset += size;
-    fixed_buffer_arena.total_allocated += size;
-    return static_cast<std::byte *>(ptr);
+/**
+ *  @brief  Allocates a new chunk of `size` bytes from the arena.
+ *  @return The new pointer or `nullptr` if OOM.
+ */
+std::byte *allocate_from_arena(fixed_buffer_arena_t &arena, std::size_t size) noexcept {
+    if (arena.total_allocated + size > fixed_buffer_arena_t::capacity) return nullptr; // Not enough space
+    std::byte *ptr = arena.buffer + arena.total_allocated;
+    arena.total_allocated += size;
+    return ptr;
 }
 
-void deallocate_from_arena(fixed_buffer_arena_t &fixed_buffer_arena, std::byte *ptr, std::size_t size) noexcept {
-    // Check if the pointer is within the buffer range
-    std::byte *start = fixed_buffer_arena.buffer;
-    std::byte *end = fixed_buffer_arena.buffer + fixed_buffer_arena.capacity;
-
-    // Invalid deallocation request is a no-op
-    if (reinterpret_cast<std::byte *>(ptr) < start || reinterpret_cast<std::byte *>(ptr) >= end) return;
-
-    // We can't immediately reclaim memory, but we can track it
-    fixed_buffer_arena.total_reclaimed += size;
-
-    // Reset if all allocated memory has been reclaimed
-    if (fixed_buffer_arena.total_allocated == fixed_buffer_arena.total_reclaimed)
-        fixed_buffer_arena.next_offset = 0, fixed_buffer_arena.total_allocated = 0,
-        fixed_buffer_arena.total_reclaimed = 0;
+/**
+ *  @brief  Deallocates a chunk of memory previously allocated from the arena.
+ *          This implementation does not "reuse" partial free space unless everything is freed.
+ */
+void deallocate_from_arena(fixed_buffer_arena_t &arena, std::byte *ptr, std::size_t size) noexcept {
+    // Check if ptr is within the arena
+    std::byte *start = arena.buffer;
+    std::byte *end = arena.buffer + fixed_buffer_arena_t::capacity;
+    if (ptr < start || ptr >= end) return; // Invalid pointer => no-op
+    arena.total_reclaimed += size;
+    // Reset completely if fully reclaimed
+    if (arena.total_allocated == arena.total_reclaimed) arena.total_allocated = 0, arena.total_reclaimed = 0;
 }
 
-#include <yyjson.h>
+/**
+ *  @brief  Reallocates `ptr` to have `new_size` bytes. The old size was `old_size`.
+ *          If `ptr` is the last chunk allocated, and there's room to grow in place, just expands.
+ *          Otherwise, do allocates, copies, and frees.
+ *  @return The new pointer or `nullptr` if OOM.
+ */
+std::byte *reallocate_from_arena( //
+    fixed_buffer_arena_t &arena, std::byte *ptr, std::size_t old_size, std::size_t new_size) noexcept {
+    if (!ptr) return allocate_from_arena(arena, new_size); //  A fresh allocation
+
+    // This is effectively a `free` operation
+    if (new_size == 0) {
+        deallocate_from_arena(arena, ptr, old_size);
+        return nullptr;
+    }
+
+    std::byte *end_of_this_chunk = ptr + old_size;
+    std::byte *arena_end = arena.buffer + arena.total_allocated;
+    bool is_last_chunk = end_of_this_chunk == arena_end;
+
+    if (is_last_chunk) {
+        // Expand in-place if there's enough room
+        std::size_t offset = static_cast<std::size_t>(ptr - arena.buffer);
+        std::size_t required_space = offset + new_size;
+        if (required_space <= fixed_buffer_arena_t::capacity) {
+            // We can grow (or shrink) in place
+            arena.total_allocated = required_space;
+            return ptr;
+        }
+    }
+
+    // If we can’t grow in place, do: allocate new + copy + free old
+    std::byte *new_ptr = allocate_from_arena(arena, new_size);
+    if (!new_ptr) return nullptr; // Out of memory
+
+    // Copy the old data
+    std::memmove(new_ptr, ptr, std::min(old_size, new_size));
+    deallocate_from_arena(arena, ptr, old_size);
+    return new_ptr;
+}
+
+#include <yyjson.h> // `yyjson` library
 
 bool contains_xss_in_yyjson(yyjson_val *node) noexcept {
     if (!node) return false;
@@ -2642,50 +2663,67 @@ bool contains_xss_in_yyjson(yyjson_val *node) noexcept {
 }
 
 /**
- *  `yyjson` does not only allows to override the allocator, but
- *  also passes a context object down:
+ *  `yyjson` does not only allows to override the allocator, but also passes a context object down:
  *
  *      void *(* malloc)(void *ctx, size_t size)
  *      void *(* realloc)(void *ctx, void *ptr, size_t old_size, size_t size)
  *      void (* free)(void *ctx, void *ptr)
  *
- *  We could also use the `yyjson_alc_pool_init`, but let's use our own variant
- *  to highlight the differences between the libraries.
+ *  It's @b almost perfect, except for one thing: the `free` doesn't receive the size of the block,
+ *  so you must do bookkeeping yourself!
  *
  *  @see YYJSON allocators: https://ibireme.github.io/yyjson/doc/doxygen/html/structyyjson__alc.html
  */
 
 static void json_parse_yyjson(bm::State &state) {
 
-    // Wrap our custom arena into a `yyjson_alc` structure
+    // Wrap our custom arena into a `yyjson_alc` structure, alternatively we could use:
+    //
+    //    char yyjson_buffer[4096];
+    //    yyjson_alc_pool_init(&alc, yyjson_buffer, sizeof(yyjson_buffer));
+    //
     using arena_t = fixed_buffer_arena_t;
     arena_t arena;
     yyjson_alc alc;
     alc.ctx = &arena;
 
-    //? There is a neat trick that allows us to use a lambda as a C-style function pointer
-    //? by using the unary `+` operator.
-    alc.malloc = +[](void *ctx, size_t size) {
-        return (void *)allocate_from_arena(*static_cast<fixed_buffer_arena_t *>(ctx), size);
+    //? There is a neat trick that allows us to use a lambda as a
+    //? C-style function pointer by using the unary `+` operator.
+    alc.malloc = +[](void *ctx, size_t size) -> void * {
+        std::byte *result = allocate_from_arena(*static_cast<fixed_buffer_arena_t *>(ctx), size + sizeof(size_t));
+        if (!result) return nullptr;
+        std::memcpy(result, &size, sizeof(size_t));
+        return (void *)(result + sizeof(size_t));
     };
-    alc.realloc = +[](void *ctx, void *ptr, size_t old_size, size_t size) {
-        deallocate_from_arena(*static_cast<arena_t *>(ctx), static_cast<std::byte *>(ptr), old_size);
-        return (void *)allocate_from_arena(*static_cast<arena_t *>(ctx), size);
+    alc.realloc = +[](void *ctx, void *ptr, size_t old_size, size_t size) -> void * {
+        std::byte *start = static_cast<std::byte *>(ptr) - sizeof(size_t);
+        return (void *)reallocate_from_arena(    //
+            *static_cast<arena_t *>(ctx), start, //
+            old_size + sizeof(size_t), size + sizeof(size_t));
     };
-    alc.free = +[](void *ctx, void *ptr) {
-        deallocate_from_arena(*static_cast<arena_t *>(ctx), static_cast<std::byte *>(ptr), 0);
+    alc.free = +[](void *ctx, void *ptr) -> void {
+        std::byte *start = static_cast<std::byte *>(ptr) - sizeof(size_t);
+        std::size_t size;
+        std::memcpy(&size, start, sizeof(size_t));
+        deallocate_from_arena(*static_cast<arena_t *>(ctx), start, size + sizeof(size_t));
     };
+
+    yyjson_read_err error;
+    std::memset(&error, 0, sizeof(error));
 
     // Repeat the checks many times
     std::size_t bytes_processed = 0;
     std::size_t peak_memory_usage = 0;
     for (auto _ : state) {
-        yyjson_doc *doc = yyjson_read(twitter_json.data(), twitter_json.size(), YYJSON_READ_NOFLAG);
+        yyjson_doc *doc = yyjson_read_opts(                 //
+            (char *)sample_json.data(), sample_json.size(), //
+            YYJSON_READ_NOFLAG, &alc, &error);
         yyjson_val *root = yyjson_doc_get_root(doc);
         bm::DoNotOptimize(contains_xss_in_yyjson(root));
-        bytes_processed += twitter_json.size();
+        bytes_processed += sample_json.size();
         peak_memory_usage = std::max(peak_memory_usage, arena.total_allocated);
         yyjson_doc_free(doc);
+        if (error.code) state.SkipWithError(error.msg);
     }
     state.SetBytesProcessed(bytes_processed);
     state.counters["peak_memory_usage"] = peak_memory_usage;
@@ -2809,9 +2847,9 @@ static void json_parse_nlohmann(bm::State &state) {
     std::size_t bytes_processed = 0;
     std::size_t peak_memory_usage = 0;
     for (auto _ : state) {
-        json_type_ json = json_type_::parse(twitter_json);
+        json_type_ json = json_type_::parse(sample_json);
         bm::DoNotOptimize(contains_xss_nlohmann(json));
-        bytes_processed += twitter_json.size();
+        bytes_processed += sample_json.size();
         if constexpr (!std::is_same_v<json_type_, default_json>)
             peak_memory_usage = std::max(peak_memory_usage, local_arena.total_allocated);
     }
@@ -2824,9 +2862,9 @@ BENCHMARK_TEMPLATE(json_parse_nlohmann, fixed_buffer_json)->MinTime(2)->Name("js
 
 /**
  *  The results are as expected:
- *  - `json_parse_nlohmann<std::allocator>`: ...
- *  - `json_parse_nlohmann<fixed_buffer>`: ...
- *  - `json_parse_yyjson`: ...
+ *  - `json_parse_nlohmann<std::allocator>`: @b 2927 ns
+ *  - `json_parse_nlohmann<fixed_buffer>`: @b 2531 ns
+ *  - `json_parse_yyjson`: @b 373 ns
  *
  *  Some of Unum's libraries, like `usearch` can take multiple allocators for
  *  different parts of a complex hybrid data-structure with clearly divisible
