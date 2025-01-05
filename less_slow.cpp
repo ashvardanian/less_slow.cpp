@@ -2478,8 +2478,10 @@ BENCHMARK_CAPTURE(parsing_regex, long_, long_config_text)->MinTime(2);
 #include <ctre.hpp>
 
 void config_parse_ctre(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
-    // ! CTRE isn't currently handling the $ anchor correctly.
-    for (auto match : ctre::multiline_search_all<R"(^\s*([^#:\s]+)\s*:\s*([^#:\s]+)\s*)">(config_text)) {
+    // ! CTRE isn't currently handling the `$` anchor correctly.
+    // ! The current workaround is to add `?` to the last whitespace group.
+    // ! https://github.com/hanickadot/compile-time-regular-expressions/issues/334#issuecomment-2571614075
+    for (auto match : ctre::multiline_search_all<R"(^\s*([^#:\s]+)\s*:\s*([^#:\s]+)\s*?$)">(config_text)) {
         std::string_view key = match.get<1>().to_view();
         std::string_view value = match.get<2>().to_view();
         settings.emplace_back(key, value);
