@@ -1,6 +1,7 @@
 # Learning to Write _Less Slow_ C, C++, and Assembly Code
 
-> The benchmarks in this repository don't aim to cover every topic fully, but they help form a mindset and intuition for performance-oriented software design.
+> The benchmarks in this repository don't aim to cover every topic entirely, but they help form a mindset and intuition for performance-oriented software design.
+> It also provides an example of using some non-STL but de facto standard libraries in C++, importing them via CMake, and compiling from source.
 > For higher-level abstractions and languages, check out [`less_slow.rs`](https://github.com/ashvardanian/less_slow.rs) and [`less_slow.py`](https://github.com/ashvardanian/less_slow.py).
 
 Much modern code suffers from common pitfalls, such as bugs, security vulnerabilities, and __performance bottlenecks__.
@@ -17,11 +18,12 @@ Some of the highlights include:
 - __40x faster trigonometry:__ Speed-up standard library functions like [`std::sin`](https://en.cppreference.com/w/cpp/numeric/math/sin) in just 3 lines of code.
 - __4x faster logic with [`std::ranges`](https://en.cppreference.com/w/cpp/ranges):__ Reduce stack usage and reuse registers more efficiently.
 - __Compiler optimizations beyond `-O3`:__ Learn about less obvious flags and techniques for another 2x speedup.
-- __Need matrix multiplications?__ Check how a 3x3x3 GEMM can be 60% slower than 4x4x4, despite 60% fewer ops.
+- __Multiplying matrices?__ Check how a 3x3x3 GEMM can be 70% slower than 4x4x4, despite 60% fewer ops.
 - __How many if conditions are too many?__ Test your CPU's branch predictor with just 10 lines of code.
-- __Iterative vs. recursive algorithms:__ Avoid pitfalls that could cause a `SEGFAULT` or slow your program.
+- __Prefer recursion to iteration?__ Measure the depth at which your algorithm with `SEGFAULT`.
 - __How not to build state machines:__ Compare `std::variant`, `virtual` functions, and C++20 coroutines.
 - __Scaling to many cores?__ Learn how to use OpenMP, Intel's oneTBB, or your custom thread pool.
+- __How to handle JSON avoiding memory allocations?__ Is it easier with C or C++ libraries?
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
 Follow the instructions below to run the code in your environment and compare it to the comments as you read through the source.
@@ -42,25 +44,26 @@ cmake --build build_release --config Release                # Build the project
 build_release/less_slow                                     # Run the benchmarks
 ```
 
-> The build will pull and compile several third-party dependencies. 
-> Google [Benchmark](https://github.com/google/benchmark) is used for profiling.
-> Intel's [oneTBB](https://github.com/uxlfoundation/oneTBB) is used as the Parallel STL backend.
-> Eric Niebler's [Range-v3](https://github.com/ericniebler/range-v3) extends `std::ranges`.
-> Ash Vardanian's [StringZilla](https://github.com/ashvardanian/stringzilla) is used for string manipulation.
-> Victor Zverovich's [fmt](https://github.com/fmtlib/fmt) extends `std::format` for logging.
-> Google's [Abseil](https://github.com/abseil/abseil-cpp) replaces STL's associative containers.
-> Emery Berger's [Heap-Layers](https://github.com/emeryberger/Heap-Layers) is used for advanced memory management.
-> Hana Dusíková's [CTRE](https://github.com/hanickadot/compile-time-regular-expressions) replaces `std::regex` for regular expressions matching.
+The build will pull and compile several third-party dependencies from the source:
+
+- Google's [Benchmark](https://github.com/google/benchmark) is used for profiling.
+- Intel's [oneTBB](https://github.com/uxlfoundation/oneTBB) is used as the Parallel STL backend.
+- Eric Niebler's [range-v3](https://github.com/ericniebler/range-v3) replaces `std::ranges`.
+- Victor Zverovich's [fmt](https://github.com/fmtlib/fmt) replaces `std::format`.
+- Ash Vardanian's [StringZilla](https://github.com/ashvardanian/stringzilla) replaces `std::string`.
+- Hana Dusíková's [CTRE](https://github.com/hanickadot/compile-time-regular-expressions) replaces `std::regex`.
+- Niels Lohmann's [json](https://github.com/nlohmann/json) is used for JSON deserialization.
+- Google's [Abseil](https://github.com/abseil/abseil-cpp) replaces STL's associative containers.
 
 To control the output or run specific benchmarks, use the following flags:
 
 ```sh
 build_release/less_slow --benchmark_format=json             # Output in JSON format
-build_release/less_slow --benchmark_out=results.json        # Save the results to a file, instead of `stdout`
+build_release/less_slow --benchmark_out=results.json        # Save the results to a file instead of `stdout`
 build_release/less_slow --benchmark_filter=std_sort         # Run only benchmarks containing `std_sort` in their name
 ```
 
-To enhance stability and reproducibility, use the `--benchmark_enable_random_interleaving=true` flag which shuffles and interleaves benchmarks as described [here](https://github.com/google/benchmark/blob/main/docs/random_interleaving.md).
+To enhance stability and reproducibility, use the `--benchmark_enable_random_interleaving=true` flag, which shuffles and interleaves benchmarks as described [here](https://github.com/google/benchmark/blob/main/docs/random_interleaving.md).
 
 ```sh
 build_release/less_slow --benchmark_enable_random_interleaving=true
