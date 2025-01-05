@@ -2699,9 +2699,13 @@ static void json_parse_yyjson(bm::State &state) {
     };
     alc.realloc = +[](void *ctx, void *ptr, size_t old_size, size_t size) -> void * {
         std::byte *start = static_cast<std::byte *>(ptr) - sizeof(size_t);
-        return (void *)reallocate_from_arena(    //
-            *static_cast<arena_t *>(ctx), start, //
+        std::byte *new_start = reallocate_from_arena( //
+            *static_cast<arena_t *>(ctx), start,      //
             old_size + sizeof(size_t), size + sizeof(size_t));
+        if (!new_start) return nullptr;
+        // Don't forget to increment the size if the pointer was reallocated
+        std::memcpy(new_start, &size, sizeof(size_t));
+        return (void *)(new_start + sizeof(size_t));
     };
     alc.free = +[](void *ctx, void *ptr) -> void {
         std::byte *start = static_cast<std::byte *>(ptr) - sizeof(size_t);
