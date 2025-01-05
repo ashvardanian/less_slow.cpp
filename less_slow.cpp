@@ -3248,6 +3248,7 @@ struct log_printf_t {
     }
 };
 
+#if defined(__cpp_lib_format)
 #include <format> // `std::format_to_n`
 
 struct log_format_t {
@@ -3279,6 +3280,8 @@ struct log_format_t {
         return static_cast<std::size_t>(result.size);
     }
 };
+
+#endif // defined(__cpp_lib_format)
 
 #include <fmt/chrono.h>  // formatting for `std::chrono` types
 #include <fmt/compile.h> // compile-time format strings
@@ -3339,7 +3342,9 @@ static void logging(bm::State &state) {
 }
 
 BENCHMARK(logging<log_printf_t>)->Name("log_printf")->MinTime(2);
+#if defined(__cpp_lib_format)
 BENCHMARK(logging<log_format_t>)->Name("log_format")->MinTime(2);
+#endif
 BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
 
 /**
