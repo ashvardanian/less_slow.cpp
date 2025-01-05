@@ -180,6 +180,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"
     $<$<CONFIG:Debug>:-g>
     $<$<CONFIG:Debug>:-fsanitize=address,undefined>
   )
+  target_link_options(less_slow PRIVATE
+    $<$<CONFIG:Debug>:-fsanitize=address,undefined>
+  )
 endif()
 
 # ------------------------------------------------------------------------------
