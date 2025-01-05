@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
+# Let's used CMake 3.16+ for native sanitizers support
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR) 
 
 # ------------------------------------------------------------------------------
 # Project Setup
@@ -178,11 +179,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"
     $<$<CONFIG:Release>:-Wno-unused-but-set-variable>
     $<$<CONFIG:Release>:-falign-functions=32>
     $<$<CONFIG:Debug>:-g>
-    $<$<CONFIG:Debug>:-fsanitize=address,undefined>
   )
-  target_link_options(less_slow PRIVATE
-    $<$<CONFIG:Debug>:-fsanitize=address,undefined>
-  )
+  set_property(TARGET less_slow PROPERTY SANITIZE_ADDRESS TRUE)
+  set_property(TARGET less_slow PROPERTY SANITIZE_UNDEFINED TRUE)
 endif()
 
 # ------------------------------------------------------------------------------
