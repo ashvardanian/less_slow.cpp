@@ -63,7 +63,7 @@ build_release/less_slow --benchmark_out=results.json        # Save the results t
 build_release/less_slow --benchmark_filter=std_sort         # Run only benchmarks containing `std_sort` in their name
 ```
 
-To enhance stability and reproducibility, use the `--benchmark_enable_random_interleaving=true` flag, which shuffles and interleaves benchmarks as described [here](https://github.com/google/benchmark/blob/main/docs/random_interleaving.md).
+To enhance stability and reproducibility, disable Simultaneous Multi-Threading __(SMT)__ on your CPU and use the `--benchmark_enable_random_interleaving=true` flag, which shuffles and interleaves benchmarks as described [here](https://github.com/google/benchmark/blob/main/docs/random_interleaving.md).
 
 ```sh
 build_release/less_slow --benchmark_enable_random_interleaving=true

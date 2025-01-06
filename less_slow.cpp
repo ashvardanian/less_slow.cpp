@@ -2976,14 +2976,15 @@ BENCHMARK(json_nlohmann<fixed_buffer_json, false>)
     ->Threads(physical_cores());
 
 /**
- *  The results for the single-threaded case and the multi-threaded case are:
+ *  The results for the single-threaded case and the multi-threaded case without
+ *  Simultaneous Multi-Threading @b (SMT) are as follows:
  *
- *  - `json_yyjson<malloc>`:                       @b 291 ns       @b 554 ns
- *  - `json_yyjson<fixed_buffer>`:                 @b 263 ns       @b 468 ns
- *  - `json_nlohmann<std::allocator, throw>`:      @b 6'330 ns     @b 9'370 ns
- *  - `json_nlohmann<fixed_buffer, throw>`:        @b 4'915 ns     @b 8'130 ns
- *  - `json_nlohmann<std::allocator, noexcept>`:   @b 4'108 ns     @b 6'963 ns
- *  - `json_nlohmann<fixed_buffer, noexcept>`:     @b 4'075 ns     @b 6'194 ns
+ *  - `json_yyjson<malloc>`:                       @b 291 ns       @b 294 ns
+ *  - `json_yyjson<fixed_buffer>`:                 @b 263 ns       @b 264 ns
+ *  - `json_nlohmann<std::allocator, throw>`:      @b 5'164 ns     @b 5'296 ns
+ *  - `json_nlohmann<fixed_buffer, throw>`:        @b 4'861 ns     @b 4'956 ns
+ *  - `json_nlohmann<std::allocator, noexcept>`:   @b 3'796 ns     @b 3'933 ns
+ *  - `json_nlohmann<fixed_buffer, noexcept>`:     @b 3'485 ns     @b 3'533 ns
  *
  *  Some of Unum's libraries, like `usearch` can take multiple allocators for
  *  different parts of a complex hybrid data-structure with clearly divisible
