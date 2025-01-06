@@ -2774,11 +2774,13 @@ static void json_yyjson(bm::State &state) {
         if (error.code) state.SkipWithError(error.msg);
     }
     state.SetBytesProcessed(bytes_processed);
-    state.counters["peak_memory_usage"] = peak_memory_usage;
+    state.counters["peak_memory_usage"] = bm::Counter(peak_memory_usage, bm::Counter::kAvgThreads);
 }
 
-BENCHMARK(json_yyjson<false>)->MinTime(2)->Name("json_yyjson<malloc>");
-BENCHMARK(json_yyjson<true>)->MinTime(2)->Name("json_yyjson<fixed_buffer>");
+BENCHMARK(json_yyjson<false>)->MinTime(5)->Name("json_yyjson<malloc>");
+BENCHMARK(json_yyjson<true>)->MinTime(5)->Name("json_yyjson<fixed_buffer>");
+BENCHMARK(json_yyjson<false>)->MinTime(5)->Name("json_yyjson<malloc>")->Threads(physical_cores());
+BENCHMARK(json_yyjson<true>)->MinTime(5)->Name("json_yyjson<fixed_buffer>")->Threads(physical_cores());
 
 /**
  *  The `nlohmann::json` library is designed to be simple and easy to use, but it's
@@ -2903,18 +2905,27 @@ static void json_nlohmann(bm::State &state) {
             peak_memory_usage = std::max(peak_memory_usage, local_arena.total_allocated);
     }
     state.SetBytesProcessed(bytes_processed);
-    state.counters["peak_memory_usage"] = peak_memory_usage;
+    state.counters["peak_memory_usage"] = bm::Counter(peak_memory_usage, bm::Counter::kAvgThreads);
 }
 
-BENCHMARK_TEMPLATE(json_nlohmann, default_json)->MinTime(2)->Name("json_nlohmann<std::allocator>");
-BENCHMARK_TEMPLATE(json_nlohmann, fixed_buffer_json)->MinTime(2)->Name("json_nlohmann<fixed_buffer>");
+BENCHMARK_TEMPLATE(json_nlohmann, default_json)->MinTime(5)->Name("json_nlohmann<std::allocator>");
+BENCHMARK_TEMPLATE(json_nlohmann, fixed_buffer_json)->MinTime(5)->Name("json_nlohmann<fixed_buffer>");
+BENCHMARK_TEMPLATE(json_nlohmann, default_json)
+    ->MinTime(5)
+    ->Name("json_nlohmann<std::allocator>")
+    ->Threads(physical_cores());
+BENCHMARK_TEMPLATE(json_nlohmann, fixed_buffer_json)
+    ->MinTime(5)
+    ->Name("json_nlohmann<fixed_buffer>")
+    ->Threads(physical_cores());
 
 /**
- *  The results are as expected:
- *  - `json_nlohmann<std::allocator>`: @b 2927 ns
- *  - `json_nlohmann<fixed_buffer>`: @b 2531 ns
- *  - `json_yyjson<malloc>`: @b 373 ns
- *  - `json_yyjson<fixed_buffer>`: @b 217 ns
+ *  The results are as expected for the single-threaded case and the multi-threaded case:
+ *
+ *  - `json_yyjson<malloc>`:                @b 280 ns       @b 419 ns
+ *  - `json_yyjson<fixed_buffer>`:          @b 222 ns       @b 387 ns
+ *  - `json_nlohmann<std::allocator>`:      @b 2'773 ns     @b 5'227 ns
+ *  - `json_nlohmann<fixed_buffer>`:        @b 2'610 ns     @b 4'438 ns
  *
  *  Some of Unum's libraries, like `usearch` can take multiple allocators for
  *  different parts of a complex hybrid data-structure with clearly divisible
