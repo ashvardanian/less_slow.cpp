@@ -2670,7 +2670,7 @@ std::byte *reallocate_from_arena( //
 
 #define YYJSON_DISABLE_WRITER 1          // Faster compilation & smaller binary
 #define YYJSON_DISABLE_UTILS 1           // Faster compilation & smaller binary
-#define YYJSON_DISABLE_UTF8_VALIDATION 1 // Faster runtime
+#define YYJSON_DISABLE_UTF8_VALIDATION 1 // Faster runtime, but may not be fair
 #include <yyjson.h>                      // `yyjson` library
 
 bool contains_xss_in_yyjson(yyjson_val *node) noexcept {
@@ -2728,31 +2728,33 @@ static void json_yyjson(bm::State &state) {
 
     //? There is a neat trick that allows us to use a lambda as a
     //? C-style function pointer by using the unary `+` operator.
-    alc.malloc = +[](void *ctx, size_t size) -> void * {
-        std::byte *result = allocate_from_arena(*static_cast<fixed_buffer_arena_t *>(ctx), size + sizeof(size_t));
+    //? Assuming our buffer is only 4 KB, a 16-bit unsigned integer is enough...
+    using alc_size_t = std::uint16_t;
+    alc.malloc = +[](void *ctx, size_t size_native) noexcept -> void * {
+        alc_size_t size = static_cast<alc_size_t>(size_native);
+        std::byte *result = allocate_from_arena(*static_cast<fixed_buffer_arena_t *>(ctx), size + sizeof(alc_size_t));
         if (!result) return nullptr;
-        std::memcpy(result, &size, sizeof(size_t));
-        return (void *)(result + sizeof(size_t));
+        std::memcpy(result, &size, sizeof(alc_size_t));
+        return (void *)(result + sizeof(alc_size_t));
     };
-    alc.realloc = +[](void *ctx, void *ptr, size_t old_size, size_t size) -> void * {
-        std::byte *start = static_cast<std::byte *>(ptr) - sizeof(size_t);
+    alc.realloc = +[](void *ctx, void *ptr, size_t old_size_native, size_t size_native) noexcept -> void * {
+        alc_size_t old_size = static_cast<alc_size_t>(old_size_native);
+        alc_size_t size = static_cast<alc_size_t>(size_native);
+        std::byte *start = static_cast<std::byte *>(ptr) - sizeof(alc_size_t);
         std::byte *new_start = reallocate_from_arena( //
             *static_cast<arena_t *>(ctx), start,      //
-            old_size + sizeof(size_t), size + sizeof(size_t));
+            old_size + sizeof(alc_size_t), size + sizeof(alc_size_t));
         if (!new_start) return nullptr;
         // Don't forget to increment the size if the pointer was reallocated
-        std::memcpy(new_start, &size, sizeof(size_t));
-        return (void *)(new_start + sizeof(size_t));
+        std::memcpy(new_start, &size, sizeof(alc_size_t));
+        return (void *)(new_start + sizeof(alc_size_t));
     };
-    alc.free = +[](void *ctx, void *ptr) -> void {
-        std::byte *start = static_cast<std::byte *>(ptr) - sizeof(size_t);
-        std::size_t size;
-        std::memcpy(&size, start, sizeof(size_t));
-        deallocate_from_arena(*static_cast<arena_t *>(ctx), start, size + sizeof(size_t));
+    alc.free = +[](void *ctx, void *ptr) noexcept -> void {
+        std::byte *start = static_cast<std::byte *>(ptr) - sizeof(alc_size_t);
+        alc_size_t size;
+        std::memcpy(&size, start, sizeof(alc_size_t));
+        deallocate_from_arena(*static_cast<arena_t *>(ctx), start, size + sizeof(alc_size_t));
     };
-
-    yyjson_read_err error;
-    std::memset(&error, 0, sizeof(error));
 
     // Repeat the checks many times
     std::size_t bytes_processed = 0;
