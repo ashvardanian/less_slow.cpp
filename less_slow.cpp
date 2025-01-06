@@ -154,11 +154,31 @@ BENCHMARK(i32_addition_randomly_initialized);
  *
  *  @see Bad I/O benchmark examples: https://www.unum.cloud/blog/2022-03-22-ucsb
  *
- *  How bad is it? Let's re-run the same two benchmarks, this time on 8 threads.
+ *  How bad is it? Let's re-run the same two benchmarks, this time on all cores.
  */
+#include <thread> // `std::thread::hardware_concurrency`
+#if defined(__linux__)
+#include <unistd.h> // `_SC_NPROCESSORS_ONLN`
+#elif defined(__APPLE__)
+#include <sys/sysctl.h> // `sysctlbyname` on macOS
+#endif
 
-BENCHMARK(i32_addition_random)->Threads(8);
-BENCHMARK(i32_addition_randomly_initialized)->Threads(8);
+std::size_t physical_cores() {
+#if defined(__linux__)
+    int nproc = sysconf(_SC_NPROCESSORS_ONLN);
+    return static_cast<std::size_t>(nproc);
+#elif defined(__APPLE__)
+    int nproc = 0;
+    size_t len = sizeof(nproc);
+    sysctlbyname("hw.physicalcpu", &nproc, &len, nullptr, 0);
+    return static_cast<std::size_t>(nproc);
+#else
+    return std::thread::hardware_concurrency();
+#endif
+}
+
+BENCHMARK(i32_addition_random)->Threads(physical_cores());
+BENCHMARK(i32_addition_randomly_initialized)->Threads(physical_cores());
 
 /**
  *  The latency of the `std::rand` variant skyrocketed from @b 15ns in
@@ -1333,10 +1353,6 @@ BENCHMARK(f32x4x4_matmul_avx512);
 #include <iterator> // `std::random_access_iterator_tag`
 #include <memory>   // `std::assume_aligned`
 #include <string>   // `std::string`, `std::stoull`
-
-#if defined(__APPLE__)
-#include <sys/sysctl.h> // `sysctlbyname` on macOS
-#endif
 
 /**
  *  @brief  Reads the contents of a file from the specified path into a string.
@@ -3036,7 +3052,7 @@ static void errors_throw(bm::State &state) {
 }
 
 BENCHMARK(errors_throw)->ComputeStatistics("max", get_max_value)->MinTime(2);
-BENCHMARK(errors_throw)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(8);
+BENCHMARK(errors_throw)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(physical_cores());
 
 /**
  *  Until C++23, we don't have a `std::expected` implementation,
@@ -3117,7 +3133,7 @@ static void errors_variants(bm::State &state) {
 }
 
 BENCHMARK(errors_variants)->ComputeStatistics("max", get_max_value)->MinTime(2);
-BENCHMARK(errors_variants)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(8);
+BENCHMARK(errors_variants)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(physical_cores());
 
 /**
  *  As practice shows, STL is almost never the performance-oriented choice!
@@ -3194,7 +3210,7 @@ static void errors_with_status(bm::State &state) {
 }
 
 BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(2);
-BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(8);
+BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(physical_cores());
 
 /**
  *  On Intel Sapphire Rapids:
