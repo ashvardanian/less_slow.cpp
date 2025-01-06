@@ -299,10 +299,21 @@ BENCHMARK_CAPTURE(sorting_with_executors, seq, std::execution::seq)
     ->Complexity(bm::oNLogN)
     ->UseRealTime();
 
+/**
+ *  Memory leak observed in libstdc++ using oneTBB under specific conditions:
+ *  @see Github issue: https://github.com/ashvardanian/less_slow.cpp/issues/17
+ *
+ *  A workaround is implemented by limiting the number of iterations
+ *  for this benchmark to a single run.
+ *
+ *  This adjustment is applied to the benchmark below:
+ */
 BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
     ->RangeMultiplier(4)
     ->Range(1l << 20, 1l << 28)
-    ->MinTime(10)
+    // Uncomment when issue resolved
+    // ->MinTime(10) 
+    ->Iterations(1)
     ->Complexity(bm::oNLogN)
     ->UseRealTime();
 
