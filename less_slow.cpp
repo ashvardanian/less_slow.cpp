@@ -2673,7 +2673,10 @@ std::byte *reallocate_from_arena( //
     return new_ptr;
 }
 
-#include <yyjson.h> // `yyjson` library
+#define YYJSON_DISABLE_WRITER 1          // Faster compilation & smaller binary
+#define YYJSON_DISABLE_UTILS 1           // Faster compilation & smaller binary
+#define YYJSON_DISABLE_UTF8_VALIDATION 1 // Faster runtime
+#include <yyjson.h>                      // `yyjson` library
 
 bool contains_xss_in_yyjson(yyjson_val *node) noexcept {
     if (!node) return false;
