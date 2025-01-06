@@ -1559,10 +1559,10 @@ std::size_t parse_size_string(std::string const &str) {
  *
  *  We'll explore four implementations of this pipeline:
  *
- *    - C++11 using `template`-based lambda functions.
- *    - C++11 using `std::function` for dynamic callbacks.
- *    - C++20 coroutines using a lightweight generator.
- *    - C++20 ranges with a lazily evaluated factorization.
+ *    - C++11 using `template`-based @b lambda functions.
+ *    - C++11 using @b `std::function` for dynamic callbacks.
+ *    - C++20 @b coroutines using a lightweight generator.
+ *    - C++20 @b ranges with a lazily evaluated factorization.
  */
 constexpr std::uint64_t pipe_start = 3;
 constexpr std::uint64_t pipe_end = 49;
@@ -1619,10 +1619,8 @@ static void pipeline_cpp11_lambdas(bm::State &state) {
             if (!is_power_of_two(value) && !is_power_of_three(value))
                 prime_factors_lambdas(value, [&](std::uint64_t factor) { sum += factor, count++; });
         }
-        bm::DoNotOptimize(sum);
+        if (count != 84 || sum != 645) state.SkipWithError("Incorrect result");
     }
-    state.counters["sum"] = sum;
-    state.counters["count"] = count;
 }
 
 BENCHMARK(pipeline_cpp11_lambdas);
@@ -1663,10 +1661,8 @@ static void pipeline_cpp11_stl(bm::State &state) {
                 });
             });
         });
-        bm::DoNotOptimize(sum);
+        if (count != 84 || sum != 645) state.SkipWithError("Incorrect result");
     }
-    state.counters["sum"] = sum;
-    state.counters["count"] = count;
 }
 
 BENCHMARK(pipeline_cpp11_stl);
@@ -1766,10 +1762,8 @@ static void pipeline_cpp20_coroutines(bm::State &state) {
         // Reduce
         sum = 0, count = 0;
         for (auto factor : factors) sum += factor, count++;
-        bm::DoNotOptimize(sum);
+        if (count != 84 || sum != 645) state.SkipWithError("Incorrect result");
     }
-    state.counters["sum"] = sum;
-    state.counters["count"] = count;
 }
 
 BENCHMARK(pipeline_cpp20_coroutines);
@@ -1898,10 +1892,8 @@ static void pipeline_cpp20_ranges(bm::State &state) {
         //
         sum = 0, count = 0;
         for (std::uint64_t factor : pipeline) sum += factor, count++;
-        bm::DoNotOptimize(sum);
+        if (count != 84 || sum != 645) state.SkipWithError("Incorrect result");
     }
-    state.counters["sum"] = sum;
-    state.counters["count"] = count;
 }
 
 BENCHMARK(pipeline_cpp20_ranges);
@@ -1910,8 +1902,8 @@ BENCHMARK(pipeline_cpp20_ranges);
  *  The results for the input range [3, 49] on Intel Sapphire Rapids are as follows:
  *
  *      - `pipeline_cpp11_lambdas`:      @b 295ns
- *      - `pipeline_cpp11_stl`:          @b 765ns
- *      - `pipeline_cpp20_coroutines`:   @b 712ns
+ *      - `pipeline_cpp11_stl`:          @b 831ns
+ *      - `pipeline_cpp20_coroutines`:   @b 708ns
  *      - `pipeline_cpp20_ranges`:       @b 216ns
  *
  *  On Apple M2 Pro:
@@ -2030,10 +2022,8 @@ static void pipeline_virtual_functions(bm::State &state) {
         pipeline.process(data);
         sum = std::accumulate(data.begin(), data.end(), std::uint64_t {0});
         count = data.size();
-        bm::DoNotOptimize(sum);
+        if (count != 84 || sum != 645) state.SkipWithError("Incorrect result");
     }
-    state.counters["sum"] = sum;
-    state.counters["count"] = count;
 }
 
 BENCHMARK(pipeline_virtual_functions);
@@ -2042,6 +2032,11 @@ BENCHMARK(pipeline_virtual_functions);
  *  Performance-wise, on this specific micro-example, the virtual functions
  *  are somewhere in the middle between C++20 ranges and C++11 STL solution.
  *
+ *      - `pipeline_cpp11_lambdas`:      @b 295ns
+ *      - `pipeline_cpp11_stl`:          @b 831ns
+ *      - `pipeline_cpp20_coroutines`:   @b 708ns
+ *      - `pipeline_cpp20_ranges`:       @b 216ns
+ *      - `pipeline_virtual_functions`:  @b 491ns
  *
  *  This code is a hazard for multiple reasons:
  *
