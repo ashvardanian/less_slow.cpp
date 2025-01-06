@@ -2249,7 +2249,7 @@ void config_parse_stl(std::string_view config_text, std::vector<std::pair<std::s
 }
 
 template <typename string_view_>
-void parsing_stl(bm::State &state, string_view_ config_text) {
+void parse_stl(bm::State &state, string_view_ config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
@@ -2294,7 +2294,7 @@ void config_parse_ranges(std::string_view config_text, std::vector<std::pair<std
 }
 
 template <typename string_view_>
-void parsing_ranges(bm::State &state, string_view_ config_text) {
+void parse_ranges(bm::State &state, string_view_ config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
@@ -2328,7 +2328,7 @@ void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::st
 }
 
 template <typename string_view_>
-void parsing_sz(bm::State &state, string_view_ config_text) {
+void parse_sz(bm::State &state, string_view_ config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
@@ -2342,62 +2342,64 @@ void parsing_sz(bm::State &state, string_view_ config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
-BENCHMARK_CAPTURE(parsing_stl, short_, short_config_text)->MinTime(2);
-BENCHMARK_CAPTURE(parsing_ranges, short_, short_config_text)->MinTime(2);
-BENCHMARK_CAPTURE(parsing_sz, short_, short_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parse_stl, short_, short_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parse_ranges, short_, short_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parse_sz, short_, short_config_text)->MinTime(2);
 
 /**
  *  How big can the difference be? Surely, SIMD is only relevant for Big Data?
  *  On the tiny config with just 3 fields and under 100 bytes in total:
  *
- *  - `parsing_stl`:    @b 179 ns
- *  - `parsing_ranges`: @b 559 ns
- *  - `parsing_sz`:     @b 115 ns
+ *  - `parse_stl`:    @b 179 ns
+ *  - `parse_ranges`: @b 559 ns
+ *  - `parse_sz`:     @b 115 ns
  *
  *  How about larger files?
  */
 
 static constexpr std::string_view long_config_text = R"(
 # Server Configuration
-primary_host: api-main-prod-eu-west-1.company.com
-secondary_host: api-backup-prod-eu-west-1.company.com
-port: 443
-base_path: /services/v2/resource/data-access-layer
-connection_timeout: 120000
+server_primary_api_host_for_production_eu_west_1: main-api-primary-prod-eu-west-1.company.internal
+server_secondary_api_host_for_production_eu_west_1: backup-api-secondary-prod-eu-west-1.company.internal
+server_secure_tcp_port_for_https_communication: 443
+server_base_path_for_data_access_layer_v2: /services/v2/resource/data-access-layer
+server_connection_timeout_in_milliseconds: 180000
 
 # Database Configuration
-database_host: db-prod-eu-west-1.cluster.company.internal
-database_port: 3306
-database_username: api_service_user
-database_password: 8kD3jQ!9Fs&2P
-database_name: analytics_reporting
+database_host_for_production_eu_west_1: db-prod-eu-west-1.cluster.company.internal
+database_port_for_relational_engine: 3306
+database_username_for_api_analytics_service: api_service_user
+database_password_for_secure_authentication: 8kD3jQ!9Fs&2P
+database_name_for_enterprise_analytics_and_reporting: analytics_reporting
 
 # Logging Configuration
-log_file_path: /var/log/api/prod/services/access.log
-log_rotation_strategy: size_based
-log_retention_period: 30_days
+log_file_path_for_production_api_services: /var/log/api/prod/services/access.log
+log_rotation_strategy_based_on_size_and_time: size_based
+log_retention_period_in_days_for_archived_logs: 30
+log_format_for_detailed_service_events: text
 
 # Feature Toggles
-new_auth_flow: enabled
-legacy_support: disabled
-dark_mode_experiment: enabled
+feature_toggle_for_new_auth_flow: enabled
+feature_toggle_for_legacy_support_mode: disabled
+feature_toggle_for_dark_mode_experimentation: enabled
+feature_toggle_for_multitenant_optimizations: enabled
 
 # Monitoring Configuration
-metrics_endpoint: metrics.company.com/v2/ingest
-alerting_thresholds: critical:90, warning:75, info:50
-dashboard_url: https://dashboard.company.com/api/monitoring/prod
+monitoring_metrics_endpoint_for_production_v2: metrics.company.com/v2/ingest
+monitoring_alerting_thresholds_for_critical_warning_info: critical:90,warning:75,info:50
+monitoring_dashboard_url_for_production_insights: https://dashboard.company.com/api/monitoring/prod
 )";
 
-BENCHMARK_CAPTURE(parsing_stl, long_, long_config_text)->MinTime(2);
-BENCHMARK_CAPTURE(parsing_ranges, long_, long_config_text)->MinTime(2);
-BENCHMARK_CAPTURE(parsing_sz, long_, long_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parse_stl, long_, long_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parse_ranges, long_, long_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parse_sz, long_, long_config_text)->MinTime(2);
 
 /**
  *  The gap widens:
  *
- *  - `parsing_stl`:    @b 1606 ns
- *  - `parsing_ranges`: @b 6862 ns
- *  - `parsing_sz`:     @b 666 ns 😈
+ *  - `parse_stl`:    @b 1606 ns
+ *  - `parse_ranges`: @b 6862 ns
+ *  - `parse_sz`:     @b 666 ns 😈
  *
  *  Hell of a result if you ask me :)
  *
@@ -2442,7 +2444,7 @@ void config_parse_regex(std::string_view config_text, std::vector<std::pair<std:
 }
 
 template <typename string_view_>
-void parsing_regex(bm::State &state, string_view_ config_text) {
+void parse_regex(bm::State &state, string_view_ config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
 
@@ -2463,8 +2465,8 @@ void parsing_regex(bm::State &state, string_view_ config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
-BENCHMARK_CAPTURE(parsing_regex, short_, short_config_text)->MinTime(2);
-BENCHMARK_CAPTURE(parsing_regex, long_, long_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parse_regex, short_, short_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parse_regex, long_, long_config_text)->MinTime(2);
 
 /**
  *  Assuming our patterns are known ahead of time, we can use C++ meta-programming
@@ -2489,7 +2491,7 @@ void config_parse_ctre(std::string_view config_text, std::vector<std::pair<std::
 }
 
 template <typename string_view_>
-void parsing_ctre(bm::State &state, string_view_ config_text) {
+void parse_ctre(bm::State &state, string_view_ config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
 
@@ -2504,8 +2506,8 @@ void parsing_ctre(bm::State &state, string_view_ config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
-BENCHMARK_CAPTURE(parsing_ctre, short_, short_config_text)->MinTime(2);
-BENCHMARK_CAPTURE(parsing_ctre, long_, long_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parse_ctre, short_, short_config_text)->MinTime(2);
+BENCHMARK_CAPTURE(parse_ctre, long_, long_config_text)->MinTime(2);
 
 #pragma endregion // Strings, Parsing, and Regular Expressions
 
@@ -2677,7 +2679,7 @@ bool contains_xss_in_yyjson(yyjson_val *node) noexcept {
  *  @see YYJSON allocators: https://ibireme.github.io/yyjson/doc/doxygen/html/structyyjson__alc.html
  */
 
-static void json_parse_yyjson(bm::State &state) {
+static void json_yyjson(bm::State &state) {
 
     // Wrap our custom arena into a `yyjson_alc` structure, alternatively we could use:
     //
@@ -2735,7 +2737,8 @@ static void json_parse_yyjson(bm::State &state) {
     state.counters["peak_memory_usage"] = peak_memory_usage;
 }
 
-BENCHMARK(json_parse_yyjson)->MinTime(2);
+BENCHMARK(json_yyjson)->MinTime(2)->Name("json_yyjson");
+
 
 /**
  *  The `nlohmann::json` library is designed to be simple and easy to use, but it's
@@ -2849,7 +2852,7 @@ using default_json = json_with_alloc<std::allocator>;
 using fixed_buffer_json = json_with_alloc<fixed_buffer_allocator>;
 
 template <typename json_type_>
-static void json_parse_nlohmann(bm::State &state) {
+static void json_nlohmann(bm::State &state) {
     std::size_t bytes_processed = 0;
     std::size_t peak_memory_usage = 0;
     for (auto _ : state) {
@@ -2863,8 +2866,8 @@ static void json_parse_nlohmann(bm::State &state) {
     state.counters["peak_memory_usage"] = peak_memory_usage;
 }
 
-BENCHMARK_TEMPLATE(json_parse_nlohmann, default_json)->MinTime(2)->Name("json_parse_nlohmann<std::allocator>");
-BENCHMARK_TEMPLATE(json_parse_nlohmann, fixed_buffer_json)->MinTime(2)->Name("json_parse_nlohmann<fixed_buffer>");
+BENCHMARK_TEMPLATE(json_nlohmann, default_json)->MinTime(2)->Name("json_nlohmann<std::allocator>");
+BENCHMARK_TEMPLATE(json_nlohmann, fixed_buffer_json)->MinTime(2)->Name("json_nlohmann<fixed_buffer>");
 
 /**
  *  The results are as expected:
