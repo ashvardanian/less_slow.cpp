@@ -2678,7 +2678,7 @@ bool contains_xss_in_yyjson(yyjson_val *node) noexcept {
  *
  *  @see YYJSON allocators: https://ibireme.github.io/yyjson/doc/doxygen/html/structyyjson__alc.html
  */
-
+template <bool use_arena>
 static void json_yyjson(bm::State &state) {
 
     // Wrap our custom arena into a `yyjson_alc` structure, alternatively we could use:
@@ -2725,7 +2725,7 @@ static void json_yyjson(bm::State &state) {
     for (auto _ : state) {
         yyjson_doc *doc = yyjson_read_opts(                 //
             (char *)sample_json.data(), sample_json.size(), //
-            YYJSON_READ_NOFLAG, &alc, &error);
+            YYJSON_READ_NOFLAG, use_arena ? &alc : NULL, &error);
         yyjson_val *root = yyjson_doc_get_root(doc);
         bm::DoNotOptimize(contains_xss_in_yyjson(root));
         bytes_processed += sample_json.size();
@@ -2737,8 +2737,8 @@ static void json_yyjson(bm::State &state) {
     state.counters["peak_memory_usage"] = peak_memory_usage;
 }
 
-BENCHMARK(json_yyjson)->MinTime(2)->Name("json_yyjson");
-
+BENCHMARK(json_yyjson<false>)->MinTime(2)->Name("json_yyjson<malloc>");
+BENCHMARK(json_yyjson<true>)->MinTime(2)->Name("json_yyjson<fixed_buffer>");
 
 /**
  *  The `nlohmann::json` library is designed to be simple and easy to use, but it's
@@ -2871,9 +2871,10 @@ BENCHMARK_TEMPLATE(json_nlohmann, fixed_buffer_json)->MinTime(2)->Name("json_nlo
 
 /**
  *  The results are as expected:
- *  - `json_parse_nlohmann<std::allocator>`: @b 2927 ns
- *  - `json_parse_nlohmann<fixed_buffer>`: @b 2531 ns
- *  - `json_parse_yyjson`: @b 373 ns
+ *  - `json_nlohmann<std::allocator>`: @b 2927 ns
+ *  - `json_nlohmann<fixed_buffer>`: @b 2531 ns
+ *  - `json_yyjson<malloc>`: @b 373 ns
+ *  - `json_yyjson<fixed_buffer>`: @b 217 ns
  *
  *  Some of Unum's libraries, like `usearch` can take multiple allocators for
  *  different parts of a complex hybrid data-structure with clearly divisible
