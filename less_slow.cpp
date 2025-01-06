@@ -2599,7 +2599,7 @@ static constexpr std::string_view sample_json = R"({
 
 struct fixed_buffer_arena_t {
     static constexpr std::size_t capacity = 4096;
-    std::byte buffer[capacity];
+    alignas(64) std::byte buffer[capacity];
 
     /// The offset (in bytes) of the next free location
     std::size_t total_allocated = 0;
