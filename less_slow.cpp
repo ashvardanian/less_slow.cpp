@@ -2207,9 +2207,17 @@ static constexpr std::string_view short_config_text =    //
     " # Tricky comment with a : colon in the middle\n\r" // Accorn newline
     "\tpath :/api/v1";                                   // No trailing newline!
 
-inline bool is_newline(char c) { return c == '\n' || c == '\r'; }
+#if defined(_MSC_VER) // MSVC
+#define FORCE_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__) // GCC or Clang
+#define FORCE_INLINE inline __attribute__((always_inline))
+#else // Fallback
+#define FORCE_INLINE inline
+#endif
 
-inline std::string_view strip_spaces(std::string_view text) noexcept {
+FORCE_INLINE bool is_newline(char c) noexcept { return c == '\n' || c == '\r'; }
+
+FORCE_INLINE std::string_view strip_spaces(std::string_view text) noexcept {
     // Trim leading whitespace
     while (!text.empty() && std::isspace(text.front())) text.remove_prefix(1);
     // Trim trailing whitespace
@@ -2218,7 +2226,7 @@ inline std::string_view strip_spaces(std::string_view text) noexcept {
 }
 
 template <typename callback_type_, typename predicate_type_>
-void split(std::string_view str, predicate_type_ &&is_delimiter, callback_type_ &&callback) {
+inline void split(std::string_view str, predicate_type_ &&is_delimiter, callback_type_ &&callback) noexcept {
     std::size_t pos = 0;
     while (pos < str.size()) {
         auto const next_pos = std::find_if(str.begin() + pos, str.end(), is_delimiter) - str.begin();
@@ -2227,7 +2235,7 @@ void split(std::string_view str, predicate_type_ &&is_delimiter, callback_type_ 
     }
 }
 
-std::pair<std::string_view, std::string_view> split_key_value(std::string_view line) noexcept {
+inline std::pair<std::string_view, std::string_view> split_key_value(std::string_view line) noexcept {
     // Find the first colon (':'), which we treat as the key/value boundary
     auto pos = line.find(':');
     if (pos == std::string_view::npos) return {};
@@ -2239,7 +2247,7 @@ std::pair<std::string_view, std::string_view> split_key_value(std::string_view l
 }
 
 void config_parse_stl(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
-    split(config_text, &is_newline, [&](std::string_view line) {
+    split(config_text, is_newline, [&settings](std::string_view line) {
         line = strip_spaces(line);
         if (line.empty() || line.front() == '#') return; // Skip empty lines or comments
         auto [key, value] = split_key_value(line);
@@ -2350,9 +2358,9 @@ BENCHMARK_CAPTURE(parse_sz, short_, short_config_text)->MinTime(2);
  *  How big can the difference be? Surely, SIMD is only relevant for Big Data?
  *  On the tiny config with just 3 fields and under 100 bytes in total:
  *
- *  - `parse_stl`:    @b 179 ns
- *  - `parse_ranges`: @b 559 ns
- *  - `parse_sz`:     @b 115 ns
+ *  - `parse_stl`:    @b 163 ns
+ *  - `parse_ranges`: @b 720 ns
+ *  - `parse_sz`:     @b 150 ns
  *
  *  How about larger files?
  */
@@ -2397,11 +2405,9 @@ BENCHMARK_CAPTURE(parse_sz, long_, long_config_text)->MinTime(2);
 /**
  *  The gap widens:
  *
- *  - `parse_stl`:    @b 1606 ns
- *  - `parse_ranges`: @b 6862 ns
- *  - `parse_sz`:     @b 666 ns 😈
- *
- *  Hell of a result if you ask me :)
+ *  - `parse_stl`:    @b 1'591 ns
+ *  - `parse_ranges`: @b 11'883 ns
+ *  - `parse_sz`:     @b 1'182 ns
  *
  *  Sadly, oftentimes, the developers are too lazy to write a parser,
  *  and use Regular Expressions as a shortcut. Composing a RegEx pattern
@@ -2508,6 +2514,21 @@ void parse_ctre(bm::State &state, string_view_ config_text) {
 
 BENCHMARK_CAPTURE(parse_ctre, short_, short_config_text)->MinTime(2);
 BENCHMARK_CAPTURE(parse_ctre, long_, long_config_text)->MinTime(2);
+
+/**
+ *  Aggregating the results for the short and long config files with
+ *  hand-crafted and RegEx-based parsers, we get:
+ *
+ *  - `parse_stl`:    @b 163 ns     @b 1'591 ns
+ *  - `parse_ranges`: @b 720 ns     @b 11'883 ns
+ *  - `parse_sz`:     @b 150 ns     @b 1'182 ns
+ *  - `parse_regex`:  @b 2'200 ns   @b 22'247 ns
+ *  - `parse_ctre`:   @b 228 ns     @b 5'500 ns
+ *
+ *  As one can see, CTRE and expression-templates in general, are an
+ *  exceptionally robust option, if you don't want to write a parser
+ *  by hand.
+ */
 
 #pragma endregion // Strings, Parsing, and Regular Expressions
 
