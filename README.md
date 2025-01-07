@@ -53,6 +53,7 @@ The build will pull and compile several third-party dependencies from the source
 - Ash Vardanian's [StringZilla](https://github.com/ashvardanian/stringzilla) replaces `std::string`.
 - Hana Dusíková's [CTRE](https://github.com/hanickadot/compile-time-regular-expressions) replaces `std::regex`.
 - Niels Lohmann's [json](https://github.com/nlohmann/json) is used for JSON deserialization.
+- Yaoyuan Guo's [yyjson](https://github.com/ibireme/yyjson) for faster JSON processing.
 - Google's [Abseil](https://github.com/abseil/abseil-cpp) replaces STL's associative containers.
 
 To control the output or run specific benchmarks, use the following flags:

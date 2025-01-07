@@ -88,7 +88,7 @@ static void i32_addition_random(bm::State &state) {
 BENCHMARK(i32_addition_random);
 
 /**
- *  Running this will report @b 25ns or about 100 CPU cycles. Is integer
+ *  Running this will report @b 31ns or about 100 CPU cycles. Is integer
  *  addition really that expensive? It's used all the time, even when you are
  *  accessing @b `std::vector` elements and need to compute the memory address
  *  from the pointer and the index passed to the @b `operator[]` or `at()`
@@ -115,7 +115,7 @@ BENCHMARK(i32_addition_paused);
 
 /**
  *  However, the `PauseTiming` and `ResumeTiming` functions are neither free.
- *  In the current implementation, they can easily take @b ~127ns, or around
+ *  In the current implementation, they can easily take @b ~233ns, or around
  *  150 CPU cycles. They are useless in this case, but there is an alternative!
  *
  *  A typical pattern when implementing a benchmark is to initialize with a
@@ -141,7 +141,7 @@ BENCHMARK(i32_addition_randomly_initialized);
 /**
  *  On x86, the `i32_addition_randomly_initialized` benchmark performs two
  *  @b `inc` instructions and one @b `add` instruction. This should take less
- *  than @b 0.7ns on a modern CPU. The first cycle increments `a` and `b`
+ *  than @b 0.4ns on a modern CPU. The first cycle increments `a` and `b`
  *  simultaneously on different Arithmetic Logic Units (ALUs) of the same core,
  *  while the second cycle performs the final accumulation. At least @b 97% of
  *  the benchmark time was spent in the `std::rand()` function... even in a
@@ -181,8 +181,8 @@ BENCHMARK(i32_addition_random)->Threads(physical_cores());
 BENCHMARK(i32_addition_randomly_initialized)->Threads(physical_cores());
 
 /**
- *  The latency of the `std::rand` variant skyrocketed from @b 15ns in
- *  single-threaded mode to @b 12'000ns when running on multiple threads,
+ *  The latency of the `std::rand` variant skyrocketed from @b 31ns in
+ *  single-threaded mode to @b 10'974ns when running on multiple threads,
  *  while our optimized variant remained unaffected.
  *
  *  This happens because `std::rand`, like many other LibC functions, relies
@@ -301,7 +301,7 @@ static void sorting_with_executors( //
 
     state.SetComplexityN(count);
     state.SetItemsProcessed(count * state.iterations());
-    state.SetBytesProcessed(count * state.iterations() * sizeof(std::int32_t));
+    state.SetBytesProcessed(count * state.iterations() * sizeof(std::uint32_t));
 
     // Want to report something else? Sure, go ahead:
     //
@@ -331,8 +331,8 @@ BENCHMARK_CAPTURE(sorting_with_executors, seq, std::execution::seq)
 BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
     ->RangeMultiplier(4)
     ->Range(1l << 20, 1l << 28)
-    // Uncomment when issue resolved
-    // ->MinTime(10) 
+    //! Revert from `Iterations` to `MinTime` once the leak is resolved!
+    //! ->MinTime(10)
     ->Iterations(1)
     ->Complexity(bm::oNLogN)
     ->UseRealTime();
@@ -2824,6 +2824,7 @@ BENCHMARK(json_yyjson<true>)->MinTime(10)->Name("json_yyjson<fixed_buffer>")->Th
  *  polymorphic allocator, but with a fixed buffer arena and avoiding all of the
  *  `virtual` nonsense :)
  */
+#define JSON_NO_IO 1
 #include <nlohmann/json.hpp>
 template <template <typename> typename allocator_>
 
@@ -2988,14 +2989,21 @@ BENCHMARK(json_nlohmann<fixed_buffer_json, false>)
 
 /**
  *  The results for the single-threaded case and the multi-threaded case without
- *  Simultaneous Multi-Threading @b (SMT) are as follows:
+ *  Simultaneous Multi-Threading @b (SMT), with 96 threads on 96 Sapphire Rapids
+ *  cores, are as follows:
  *
- *  - `json_yyjson<malloc>`:                       @b 291 ns       @b 294 ns
- *  - `json_yyjson<fixed_buffer>`:                 @b 263 ns       @b 264 ns
- *  - `json_nlohmann<std::allocator, throw>`:      @b 5'164 ns     @b 5'296 ns
- *  - `json_nlohmann<fixed_buffer, throw>`:        @b 4'861 ns     @b 4'956 ns
- *  - `json_nlohmann<std::allocator, noexcept>`:   @b 3'796 ns     @b 3'933 ns
- *  - `json_nlohmann<fixed_buffer, noexcept>`:     @b 3'485 ns     @b 3'533 ns
+ *  - `json_yyjson<malloc>`:                       @b 359 ns       @b 369 ns
+ *  - `json_yyjson<fixed_buffer>`:                 @b 326 ns       @b 326 ns
+ *  - `json_nlohmann<std::allocator, throw>`:      @b 6'440 ns     @b 11'821 ns
+ *  - `json_nlohmann<fixed_buffer, throw>`:        @b 6'041 ns     @b 11'601 ns
+ *  - `json_nlohmann<std::allocator, noexcept>`:   @b 4'741 ns     @b 11'512 ns
+ *  - `json_nlohmann<fixed_buffer, noexcept>`:     @b 4'316 ns     @b 12'209 ns
+ *
+ *  The reason, why `yyjson` numbers are less affected by the allocator change,
+ *  is because it doesn't need many dynamic allocations. It manages a linked list
+ *  of arena's just like the static one we've allocated on stack:
+ *
+ *      #define YYJSON_ALC_DYN_MIN_SIZE 0x1000 // 4 KB
  *
  *  Some of Unum's libraries, like `usearch` can take multiple allocators for
  *  different parts of a complex hybrid data-structure with clearly divisible
@@ -3007,6 +3015,12 @@ BENCHMARK(json_nlohmann<fixed_buffer_json, false>)
  *  out the implementation of `jemalloc`, `mimalloc`, `tcmalloc`, and `hoard`.
  *
  *  @see Heap Layers project by Emery Berger: https://github.com/emeryberger/Heap-Layers
+ *
+ *  If you want to learn more about data-serialization, read about Google's Protocol
+ *  Buffers often called @b protobuf, as well as Cloudflare's Cap'n Proto, and MsgPack.
+ *  Just remember, the most common solution is definitely not the best one in this case ;)
+ *
+ *  @see ProtoBuf's issues discussion on HackerNews: https://news.ycombinator.com/item?id=26931581
  */
 
 #pragma endregion // JSON, Allocators, and Designing Complex Containers

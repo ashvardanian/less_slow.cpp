@@ -136,13 +136,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(NielsLohmannJSON)
 
-# Ibireme's YYJSON for more flexible & performant C-style parsing
+# Yaoyuan Guo YYJSON for more flexible & performant C-style parsing
 FetchContent_Declare(
-  IbiremeYYJSON
+  YaoyuanGuoYYJSON
   GIT_REPOSITORY https://github.com/ibireme/yyjson.git
   GIT_TAG 0.10.0
 )
-FetchContent_MakeAvailable(IbiremeYYJSON)
+FetchContent_MakeAvailable(YaoyuanGuoYYJSON)
 
 # ------------------------------------------------------------------------------
 # Main Executable
