@@ -21,10 +21,9 @@
  *
  *  @see Rust Benchmarks: https://github.com/ashvardanian/less_slow.rs
  *  @see Python Benchmarks: https://github.com/ashvardanian/less_slow.py
- *  @see Go Benchmarks: https://github.com/ashvardanian/less_slow.go
  *
- *  Most measurements were performed on Intel Sapphire Rapids CPUs, but the
- *  findings are relevant across hardware platforms unless explicitly noted.
+ *  Most measurements were performed on Intel Sapphire Rapids CPUs on AWS,
+ *  but the findings match across hardware platforms unless explicitly noted.
  *
  *  Worth noting, that some examples may seem over-engineered, but they are
  *  no less relevant or impractical. They may be hard to recognize at first,
@@ -1937,6 +1936,7 @@ static void pipeline_cpp20_ranges(bm::State &state) {
 }
 
 BENCHMARK(pipeline_cpp20_ranges);
+#endif // defined(__cpp_lib_ranges)
 
 /**
  *  The results for the input range [3, 49] on Intel Sapphire Rapids are as follows:
@@ -1981,8 +1981,45 @@ BENCHMARK(pipeline_cpp20_ranges);
  *  @see "Lambdas, Nested Functions, and Blocks, oh my!" by JeanHeyd Meneide:
  *       https://thephd.dev/lambdas-nested-functions-block-expressions-oh-my
  */
+#if 0 // TODO: UnifEx needs more work
+#include <unifex/adapt_stream.hpp>
+#include <unifex/filter_stream.hpp>
+#include <unifex/range_stream.hpp>
+#include <unifex/reduce_stream.hpp>
+#include <unifex/sync_wait.hpp>
+#include <unifex/transform_stream.hpp>
 
-#endif            // defined(__cpp_lib_ranges)
+static void pipeline_unifex(bm::State &state) {
+    using sum_and_count_t = std::pair<std::uint64_t, std::uint64_t>;
+    std::uint64_t sum = 0, count = 0;
+    for (auto _ : state) {
+        auto range = unifex::range_stream(pipe_start, pipe_end);
+        auto filtered_twos = unifex::filter_stream(std::move(range), &is_power_of_two);
+        auto filtered_threes = unifex::filter_stream(std::move(filtered_twos), &is_power_of_three);
+
+        // TODO: There must be a better way to do this!
+        auto factors = unifex::transform_stream(std::move(filtered_threes), [](std::uint64_t x) -> sum_and_count_t {
+            sum_and_count_t local(0ull, 0ull);
+            for (auto factor : prime_factors_view(x)) local.first += factor, local.second += 1;
+            return local;
+        });
+        auto pipeline = unifex::reduce_stream(
+            std::move(factors),
+            [](sum_and_count_t total, sum_and_count_t local) -> sum_and_count_t {
+                return sum_and_count_t(total.first + local.first, total.second + local.second);
+            },
+            sum_and_count_t(0ull, 0ull));
+
+        // Execute the pipeline
+        std::optional<sum_and_count_t> sum_and_count = unifex::sync_wait(std::move(pipeline));
+        if (!sum_and_count.has_value()) state.SkipWithError("Pipeline failed");
+        sum = sum_and_count->first, count = sum_and_count->second;
+        if (count != 84 || sum != 645) state.SkipWithError("Incorrect result");
+    }
+}
+
+BENCHMARK(pipeline_unifex);
+#endif            // TODO: UnifEx needs more work
 #pragma endregion // Ranges and Iterators
 
 #pragma region Variants, Tuples, and State Machines
@@ -3080,7 +3117,70 @@ BENCHMARK(json_nlohmann<fixed_buffer_json, false>)
  *  @see "Designing a Fast, Efficient, Cache-friendly Hash Table, Step by Step"
  *       by Matt Kulukundis at CppCon 2017: https://youtu.be/ncHmEUmJZf4
  */
+#if 0
+#include <map>           // `std::map`
+#include <unordered_map> // `std::unordered_map`
 
+using node_id_t = std::uint16_t;
+using edge_weight_t = float;
+
+struct graph_unordered_map_t {
+    std::unordered_map<node_id_t, std::unordered_map<node_id_t, edge_weight_t>> links;
+
+    void reserve(std::size_t nodes, [[maybe_unused]] std::size_t edges) { links.reserve(nodes); }
+    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) { links[from][to] = weight; }
+    template <typename visitor_type_>
+    void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
+        for (auto const &[to, weight] : links[from]) visitor(from, to, weight);
+    }
+};
+
+struct graph_flat_map_t {
+    std::map<std::pair<node_id_t, node_id_t>, edge_weight_t> links;
+
+    void reserve([[maybe_unused]] std::size_t nodes, [[maybe_unused]] std::size_t edges) {}
+    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
+        links.emplace(std::make_pair(from, to), weight);
+    }
+    template <typename visitor_type_>
+    void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
+        for (auto const &[ids, weight] : links.equal_range(from)) visitor(from, ids.second, weight);
+    }
+};
+
+/**
+ *  During construction, we need fast lookups and insertions - so a single-level hash-map
+ *  would be the best choice. But during processing, we need to iterate over all edges
+ *  starting from a given node, and with non-flat hash-map and a typical hash function,
+ *  the iteration would be slow.
+ *
+ *  Instead, we can override the hash function to only look at source node ID, but use
+ *  both identifiers for equality comparison. Assuming that hash function is highly
+ *  unbalanced for a sparse graph, we need to pre-allocate more memory.
+ */
+struct graph_vector_t {
+    struct edge_t {
+        node_id_t from;
+        node_id_t to;
+        edge_weight_t weight;
+    };
+
+    static_assert( //
+        sizeof(edge_t) == sizeof(node_id_t) + sizeof(node_id_t) + sizeof(edge_weight_t),
+        "With a single-level flat structure we can guarantee structure packing");
+
+    std::vector<edge_t> links;
+
+    void reserve([[maybe_unused]] std::size_t nodes, std::size_t edges) { links.reserve(edges * 4); }
+    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
+        links.emplace(std::make_pair(from, to), weight);
+    }
+    template <typename visitor_type_>
+    void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
+        for (auto const &[ids, weight] : links.equal_range(from)) visitor(from, ids.second, weight);
+    }
+};
+#endif
 #pragma endregion // Trees, Graphs, and Data Layouts
 
 #pragma region Concurrent Data Structures

@@ -48,6 +48,7 @@ The build will pull and compile several third-party dependencies from the source
 
 - Google's [Benchmark](https://github.com/google/benchmark) is used for profiling.
 - Intel's [oneTBB](https://github.com/uxlfoundation/oneTBB) is used as the Parallel STL backend.
+- Meta's [libunifex](https://github.com/facebookexperimental/libunifex) is used for senders & executors.
 - Eric Niebler's [range-v3](https://github.com/ericniebler/range-v3) replaces `std::ranges`.
 - Victor Zverovich's [fmt](https://github.com/fmtlib/fmt) replaces `std::format`.
 - Ash Vardanian's [StringZilla](https://github.com/ashvardanian/stringzilla) replaces `std::string`.

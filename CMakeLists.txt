@@ -112,6 +112,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(AndreasBuhrCppCoro)
 
+# Meta's LibUnifEx - unified executors for C++
+set(CXX_COROUTINES_HAVE_COROUTINES 0)
+FetchContent_Declare(
+  MetaLibUnifEx
+  GIT_REPOSITORY https://github.com/facebookexperimental/libunifex.git
+  GIT_TAG main
+)
+FetchContent_MakeAvailable(MetaLibUnifEx)
+
 # StringZilla to accelerate and extend `std::string_view` functionality
 FetchContent_Declare(
   AshVardanianStringZilla
@@ -202,6 +211,7 @@ target_link_libraries(less_slow
     fmt::fmt
     range-v3
     cppcoro
+    unifex
     stringzilla
     yyjson
     ctre
