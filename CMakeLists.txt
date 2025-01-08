@@ -104,6 +104,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(EricNieblerRangeV3)
 
+# Andreas Buhr's up-to-date fork of Lewis Baker's `cppcoro`
+FetchContent_Declare(
+  AndreasBuhrCppCoro
+  GIT_REPOSITORY https://github.com/andreasbuhr/cppcoro
+  GIT_TAG main
+)
+FetchContent_MakeAvailable(AndreasBuhrCppCoro)
+
 # StringZilla to accelerate and extend `std::string_view` functionality
 FetchContent_Declare(
   AshVardanianStringZilla
@@ -193,6 +201,7 @@ target_link_libraries(less_slow
     benchmark
     fmt::fmt
     range-v3
+    cppcoro
     stringzilla
     yyjson
     ctre

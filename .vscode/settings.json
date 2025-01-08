@@ -3,6 +3,7 @@
     "absl",
     "Accorn",
     "Adelstein",
+    "Andreas",
     "ashvardanian",
     "asynchrony",
     "bioinformatics",
@@ -11,6 +12,7 @@
     "Byrne",
     "clflush",
     "coro",
+    "cppcoro",
     "CTRE",
     "CUDA",
     "Dusíková",
@@ -154,6 +156,8 @@
     "unordered_set": "cpp",
     "utility": "cpp",
     "variant": "cpp",
-    "vector": "cpp"
+    "vector": "cpp",
+    "sstream": "cpp",
+    "cfenv": "cpp"
   }
 }

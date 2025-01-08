@@ -1688,11 +1688,13 @@ BENCHMARK(pipeline_cpp11_stl);
 #include <coroutine> // `std::coroutine_handle`
 
 template <typename integer_type_>
-struct integer_generator {
-    struct promise_type {
-        integer_type_ value_;
+struct [[nodiscard]] integer_generator {
+    using integer_type = integer_type_;
 
-        std::suspend_always yield_value(integer_type_ value) noexcept {
+    struct promise_type {
+        integer_type value_;
+
+        std::suspend_always yield_value(integer_type value) noexcept {
             value_ = value;
             return {};
         }
@@ -1706,13 +1708,13 @@ struct integer_generator {
         void unhandled_exception() noexcept { std::terminate(); }
     };
 
-    std::coroutine_handle<promise_type> coro;
+    std::coroutine_handle<promise_type> handle_;
 
-    explicit integer_generator(std::coroutine_handle<promise_type> h) noexcept : coro(h) {}
+    explicit integer_generator(std::coroutine_handle<promise_type> h) noexcept : handle_(h) {}
     integer_generator(integer_generator const &) = delete;
-    integer_generator(integer_generator &&other) noexcept : coro(other.coro) { other.coro = nullptr; }
+    integer_generator(integer_generator &&other) noexcept : handle_(other.handle_) { other.handle_ = nullptr; }
     ~integer_generator() noexcept {
-        if (coro) coro.destroy();
+        if (handle_) handle_.destroy();
     }
 
     struct iterator {
@@ -1723,27 +1725,33 @@ struct integer_generator {
             return *this;
         }
         bool operator!=(iterator const &) const noexcept { return !handle_.done(); }
-        integer_type_ const &operator*() const noexcept { return handle_.promise().value_; }
+        integer_type const &operator*() const noexcept { return handle_.promise().value_; }
     };
 
     iterator begin() noexcept {
-        coro.resume();
-        return {coro};
+        handle_.resume();
+        return {handle_};
     }
     iterator end() noexcept { return {nullptr}; }
 };
 
-integer_generator<std::uint64_t> for_range_generator(std::uint64_t start, std::uint64_t end) noexcept {
+template <typename generator_type_>
+generator_type_ for_range_generator(std::uint64_t start, std::uint64_t end) noexcept {
     for (std::uint64_t value = start; value <= end; ++value) co_yield value;
 }
 
-integer_generator<std::uint64_t> filter_generator( //
-    integer_generator<std::uint64_t> values, bool (*predicate)(std::uint64_t)) noexcept {
-    for (auto value : values)
+/**
+ *  Sadly, we can't mark the output type as `auto` in the coroutine, like this:
+ *  auto filter_generator(auto &&values, bool (*predicate)(std::uint64_t)) noexcept;
+ */
+template <typename generator_type_>
+generator_type_ filter_generator(generator_type_ &&values, bool (*predicate)(std::uint64_t)) noexcept {
+    for (std::uint64_t value : values)
         if (!predicate(value)) co_yield value;
 }
 
-integer_generator<std::uint64_t> prime_factors_generator(integer_generator<std::uint64_t> values) noexcept {
+template <typename generator_type_>
+generator_type_ prime_factors_generator(generator_type_ &&values) noexcept {
     for (std::uint64_t value : values) {
         // Factor out 2 first
         while ((value & 1) == 0) {
@@ -1764,12 +1772,14 @@ integer_generator<std::uint64_t> prime_factors_generator(integer_generator<std::
     }
 }
 
-static void pipeline_cpp20_coroutines(bm::State &state) {
+template <typename generator_type_>
+static void pipeline_cpp20_generator(bm::State &state) {
     std::uint64_t sum = 0, count = 0;
     for (auto _ : state) {
-        auto range = for_range_generator(pipe_start, pipe_end);
-        auto filtered = filter_generator(filter_generator(std::move(range), is_power_of_two), is_power_of_three);
-        auto factors = prime_factors_generator(std::move(filtered));
+        auto range = for_range_generator<generator_type_>(pipe_start, pipe_end);
+        auto filtered_twos = filter_generator<generator_type_>(std::move(range), is_power_of_two);
+        auto filtered_threes = filter_generator<generator_type_>(std::move(filtered_twos), is_power_of_three);
+        auto factors = prime_factors_generator<generator_type_>(std::move(filtered_threes));
         // Reduce
         sum = 0, count = 0;
         for (auto factor : factors) sum += factor, count++;
@@ -1777,7 +1787,26 @@ static void pipeline_cpp20_coroutines(bm::State &state) {
     }
 }
 
-BENCHMARK(pipeline_cpp20_coroutines);
+BENCHMARK(pipeline_cpp20_generator<integer_generator<std::uint64_t>>);
+
+/**
+ *  The most complete co-routine implementation is probably Lewis Baker's `cppcoro`
+ *  library, currently maintained by Andreas Buhr. We can directly replace our
+ *  "generator" with its `cppcoro::generator` and `cppcoro::recursive_generator` types.
+ *  The `async_generator` is also available, but it's not compatible with the rest of
+ *  our logic.
+ *
+ *  The library also implements Symmetric Transfer, which is supposed to accelerate
+ *  the transfer of control between co-routines. This requires compiler support for tail
+ *  calls, that isn't universally available. Moreover, the current logic of checking
+ *  for compiler support only applies to Clang, so we override it here.
+ */
+#define CPPCORO_COMPILER_SUPPORTS_SYMMETRIC_TRANSFER 1
+#include <cppcoro/generator.hpp>
+#include <cppcoro/recursive_generator.hpp>
+
+BENCHMARK(pipeline_cpp20_generator<cppcoro::generator<std::uint64_t>>);
+BENCHMARK(pipeline_cpp20_generator<cppcoro::recursive_generator<std::uint64_t>>);
 
 #pragma endregion // Coroutines and Asynchronous Programming
 
