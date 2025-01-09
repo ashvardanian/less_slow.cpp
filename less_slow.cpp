@@ -3097,54 +3097,94 @@ BENCHMARK(json_nlohmann<fixed_buffer_json, false>)
  *  pointer chasing, split loads, data locality, and even parallelism, and asynchrony,
  *  but it's not the same as concurrency and concurrent data-structures.
  *
- *  Let's imagine a somewhat realistic app, that will be analyzing some sparse graph
- *  data-structure.
+ *  Let's imagine a somewhat realistic app, analyzing a @b sparse_weighted_undirected_graph
+ *  structure, with a Page-Rank-like algorithm:
  *
  *  1. Typical weighted directed graph structure, built on nested @b `std::unordered_map`s.
- *  2. More memory-friendly 2-level @b `absl::flat_hash_map` using Google's Abseil library.
- *  3. Cleaner, single-level @b `std::map` with transparent comparison function.
- *  4. Flat design on top of a @b `absl::flat_hash_set` of tuples, taking the best of 2 and 3.
+ *  2. Cleaner, single-level @b `std::map` with transparent comparison function.
+ *  3. Flat design on top of a @b `absl::flat_hash_set` of tuples, taking the best of 2 and 3.
  *
- *  In code, the raw structure may look like:
+ *  In code, a simplified implementation may look like:
  *
- *  1. `std::unordered_map<std::uint16_t, std::unordered_map<std::uint16_t, float>>`
- *  2. `absl::flat_hash_map<std::uint16_t, absl::flat_hash_map<std::uint16_t, float>>`
- *  3. `std::map<std::pair<std::uint16_t, std::uint16_t>, float, ...>`
- *  4. `std::flat_hash_set<std::tuple<std::uint16_t, std::uint16_t, float>, ...>`
+ *  1. @b `std::unordered_map <std::uint16_t, std::unordered_map<std::uint16_t, float>>`
+ *  2. @b `std::map <std::pair<std::uint16_t, std::uint16_t>, float, ...>`
+ *  3. @b `absl::flat_hash_set <std::tuple<std::uint16_t, std::uint16_t, float>, ...>`
  *
- *  ... but we may want to use more expressive type aliases.
+ *  Moreover, this is the perfect place to explore, how a memory allocator can be
+ *  passed down to the data-structure, and how it can be used to optimize the memory
+ *  management of the graph.
  *
  *  @see "Designing a Fast, Efficient, Cache-friendly Hash Table, Step by Step"
  *       by Matt Kulukundis at CppCon 2017: https://youtu.be/ncHmEUmJZf4
  */
-#if 0
 #include <map>           // `std::map`
 #include <unordered_map> // `std::unordered_map`
 
-using node_id_t = std::uint16_t;
-using edge_weight_t = float;
+using node_id_t = std::uint16_t; // 65'536 node IDs should be enough for everyone :)
+using edge_weight_t = float;     // Weights are typically floating-point numbers
+struct node_ids_t {
+    node_id_t from, to;
+};
 
-struct graph_unordered_map_t {
-    std::unordered_map<node_id_t, std::unordered_map<node_id_t, edge_weight_t>> links;
+struct graph_unordered_maps_t {
+    std::unordered_map<node_id_t, std::unordered_map<node_id_t, edge_weight_t>> nodes_;
 
-    void reserve(std::size_t nodes, [[maybe_unused]] std::size_t edges) { links.reserve(nodes); }
-    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) { links[from][to] = weight; }
+    void reserve(std::size_t nodes, [[maybe_unused]] std::size_t edges) { nodes_.reserve(nodes); }
+    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
+        if (from == to) return;                               // Skip self-loop
+        nodes_[from][to] = weight, nodes_[to][from] = weight; // Insert edge in both directions
+    }
+    std::optional<edge_weight_t> get_edge(node_id_t from, node_id_t to) const noexcept {
+        if (auto it = nodes_.find(from); it != nodes_.end())
+            if (auto jt = it->second.find(to); jt != it->second.end()) return jt->second;
+        return std::nullopt;
+    }
+    void remove_edge(node_id_t from, node_id_t to) noexcept {
+        // It's unlikely that we are removing a non-existent edge
+        if (auto it = nodes_.find(from); it != nodes_.end()) [[likely]]
+            it->second.erase(to);
+        if (auto it = nodes_.find(to); it != nodes_.end()) [[likely]]
+            it->second.erase(from);
+    }
     template <typename visitor_type_>
     void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
-        for (auto const &[to, weight] : links[from]) visitor(from, to, weight);
+        if (auto it = nodes_.find(from); it != nodes_.end())
+            for (auto const &[to, weight] : it->second) visitor(from, to, weight);
     }
 };
 
-struct graph_flat_map_t {
-    std::map<std::pair<node_id_t, node_id_t>, edge_weight_t> links;
+struct graph_map_t {
+    struct compare_t {
+        using is_transparent = std::true_type;
+        bool operator()(node_ids_t const &lhs, node_ids_t const &rhs) const noexcept {
+            return lhs.from < rhs.from || (lhs.from == rhs.from && lhs.to < rhs.to);
+        }
+        bool operator()(node_id_t lhs, node_ids_t const &rhs) const noexcept { return lhs < rhs.from; }
+        bool operator()(node_ids_t const &lhs, node_id_t rhs) const noexcept { return lhs.from < rhs; }
+    };
 
-    void reserve([[maybe_unused]] std::size_t nodes, [[maybe_unused]] std::size_t edges) {}
+    std::map<node_ids_t, edge_weight_t, compare_t> links_;
+
+    void reserve([[maybe_unused]] std::size_t nodes, [[maybe_unused]] std::size_t edges) {
+        //! The `std::map` doesn't support `reserve` 🤕
+    }
     void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
-        links.emplace(std::make_pair(from, to), weight);
+        if (from == to) return; // Skip self-loop
+        links_.emplace(node_ids_t(from, to), weight);
+        links_.emplace(node_ids_t(to, from), weight);
+    }
+    std::optional<edge_weight_t> get_edge(node_id_t from, node_id_t to) const noexcept {
+        if (auto it = links_.find(node_ids_t(from, to)); it != links_.end()) return it->second;
+        return std::nullopt;
+    }
+    void remove_edge(node_id_t from, node_id_t to) noexcept {
+        links_.erase(node_ids_t(from, to));
+        links_.erase(node_ids_t(to, from));
     }
     template <typename visitor_type_>
     void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
-        for (auto const &[ids, weight] : links.equal_range(from)) visitor(from, ids.second, weight);
+        auto [begin, end] = links_.equal_range(from);
+        for (auto it = begin; it != end; ++it) visitor(from, it->first.to, it->second);
     }
 };
 
@@ -3158,29 +3198,211 @@ struct graph_flat_map_t {
  *  both identifiers for equality comparison. Assuming that hash function is highly
  *  unbalanced for a sparse graph, we need to pre-allocate more memory.
  */
-struct graph_vector_t {
+
+#include <absl/container/flat_hash_set.h> // `absl::flat_hash_set`
+#include <absl/hash/hash.h>               // `absl::Hash`
+
+struct graph_flat_set_t {
     struct edge_t {
         node_id_t from;
         node_id_t to;
         edge_weight_t weight;
+    };
+    struct equal_t {
+        using is_transparent = std::true_type;
+        bool operator()(edge_t const &lhs, edge_t const &rhs) const noexcept {
+            return lhs.from == rhs.from && lhs.to == rhs.to;
+        }
+        bool operator()(node_id_t lhs, edge_t const &rhs) const noexcept { return lhs == rhs.from; }
+        bool operator()(edge_t const &lhs, node_id_t rhs) const noexcept { return lhs.from == rhs; }
+        bool operator()(edge_t const &lhs, node_ids_t const &rhs) const noexcept {
+            return lhs.from == rhs.from && lhs.to == rhs.to;
+        }
+        bool operator()(node_ids_t const &lhs, edge_t const &rhs) const noexcept {
+            return lhs.from == rhs.from && lhs.to == rhs.to;
+        }
+    };
+    struct hash_t {
+        using is_transparent = std::true_type;
+        std::size_t operator()(node_id_t from) const noexcept { return absl::Hash<node_id_t> {}(from); }
+        std::size_t operator()(edge_t const &edge) const noexcept { return absl::Hash<node_id_t> {}(edge.from); }
+        std::size_t operator()(node_ids_t const &pair) const noexcept { return absl::Hash<node_id_t> {}(pair.from); }
     };
 
     static_assert( //
         sizeof(edge_t) == sizeof(node_id_t) + sizeof(node_id_t) + sizeof(edge_weight_t),
         "With a single-level flat structure we can guarantee structure packing");
 
-    std::vector<edge_t> links;
+    absl::flat_hash_set<edge_t, hash_t, equal_t> links_;
 
-    void reserve([[maybe_unused]] std::size_t nodes, std::size_t edges) { links.reserve(edges * 4); }
+    void reserve([[maybe_unused]] std::size_t nodes, std::size_t edges) { links_.reserve(edges); }
     void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
-        links.emplace(std::make_pair(from, to), weight);
+        if (from == to) return; // Skip self-loop
+        links_.emplace(from, to, weight);
+        links_.emplace(to, from, weight);
+    }
+    std::optional<edge_weight_t> get_edge(node_id_t from, node_id_t to) const noexcept {
+        if (auto it = links_.find(edge_t {from, to, 0.0f}); it != links_.end()) return it->weight;
+        return std::nullopt;
+    }
+    void remove_edge(node_id_t from, node_id_t to) noexcept {
+        links_.erase(node_ids_t(from, to));
+        links_.erase(node_ids_t(to, from));
     }
     template <typename visitor_type_>
     void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
-        for (auto const &[ids, weight] : links.equal_range(from)) visitor(from, ids.second, weight);
+        auto [begin, end] = links_.equal_range(from);
+        for (auto it = begin; it != end; ++it) visitor(it->from, it->to, it->weight);
     }
 };
-#endif
+
+#include <cassert> // `assert`
+#include <random>  // `std::mt19937_64`
+
+/**
+ *  @brief  Generates a Watts-Strogatz small-world graph forming a ring lattice
+ *          with `k` neighbors per node and rewiring probability `p`.
+ *
+ *  @param[out] graph The graph to be generated.
+ *  @param[inout] generator Random number generator to be used.
+ *  @param[in] nodes Node IDs to be used in the graph.
+ *  @param[in] k Number of neighbors per node.
+ *  @param[in] p Rewiring probability to modify the initial ring lattice.
+ */
+template <typename graph_type_>
+void watts_strogatz(                                //
+    graph_type_ &graph, std::mt19937_64 &generator, //
+    std::span<node_id_t const> nodes,               //
+    std::size_t const k, float const p) {
+
+    auto const n = nodes.size();
+    assert(k < n && "k should be smaller than n");
+    assert(k % 2 == 0 && "k should be even for symmetrical neighbors");
+
+    // We'll use a Mersenne Twister random number generator,
+    // reusing it for different distributions.
+    std::uniform_real_distribution<float> distribution_probability(0.0f, 1.0f);
+    std::uniform_real_distribution<edge_weight_t> distribution_weight(0.0f, 1.0f);
+    std::uniform_int_distribution<node_id_t> distribution_node(0, static_cast<node_id_t>(n - 1));
+
+    // The ring lattice has `n * (k / 2)` edges if we only add `j>i`.
+    // Then each edge is stored twice in adjacency for undirected.
+    graph.reserve(n, n * k);
+
+    // Build the initial ring lattice:
+    for (std::size_t i = 0; i < n; ++i) {
+        // Connect `i` to `{i+1, i+2, ... (i + k/2) % n}
+        for (std::size_t offset = 1; offset <= k / 2; ++offset) {
+            std::size_t j = (i + offset) % n;
+            if (j <= i) continue; // If j < i, it will come up in its own iteration
+            edge_weight_t w = distribution_weight(generator);
+            graph.upsert_edge(nodes[i], nodes[j], w);
+        }
+    }
+
+    // Rewire edges with probability `p`
+    for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t offset = 1; offset <= k / 2; ++offset) {
+            std::size_t j = (i + offset) % n;
+            if (j <= i) continue; // If j < i, it will come up in its own iteration
+            // With probability `p`, remove `(i, j)` and add some new `(i, m)`
+            if (distribution_probability(generator) >= p) continue;
+            // Remove the old edge `(i, j)`
+            graph.remove_edge(nodes[i], nodes[j]);
+            node_id_t m;
+            do { m = distribution_node(generator); } while (graph.get_edge(nodes[i], nodes[m]));
+            edge_weight_t w = distribution_weight(generator);
+            graph.upsert_edge(nodes[i], nodes[m], w);
+        }
+    }
+}
+
+/**
+ *  @brief  Produces a non-repeating sorted sequence of node IDs.
+ *  @param[in] size The number of unique node IDs to generate.
+ */
+std::vector<node_id_t> make_node_ids(std::mt19937_64 &generator, std::size_t size) noexcept(false) {
+    std::set<node_id_t> ids;
+    std::uniform_int_distribution<node_id_t> distribution(0, std::numeric_limits<node_id_t>::max());
+    while (ids.size() < size) ids.insert(distribution(generator));
+    return {ids.begin(), ids.end()};
+}
+
+template <typename graph_type_>
+void page_rank(                                                    //
+    graph_type_ const &graph, std::span<node_id_t const> node_ids, //
+    std::span<float> old_scores, std::span<float> new_scores,      //
+    std::size_t iterations, float damping) {
+
+    while (iterations--) {
+        float total_score = 0.0f;
+        for (std::size_t i = 0; i < node_ids.size(); ++i) {
+            node_id_t node_id = node_ids[i];
+            float &old_score = old_scores[i];
+            float &new_score = new_scores[i];
+            float replacing_score = 0.0f;
+            graph.for_edges(node_id, [&](node_id_t from, node_id_t to, edge_weight_t weight) {
+                std::size_t j = std::lower_bound(node_ids.begin(), node_ids.end(), to) - node_ids.begin();
+                replacing_score += old_scores[j] * weight;
+            });
+            new_score = replacing_score;
+            total_score += replacing_score;
+        }
+        // Normalize the scores and apply damping
+        for (std::size_t i = 0; i < node_ids.size(); ++i)
+            new_scores[i] = (1.0f - damping) + damping * new_scores[i] / total_score;
+        std::swap(old_scores, new_scores);
+    }
+}
+
+template <typename graph_type_, std::size_t count_nodes_, std::size_t average_degree_>
+static void graph_make(bm::State &state) {
+
+    // Seed all graph types identically
+    std::mt19937_64 generator(42);
+    std::vector<node_id_t> node_ids = make_node_ids(generator, count_nodes_);
+    std::vector<float> old_scores(count_nodes_, 1.0f);
+    std::vector<float> new_scores(count_nodes_, 0.0f);
+
+    for (auto _ : state) {
+        graph_type_ graph;
+        graph.reserve(count_nodes_, count_nodes_ * average_degree_);
+        watts_strogatz(graph, generator, node_ids, average_degree_, 0.1f);
+    }
+}
+
+/**
+ *  Let's imagine a Small World graph of a community of 2'500 people, a typical upper
+ *  bound for what is considered a village, with roughly 200 connections per person,
+ *  the Dunbar's number.
+ */
+BENCHMARK(graph_make<graph_unordered_maps_t, 2'500, 150>)->MinTime(10)->Name("graph_make<unordered_maps_t>(village)");
+BENCHMARK(graph_make<graph_map_t, 2'500, 150>)->MinTime(10)->Name("graph_make<map_t>(village)");
+BENCHMARK(graph_make<graph_flat_set_t, 2'500, 150>)->MinTime(10)->Name("graph_make<flat_set_t>(village)");
+
+template <typename graph_type_, std::size_t count_nodes_, std::size_t average_degree_>
+static void graph_rank(bm::State &state) {
+
+    // Seed all graph types identically
+    std::mt19937_64 generator(42);
+    std::vector<node_id_t> node_ids = make_node_ids(generator, count_nodes_);
+    std::vector<float> old_scores(count_nodes_, 1.0f);
+    std::vector<float> new_scores(count_nodes_, 0.0f);
+
+    graph_type_ graph;
+    graph.reserve(count_nodes_, count_nodes_ * average_degree_);
+    watts_strogatz(graph, generator, node_ids, average_degree_, 0.1f);
+
+    for (auto _ : state) { page_rank(graph, node_ids, old_scores, new_scores, 2, 0.85f); }
+}
+
+/**
+ *  Now let's rank those 2'500 people in the village, using the PageRank-like algorithm.
+ */
+BENCHMARK(graph_rank<graph_unordered_maps_t, 2'500, 150>)->MinTime(10)->Name("graph_rank<unordered_maps_t>(village)");
+BENCHMARK(graph_rank<graph_map_t, 2'500, 150>)->MinTime(10)->Name("graph_rank<map_t>(village)");
+BENCHMARK(graph_rank<graph_flat_set_t, 2'500, 150>)->MinTime(10)->Name("graph_rank<flat_set_t>(village)");
+
 #pragma endregion // Trees, Graphs, and Data Layouts
 
 #pragma region Concurrent Data Structures

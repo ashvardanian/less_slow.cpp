@@ -53,6 +53,7 @@
     "spdlog",
     "STREQUAL",
     "StringZilla",
+    "Strogatz",
     "Sutter",
     "sysfs",
     "taskset",
