@@ -178,9 +178,10 @@ endif()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   # A few useful options for GCC:
   target_compile_options(less_slow PRIVATE
-    -fconcepts-diagnostics-depth=10
     -Wno-error
-    -fopenmp
+    -Wfatal-errors # Stop on first error
+    -fconcepts-diagnostics-depth=10 # Needed to debug concepts
+    -fopenmp # OpenMP support, also requires linking
   )
 else()
   # For other compilers (Clang, MSVC, Intel, etc.)
