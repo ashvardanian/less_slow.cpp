@@ -1360,6 +1360,21 @@ BENCHMARK(f32_matmul_avx512_flops)->MinTime(10)->Threads(physical_cores());
 
 #endif // defined(__AVX512F__)
 
+#if defined(__ARM_NEON)
+
+extern "C" std::uint32_t f32_matmul_neon_flops_asm_kernel(void);
+
+static void f32_matmul_neon_flops(benchmark::State &state) {
+    std::size_t flops = 0;
+    for (auto _ : state) bm::DoNotOptimize(flops += f32_matmul_neon_flops_asm_kernel());
+    state.SetItemsProcessed(flops);
+}
+
+BENCHMARK(f32_matmul_neon_flops)->MinTime(10);
+BENCHMARK(f32_matmul_neon_flops)->MinTime(10)->Threads(physical_cores());
+
+#endif
+
 #pragma endregion // Compute vs Memory Bounds with Matrix Multiplications
 
 #pragma region Alignment of Memory Accesses
