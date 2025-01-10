@@ -652,9 +652,9 @@ BENCHMARK(branch_cost)->RangeMultiplier(4)->Range(256, 32 * 1024);
 
 #include <random> // `std::random_device`, `std::mt19937`
 
-enum class access_order { sequential, random };
+enum class access_order_t { sequential, random };
 
-template <access_order access_order_>
+template <access_order_t access_order_>
 static void cache_misses_cost(bm::State &state) {
     auto count = static_cast<std::uint32_t>(state.range(0));
 
@@ -664,7 +664,7 @@ static void cache_misses_cost(bm::State &state) {
 
     // Initialize different access orders
     std::vector<std::uint32_t> indices(count);
-    if constexpr (access_order_ == access_order::random) {
+    if constexpr (access_order_ == access_order_t::random) {
         std::random_device random_device;
         std::mt19937 generator(random_device());
         std::uniform_int_distribution<std::uint32_t> uniform_distribution(0, count - 1);
@@ -679,14 +679,16 @@ static void cache_misses_cost(bm::State &state) {
     }
 }
 
-BENCHMARK(cache_misses_cost<access_order::sequential>)
+BENCHMARK(cache_misses_cost<access_order_t::sequential>)
     ->MinTime(2)
     ->RangeMultiplier(8)
-    ->Range(8u * 1024u, 128u * 1024u * 1024u);
-BENCHMARK(cache_misses_cost<access_order::random>)
+    ->Range(8u * 1024u, 128u * 1024u * 1024u)
+    ->Name("cache_misses_cost<sequential>");
+BENCHMARK(cache_misses_cost<access_order_t::random>)
     ->MinTime(2)
     ->RangeMultiplier(8)
-    ->Range(8u * 1024u, 128u * 1024u * 1024u);
+    ->Range(8u * 1024u, 128u * 1024u * 1024u)
+    ->Name("cache_misses_cost<random>");
 
 /**
  *  For small arrays, the execution speed will be identical.
@@ -1478,7 +1480,9 @@ class strided_ptr {
 void _mm_clflush(void const *address) { asm volatile("dc\tcvau, %0" : : "r"(address) : "memory"); }
 #endif
 
-template <bool aligned_>
+enum class alignment_mode_t { unaligned_k, aligned_k };
+
+template <alignment_mode_t alignment_>
 static void memory_access(bm::State &state) {
     constexpr std::size_t typical_l2_size = 1024u * 1024u;
     std::size_t const cache_line_width = fetch_cache_line_width();
@@ -1497,9 +1501,10 @@ static void memory_access(bm::State &state) {
     std::byte *const buffer_ptr = buffer.get();
 
     // Let's initialize a strided range using out `strided_ptr` template, but
-    // for `aligned_ == false` make sure that the scalar-of-interest in each
+    // for `alignment_mode_t::unaligned_k` make sure that the scalar-of-interest in each
     // stride is located exactly at the boundary between two cache lines.
-    std::size_t const offset_within_page = !aligned_ ? (cache_line_width - sizeof(std::uint32_t) / 2) : 0;
+    std::size_t const offset_within_page =
+        alignment_ == alignment_mode_t::unaligned_k ? (cache_line_width - sizeof(std::uint32_t) / 2) : 0;
     strided_ptr<std::uint32_t> integers(buffer_ptr + offset_within_page, cache_line_width);
 
     // We will start with a random seed position and walk through the buffer.
@@ -1522,8 +1527,8 @@ static void memory_access(bm::State &state) {
     }
 }
 
-static void memory_access_unaligned(bm::State &state) { memory_access<false>(state); }
-static void memory_access_aligned(bm::State &state) { memory_access<true>(state); }
+static void memory_access_unaligned(bm::State &state) { memory_access<alignment_mode_t::unaligned_k>(state); }
+static void memory_access_aligned(bm::State &state) { memory_access<alignment_mode_t::aligned_k>(state); }
 
 BENCHMARK(memory_access_unaligned)->MinTime(10);
 BENCHMARK(memory_access_aligned)->MinTime(10);
@@ -2995,7 +3000,9 @@ bool contains_xss_nlohmann(json_type_ const &j) noexcept {
 using default_json = json_with_alloc<std::allocator>;
 using fixed_buffer_json = json_with_alloc<fixed_buffer_allocator>;
 
-template <typename json_type_, bool use_exceptions>
+enum class exception_handling_t { throw_k, noexcept_k };
+
+template <typename json_type_, exception_handling_t exception_handling_>
 static void json_nlohmann(bm::State &state) {
     std::size_t bytes_processed = 0;
     std::size_t peak_memory_usage = 0;
@@ -3009,7 +3016,7 @@ static void json_nlohmann(bm::State &state) {
         // The vanilla default (recommended) behavior is to throw exceptions on parsing errors.
         // As we know from the error handling benchmarks, exceptions can be extremely slow,
         // if they are thrown frequently.
-        if constexpr (use_exceptions) {
+        if constexpr (exception_handling_ == exception_handling_t::throw_k) {
             try {
                 json = json_type_::parse(packet_json);
                 bm::DoNotOptimize(contains_xss_nlohmann(json));
@@ -3032,23 +3039,31 @@ static void json_nlohmann(bm::State &state) {
     state.counters["peak_memory_usage"] = bm::Counter(peak_memory_usage, bm::Counter::kAvgThreads);
 }
 
-BENCHMARK(json_nlohmann<default_json, true>)->MinTime(10)->Name("json_nlohmann<std::allocator, throw>");
-BENCHMARK(json_nlohmann<fixed_buffer_json, true>)->MinTime(10)->Name("json_nlohmann<fixed_buffer, throw>");
-BENCHMARK(json_nlohmann<default_json, false>)->MinTime(10)->Name("json_nlohmann<std::allocator, noexcept>");
-BENCHMARK(json_nlohmann<fixed_buffer_json, false>)->MinTime(10)->Name("json_nlohmann<fixed_buffer, noexcept>");
-BENCHMARK(json_nlohmann<default_json, true>)
+BENCHMARK(json_nlohmann<default_json, exception_handling_t::throw_k>)
+    ->MinTime(10)
+    ->Name("json_nlohmann<std::allocator, throw>");
+BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::throw_k>)
+    ->MinTime(10)
+    ->Name("json_nlohmann<fixed_buffer, throw>");
+BENCHMARK(json_nlohmann<default_json, exception_handling_t::noexcept_k>)
+    ->MinTime(10)
+    ->Name("json_nlohmann<std::allocator, noexcept>");
+BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::noexcept_k>)
+    ->MinTime(10)
+    ->Name("json_nlohmann<fixed_buffer, noexcept>");
+BENCHMARK(json_nlohmann<default_json, exception_handling_t::throw_k>)
     ->MinTime(10)
     ->Name("json_nlohmann<std::allocator, throw>")
     ->Threads(physical_cores());
-BENCHMARK(json_nlohmann<fixed_buffer_json, true>)
+BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::throw_k>)
     ->MinTime(10)
     ->Name("json_nlohmann<fixed_buffer, throw>")
     ->Threads(physical_cores());
-BENCHMARK(json_nlohmann<default_json, false>)
+BENCHMARK(json_nlohmann<default_json, exception_handling_t::noexcept_k>)
     ->MinTime(10)
     ->Name("json_nlohmann<std::allocator, noexcept>")
     ->Threads(physical_cores());
-BENCHMARK(json_nlohmann<fixed_buffer_json, false>)
+BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::noexcept_k>)
     ->MinTime(10)
     ->Name("json_nlohmann<fixed_buffer, noexcept>")
     ->Threads(physical_cores());
