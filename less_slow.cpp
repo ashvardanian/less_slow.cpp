@@ -62,11 +62,11 @@ static void i32_addition(bm::State &state) {
 
 BENCHMARK(i32_addition);
 
-extern "C" std::int32_t i32_add_asm(std::int32_t a, std::int32_t b);
+extern "C" std::int32_t i32_add_asm_kernel(std::int32_t a, std::int32_t b);
 
 static void i32_addition_asm(bm::State &state) {
     std::int32_t a = 0, b = 0, c = 0;
-    for (auto _ : state) c = i32_add_asm(a, b);
+    for (auto _ : state) c = i32_add_asm_kernel(a, b);
     (void)c; // Silence "variable `c` set but not used" warning
 }
 
@@ -1344,6 +1344,21 @@ BENCHMARK(f32x4x4_matmul_avx512);
  *
  *  Benchmark everything! Don't assume less work translates to faster execution.
  */
+
+#if defined(__AVX512F__)
+
+extern "C" std::uint32_t f32_matmul_avx512_flops_asm_kernel(void);
+
+static void f32_matmul_avx512_flops(bm::State &state) {
+    std::size_t flops = 0;
+    for (auto _ : state) bm::DoNotOptimize(flops += f32_matmul_avx512_flops_asm_kernel());
+    state.SetItemsProcessed(flops);
+}
+
+BENCHMARK(f32_matmul_avx512_flops)->MinTime(10);
+BENCHMARK(f32_matmul_avx512_flops)->MinTime(10)->Threads(physical_cores());
+
+#endif // defined(__AVX512F__)
 
 #pragma endregion // Compute vs Memory Bounds with Matrix Multiplications
 

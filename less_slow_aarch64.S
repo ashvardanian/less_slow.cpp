@@ -5,13 +5,13 @@
 # Export symbols so linkers can find them:
 
     .section .text
-    .global i32_add_asm
+    .global i32_add_asm_kernel
 
 # ----------------------------------------------------------------------------
 # Simple function that adds two 32-bit signed integers using AArch64 ABI.
 # Arguments in W0 (a) and W1 (b). Return value in W0.
 # ----------------------------------------------------------------------------
-i32_add_asm:
+i32_add_asm_kernel:
     add     w0, w0, w1      # w0 = w0 + w1
     ret
 
