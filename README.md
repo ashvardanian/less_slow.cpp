@@ -24,6 +24,8 @@ Some of the highlights include:
 - __How not to build state machines:__ Compare `std::variant`, `virtual` functions, and C++20 coroutines.
 - __Scaling to many cores?__ Learn how to use OpenMP, Intel's oneTBB, or your custom thread pool.
 - __How to handle JSON avoiding memory allocations?__ Is it easier with C or C++ libraries?
+- __How to properly use associative containers__ with custom keys and transparent comparators?
+- __How to beat a hand-written parser__ with compile-time RegEx engines?
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
 Follow the instructions below to run the code in your environment and compare it to the comments as you read through the source.

@@ -162,6 +162,7 @@
     "variant": "cpp",
     "vector": "cpp",
     "sstream": "cpp",
-    "cfenv": "cpp"
+    "cfenv": "cpp",
+    "expected": "cpp"
   }
 }

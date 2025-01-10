@@ -1665,7 +1665,7 @@ static void prime_factors_stl(std::uint64_t input, std::function<void(std::uint6
     prime_factors_lambdas(input, callback);
 }
 
-static void pipeline_cpp11_stl(bm::State &state) {
+static void pipeline_cpp11_std_function(bm::State &state) {
     std::uint64_t sum = 0, count = 0;
     for (auto _ : state) {
         sum = 0, count = 0;
@@ -1680,7 +1680,7 @@ static void pipeline_cpp11_stl(bm::State &state) {
     }
 }
 
-BENCHMARK(pipeline_cpp11_stl);
+BENCHMARK(pipeline_cpp11_std_function);
 
 /**
  *  C++20 introduces @b coroutines in the language, but not in the library,
@@ -1777,7 +1777,7 @@ generator_type_ prime_factors_generator(generator_type_ &&values) noexcept {
 }
 
 template <typename generator_type_>
-static void pipeline_cpp20_generator(bm::State &state) {
+static void pipeline_cpp20_coroutine(bm::State &state) {
     std::uint64_t sum = 0, count = 0;
     for (auto _ : state) {
         auto range = for_range_generator<generator_type_>(pipe_start, pipe_end);
@@ -1791,7 +1791,9 @@ static void pipeline_cpp20_generator(bm::State &state) {
     }
 }
 
-BENCHMARK(pipeline_cpp20_generator<toy_generator<std::uint64_t>>);
+using toy_generator_t = toy_generator<std::uint64_t>;
+
+BENCHMARK(pipeline_cpp20_coroutine<toy_generator_t>);
 
 /**
  *  The most complete co-routine implementation is probably Lewis Baker's `cppcoro`
@@ -1809,8 +1811,11 @@ BENCHMARK(pipeline_cpp20_generator<toy_generator<std::uint64_t>>);
 #include <cppcoro/generator.hpp>
 #include <cppcoro/recursive_generator.hpp>
 
-BENCHMARK(pipeline_cpp20_generator<cppcoro::generator<std::uint64_t>>);
-BENCHMARK(pipeline_cpp20_generator<cppcoro::recursive_generator<std::uint64_t>>);
+using cppcoro_generator_t = cppcoro::generator<std::uint64_t>;
+using cppcoro_recursive_generator_t = cppcoro::recursive_generator<std::uint64_t>;
+
+BENCHMARK(pipeline_cpp20_coroutine<cppcoro_generator_t>);
+BENCHMARK(pipeline_cpp20_coroutine<cppcoro_recursive_generator_t>);
 
 #pragma endregion // Coroutines and Asynchronous Programming
 
@@ -1918,7 +1923,7 @@ auto not_fn(function_type_ f) noexcept {
     return [f](auto &&...args) { return !f(std::forward<decltype(args)>(args)...); };
 }
 
-static void pipeline_cpp20_ranges(bm::State &state) {
+static void pipeline_cpp20_std_ranges(bm::State &state) {
     std::uint64_t sum = 0, count = 0;
     for (auto _ : state) {
         auto pipeline =                                                                    //
@@ -1940,23 +1945,23 @@ static void pipeline_cpp20_ranges(bm::State &state) {
     }
 }
 
-BENCHMARK(pipeline_cpp20_ranges);
+BENCHMARK(pipeline_cpp20_std_ranges);
 #endif // defined(__cpp_lib_ranges)
 
 /**
- *  The results for the input range [3, 49] on Intel Sapphire Rapids are as follows:
+ *  The results for the input range [3, 49] on Intel Xeon 5 are as follows:
  *
- *      - `pipeline_cpp11_lambdas`:      @b 295ns
- *      - `pipeline_cpp11_stl`:          @b 831ns
- *      - `pipeline_cpp20_coroutines`:   @b 708ns for toy, over @b 900ns for `cppcoro`
- *      - `pipeline_cpp20_ranges`:       @b 216ns
+ *      - `pipeline_cpp11_lambdas`:        @b 295ns
+ *      - `pipeline_cpp11_std_function`:   @b 762ns
+ *      - `pipeline_cpp20_coroutines`:     @b 717ns for toy, over @b 828ns for `cppcoro`
+ *      - `pipeline_cpp20_std_ranges`:     @b 247ns
  *
  *  On Apple M2 Pro:
  *
- *      - `pipeline_cpp11_lambdas`:      @b 114ns
- *      - `pipeline_cpp11_stl`:          @b 547ns
- *      - `pipeline_cpp20_coroutines`:   @b 705ns for toy
- *      - `pipeline_cpp20_ranges`:       @b N/A with Apple Clang
+ *      - `pipeline_cpp11_lambdas`:        @b 114ns
+ *      - `pipeline_cpp11_std_function`:   @b 547ns
+ *      - `pipeline_cpp20_coroutines`:     @b 705ns for toy
+ *      - `pipeline_cpp20_std_ranges`:     @b N/A with Apple Clang
  *
  *  Why is STL slower than C++11 lambdas? STL's `std::function` allocates memory!
  *  Why are coroutines slower than lambdas? Coroutines allocate state and have
@@ -2026,7 +2031,6 @@ static void pipeline_unifex(bm::State &state) {
 BENCHMARK(pipeline_unifex);
 #endif            // TODO: UnifEx needs more work
 #pragma endregion // Ranges and Iterators
-
 #pragma region Variants, Tuples, and State Machines
 
 #include <tuple>   // `std::tuple`
@@ -2115,9 +2119,9 @@ BENCHMARK(pipeline_virtual_functions);
  *  are somewhere in the middle between C++20 ranges and C++11 STL solution.
  *
  *      - `pipeline_cpp11_lambdas`:      @b 295ns
- *      - `pipeline_cpp11_stl`:          @b 831ns
+ *      - `pipeline_cpp11_std_function`: @b 831ns
  *      - `pipeline_cpp20_coroutines`:   @b 708ns
- *      - `pipeline_cpp20_ranges`:       @b 216ns
+ *      - `pipeline_cpp20_std_ranges`:   @b 216ns
  *      - `pipeline_virtual_functions`:  @b 491ns
  *
  *  This code is a hazard for multiple reasons:
@@ -2149,6 +2153,14 @@ BENCHMARK(pipeline_virtual_functions);
  */
 
 #pragma endregion // Virtual Functions and Polymorphism
+
+#pragma region Inline Assembly
+
+/**
+ *  TODO: Inline Assembly version: https://github.com/ashvardanian/less_slow.cpp/issues/20
+ */
+
+#pragma endregion // Inline Assembly
 
 #pragma endregion // - Abstractions
 
