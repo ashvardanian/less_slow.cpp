@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 # ------------------------------------------------------------------------------
 # Project Setup
 # ------------------------------------------------------------------------------
-project(less_slow LANGUAGES CXX)
+project(less_slow LANGUAGES CXX ASM)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_CXX_EXTENSIONS NO)
@@ -166,6 +166,15 @@ FetchContent_MakeAvailable(YaoyuanGuoYYJSON)
 # ------------------------------------------------------------------------------
 add_executable(less_slow less_slow.cpp)
 set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Conditionally add the assembly file(s)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+    set_source_files_properties(less_slow_amd64.S PROPERTIES LANGUAGE ASM)
+    target_sources(less_slow PRIVATE less_slow_amd64.S)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    set_source_files_properties(less_slow_aarch64.S PROPERTIES LANGUAGE ASM)
+    target_sources(less_slow PRIVATE less_slow_aarch64.S)
+endif()
 
 # ------------------------------------------------------------------------------
 # Compiler Flags / Options

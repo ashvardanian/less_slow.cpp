@@ -1,5 +1,5 @@
 /**
- *  @brief  Low-level microbenchmarks for building a performance-first mindset.
+ *  @brief  Low-level micro-benchmarks for building a performance-first mindset.
  *  @file   less_slow.cpp
  *  @author Ash Vardanian
  *
@@ -61,6 +61,16 @@ static void i32_addition(bm::State &state) {
 }
 
 BENCHMARK(i32_addition);
+
+extern "C" std::int32_t i32_add_asm(std::int32_t a, std::int32_t b);
+
+static void i32_addition_asm(bm::State &state) {
+    std::int32_t a = 0, b = 0, c = 0;
+    for (auto _ : state) c = i32_add_asm(a, b);
+    (void)c; // Silence "variable `c` set but not used" warning
+}
+
+BENCHMARK(i32_addition_asm);
 
 /**
  *  Trivial kernels operating on constant values are not the most
