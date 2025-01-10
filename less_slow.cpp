@@ -1687,7 +1687,7 @@ BENCHMARK(pipeline_cpp11_stl);
 #include <coroutine> // `std::coroutine_handle`
 
 template <typename integer_type_>
-struct [[nodiscard]] integer_generator {
+struct [[nodiscard]] toy_generator {
     using integer_type = integer_type_;
 
     struct promise_type {
@@ -1700,8 +1700,8 @@ struct [[nodiscard]] integer_generator {
 
         std::suspend_always initial_suspend() noexcept { return {}; }
         std::suspend_always final_suspend() noexcept { return {}; }
-        integer_generator get_return_object() noexcept {
-            return integer_generator {std::coroutine_handle<promise_type>::from_promise(*this)};
+        toy_generator get_return_object() noexcept {
+            return toy_generator {std::coroutine_handle<promise_type>::from_promise(*this)};
         }
         void return_void() noexcept {}
         void unhandled_exception() noexcept { std::terminate(); }
@@ -1709,10 +1709,10 @@ struct [[nodiscard]] integer_generator {
 
     std::coroutine_handle<promise_type> handle_;
 
-    explicit integer_generator(std::coroutine_handle<promise_type> h) noexcept : handle_(h) {}
-    integer_generator(integer_generator const &) = delete;
-    integer_generator(integer_generator &&other) noexcept : handle_(other.handle_) { other.handle_ = nullptr; }
-    ~integer_generator() noexcept {
+    explicit toy_generator(std::coroutine_handle<promise_type> h) noexcept : handle_(h) {}
+    toy_generator(toy_generator const &) = delete;
+    toy_generator(toy_generator &&other) noexcept : handle_(other.handle_) { other.handle_ = nullptr; }
+    ~toy_generator() noexcept {
         if (handle_) handle_.destroy();
     }
 
@@ -1786,7 +1786,7 @@ static void pipeline_cpp20_generator(bm::State &state) {
     }
 }
 
-BENCHMARK(pipeline_cpp20_generator<integer_generator<std::uint64_t>>);
+BENCHMARK(pipeline_cpp20_generator<toy_generator<std::uint64_t>>);
 
 /**
  *  The most complete co-routine implementation is probably Lewis Baker's `cppcoro`
@@ -1943,14 +1943,14 @@ BENCHMARK(pipeline_cpp20_ranges);
  *
  *      - `pipeline_cpp11_lambdas`:      @b 295ns
  *      - `pipeline_cpp11_stl`:          @b 831ns
- *      - `pipeline_cpp20_coroutines`:   @b 708ns
+ *      - `pipeline_cpp20_coroutines`:   @b 708ns for toy, over @b 900ns for `cppcoro`
  *      - `pipeline_cpp20_ranges`:       @b 216ns
  *
  *  On Apple M2 Pro:
  *
  *      - `pipeline_cpp11_lambdas`:      @b 114ns
  *      - `pipeline_cpp11_stl`:          @b 547ns
- *      - `pipeline_cpp20_coroutines`:   @b 705ns
+ *      - `pipeline_cpp20_coroutines`:   @b 705ns for toy
  *      - `pipeline_cpp20_ranges`:       @b N/A with Apple Clang
  *
  *  Why is STL slower than C++11 lambdas? STL's `std::function` allocates memory!
