@@ -86,3 +86,16 @@ Alternatively, use the Linux `perf` tool for performance counter collection:
 ```sh
 sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF build_release/less_slow --benchmark_enable_random_interleaving=true --benchmark_filter=super_sort
 ```
+
+## Memes and References
+
+Educational content without memes?!
+Come on!
+
+<table>
+  <tr>
+    <td><img src="https://github.com/ashvardanian/ashvardanian/blob/master/memes/ieee764-vs-gnu-compiler.jpg?raw=true" alt="IEEE 754 vs GNU Compiler"></td>
+    <td><img src="https://github.com/ashvardanian/ashvardanian/blob/master/memes/no-easter-bunny-no-free-abstractions.jpg?raw=true" alt="No Easter Bunny, No Free Abstractions"></td>
+  </tr>
+</table>
+
