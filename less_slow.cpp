@@ -2361,8 +2361,7 @@ void config_parse_stl(std::string_view config_text, std::vector<std::pair<std::s
     });
 }
 
-template <typename string_view_>
-void parse_stl(bm::State &state, string_view_ config_text) {
+void parse_stl(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
@@ -2406,8 +2405,7 @@ void config_parse_ranges(std::string_view config_text, std::vector<std::pair<std
     for (auto [key, value] : std::move(lines)) settings.emplace_back(key, value);
 }
 
-template <typename string_view_>
-void parse_ranges(bm::State &state, string_view_ config_text) {
+void parse_ranges(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
@@ -2440,8 +2438,7 @@ void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::st
     }
 }
 
-template <typename string_view_>
-void parse_sz(bm::State &state, string_view_ config_text) {
+void parse_sz(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
@@ -2554,8 +2551,7 @@ void config_parse_regex(std::string_view config_text, std::vector<std::pair<std:
     }
 }
 
-template <typename string_view_>
-void parse_regex(bm::State &state, string_view_ config_text) {
+void parse_regex(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
 
@@ -2608,8 +2604,7 @@ void config_parse_ctre(std::string_view config_text, std::vector<std::pair<std::
     }
 }
 
-template <typename string_view_>
-void parse_ctre(bm::State &state, string_view_ config_text) {
+void parse_ctre(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
 
@@ -2921,7 +2916,7 @@ template <template <typename> typename allocator_>
 struct json_containers_for_alloc {
     // Must allow `map<Key, Value, typename... Args>`, replaces `std::map`
     template <typename key_type_, typename value_type_, typename...>
-    using object = std::map<key_type_, value_type_, std::less<>, allocator_<std::pair<const key_type_, value_type_>>>;
+    using object = std::map<key_type_, value_type_, std::less<>, allocator_<std::pair<key_type_ const, value_type_>>>;
 
     // Must allow `vector<Value, typename... Args>`, replaces `std::vector`
     template <typename value_type_, typename...>
