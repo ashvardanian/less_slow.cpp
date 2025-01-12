@@ -3435,7 +3435,18 @@ BENCHMARK(graph_rank<graph_flat_set_t, 2'500, 150>)->MinTime(10)->Name("graph_ra
 
 #pragma endregion // Trees, Graphs, and Data Layouts
 
-#pragma region Concurrent Data Structures
+#pragma region Smart Pointers
+
+/**
+ *  More often than not, people allocate nodes of graphs or trees individually,
+ *  never considering @b implicit or @b succinct data-structures, as alternatives.
+ */
+
+#include <memory> // `std::unique_ptr`, `std::shared_ptr`, `std::weak_ptr`
+
+#pragma endregion // Smart Pointers
+
+#pragma region Concurrency
 
 /**
  *  @see "C++ atomics, from basic to advanced. What do they really do?"
@@ -3446,7 +3457,7 @@ BENCHMARK(graph_rank<graph_flat_set_t, 2'500, 150>)->MinTime(10)->Name("graph_ra
 #include <mutex>        // `std::mutex`
 #include <shared_mutex> // `std::shared_mutex`
 
-#pragma endregion // Concurrent Data Structures
+#pragma endregion // Concurrency
 
 #pragma endregion // - Structures, Tuples, ADTs, AOS, SOA
 
@@ -3887,6 +3898,19 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
 #pragma endregion // Logs
 
 #pragma endregion // - Exceptions, Backups, Logging
+
+#pragma region - Networking and Databases
+
+/**
+ *  There are legends about the complexity of dependency management in C++.
+ *  It often prohibits developers from designing larger systems in C++, as
+ *  the Web, for example, requires a lot of dependencies.
+ */
+#pragma region ASIO
+
+#pragma endregion // ASIO
+
+#pragma endregion // - Networking and Databases
 
 /**
  *  The default variant is to invoke the `BENCHMARK_MAIN()` macro.
