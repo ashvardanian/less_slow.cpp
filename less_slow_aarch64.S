@@ -5,6 +5,8 @@
 
     .section .text
     .global i32_add_asm_kernel
+    
+    .global tops_f64_neon_asm_kernel
     .global tops_f32_neon_asm_kernel
     .global tops_f16_neon_asm_kernel
     .global tops_bf16_neon_asm_kernel
@@ -16,6 +18,28 @@
 # ----------------------------------------------------------------------------
 i32_add_asm_kernel:
     add     w0, w0, w1
+    ret
+
+    .global tops_f64_neon_asm_kernel
+
+# ----------------------------------------------------------------------------
+# f64 micro-kernel:
+# Each FMLA vD.2d, vN.2d, vM.2d => 2 multiplies + 2 adds = 4 FLOPs.
+# We'll do 10 instructions => 10 × 4 = 40 FLOPs total, returning 40 in W0.
+# ----------------------------------------------------------------------------
+tops_f64_neon_asm_kernel:
+    fmla    v0.2d,  v1.2d,  v2.2d
+    fmla    v3.2d,  v4.2d,  v5.2d
+    fmla    v6.2d,  v7.2d,  v8.2d
+    fmla    v9.2d,  v10.2d, v11.2d
+    fmla    v12.2d, v13.2d, v14.2d
+    fmla    v15.2d, v16.2d, v17.2d
+    fmla    v18.2d, v19.2d, v20.2d
+    fmla    v21.2d, v22.2d, v23.2d
+    fmla    v24.2d, v25.2d, v26.2d
+    fmla    v27.2d, v28.2d, v29.2d
+
+    mov     w0, #40
     ret
 
 # ----------------------------------------------------------------------------
