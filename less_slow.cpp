@@ -3292,6 +3292,7 @@ struct graph_flat_set_t {
 
 #include <cassert> // `assert`
 #include <random>  // `std::mt19937_64`
+#include <span>    // `std::span`
 
 /**
  *  @brief  Generates a Watts-Strogatz small-world graph forming a ring lattice
