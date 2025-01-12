@@ -2715,24 +2715,27 @@ static constexpr std::string_view malicious_json = R"({
 
 static constexpr std::string_view packets_json[3] = {valid_json, invalid_json, malicious_json};
 
-struct fixed_buffer_arena_t {
-    static constexpr std::size_t capacity = 4096;
-    alignas(64) std::byte buffer[capacity];
+struct limited_arena_t {
+    static constexpr std::size_t capacity_k = 4096;
+    alignas(64) std::byte buffer[capacity_k];
 
     /// The offset (in bytes) of the next free location
     std::size_t total_allocated = 0;
     /// The total bytes "freed" so far
     std::size_t total_reclaimed = 0;
+    /// The total number of unique allocations before a reset
+    std::size_t unique_allocations = 0;
 };
 
 /**
  *  @brief  Allocates a new chunk of `size` bytes from the arena.
  *  @return The new pointer or `nullptr` if OOM.
  */
-inline std::byte *allocate_from_arena(fixed_buffer_arena_t &arena, std::size_t size) noexcept {
-    if (arena.total_allocated + size > fixed_buffer_arena_t::capacity) return nullptr; // Not enough space
+inline std::byte *allocate_from_arena(limited_arena_t &arena, std::size_t size) noexcept {
+    if (arena.total_allocated + size > limited_arena_t::capacity_k) return nullptr; // Not enough space
     std::byte *ptr = arena.buffer + arena.total_allocated;
     arena.total_allocated += size;
+    arena.unique_allocations++;
     return ptr;
 }
 
@@ -2740,14 +2743,15 @@ inline std::byte *allocate_from_arena(fixed_buffer_arena_t &arena, std::size_t s
  *  @brief  Deallocates a chunk of memory previously allocated from the arena.
  *          This implementation does not "reuse" partial free space unless everything is freed.
  */
-inline void deallocate_from_arena(fixed_buffer_arena_t &arena, std::byte *ptr, std::size_t size) noexcept {
+inline void deallocate_from_arena(limited_arena_t &arena, std::byte *ptr, std::size_t size) noexcept {
     // Check if ptr is within the arena
     std::byte *start = arena.buffer;
-    std::byte *end = arena.buffer + fixed_buffer_arena_t::capacity;
+    std::byte *end = arena.buffer + limited_arena_t::capacity_k;
     if (ptr < start || ptr >= end) return; // Invalid pointer => no-op
     arena.total_reclaimed += size;
     // Reset completely if fully reclaimed
-    if (arena.total_allocated == arena.total_reclaimed) arena.total_allocated = 0, arena.total_reclaimed = 0;
+    if (arena.total_allocated == arena.total_reclaimed)
+        arena.total_allocated = 0, arena.total_reclaimed = 0, arena.unique_allocations = 0;
 }
 
 /**
@@ -2757,7 +2761,7 @@ inline void deallocate_from_arena(fixed_buffer_arena_t &arena, std::byte *ptr, s
  *  @return The new pointer or `nullptr` if OOM.
  */
 inline std::byte *reallocate_from_arena( //
-    fixed_buffer_arena_t &arena, std::byte *ptr, std::size_t old_size, std::size_t new_size) noexcept {
+    limited_arena_t &arena, std::byte *ptr, std::size_t old_size, std::size_t new_size) noexcept {
     if (!ptr) return allocate_from_arena(arena, new_size); //  A fresh allocation
 
     // This is effectively a `free` operation
@@ -2774,7 +2778,7 @@ inline std::byte *reallocate_from_arena( //
         // Expand in-place if there's enough room
         std::size_t offset = static_cast<std::size_t>(ptr - arena.buffer);
         std::size_t required_space = offset + new_size;
-        if (required_space <= fixed_buffer_arena_t::capacity) {
+        if (required_space <= limited_arena_t::capacity_k) {
             // We can grow (or shrink) in place
             arena.total_allocated = required_space;
             return ptr;
@@ -2844,7 +2848,7 @@ static void json_yyjson(bm::State &state) {
     //    char yyjson_buffer[4096];
     //    yyjson_alc_pool_init(&alc, yyjson_buffer, sizeof(yyjson_buffer));
     //
-    using arena_t = fixed_buffer_arena_t;
+    using arena_t = limited_arena_t;
     arena_t arena;
     yyjson_alc alc;
     alc.ctx = &arena;
@@ -2855,7 +2859,7 @@ static void json_yyjson(bm::State &state) {
     using alc_size_t = std::uint16_t;
     alc.malloc = +[](void *ctx, size_t size_native) noexcept -> void * {
         alc_size_t size = static_cast<alc_size_t>(size_native);
-        std::byte *result = allocate_from_arena(*static_cast<fixed_buffer_arena_t *>(ctx), size + sizeof(alc_size_t));
+        std::byte *result = allocate_from_arena(*static_cast<limited_arena_t *>(ctx), size + sizeof(alc_size_t));
         if (!result) return nullptr;
         std::memcpy(result, &size, sizeof(alc_size_t));
         return (void *)(result + sizeof(alc_size_t));
@@ -2882,6 +2886,7 @@ static void json_yyjson(bm::State &state) {
     // Repeat the checks many times
     std::size_t bytes_processed = 0;
     std::size_t peak_memory_usage = 0;
+    std::size_t peak_memory_calls = 0;
     std::size_t iteration = 0;
     for (auto _ : state) {
 
@@ -2896,16 +2901,19 @@ static void json_yyjson(bm::State &state) {
             YYJSON_READ_NOFLAG, use_arena ? &alc : NULL, &error);
         if (!error.code) bm::DoNotOptimize(contains_xss_in_yyjson(yyjson_doc_get_root(doc)));
         peak_memory_usage = std::max(peak_memory_usage, arena.total_allocated);
+        peak_memory_calls = std::max(peak_memory_calls, arena.unique_allocations);
         yyjson_doc_free(doc);
     }
     state.SetBytesProcessed(bytes_processed);
     state.counters["peak_memory_usage"] = bm::Counter(peak_memory_usage, bm::Counter::kAvgThreads);
+    state.counters["mean_allocation_size"] =
+        bm::Counter(peak_memory_usage * 1.0 / peak_memory_calls, bm::Counter::kAvgThreads);
 }
 
 BENCHMARK(json_yyjson<false>)->MinTime(10)->Name("json_yyjson<malloc>");
-BENCHMARK(json_yyjson<true>)->MinTime(10)->Name("json_yyjson<fixed_buffer>");
+BENCHMARK(json_yyjson<true>)->MinTime(10)->Name("json_yyjson<limited_arena>");
 BENCHMARK(json_yyjson<false>)->MinTime(10)->Name("json_yyjson<malloc>")->Threads(physical_cores());
-BENCHMARK(json_yyjson<true>)->MinTime(10)->Name("json_yyjson<fixed_buffer>")->Threads(physical_cores());
+BENCHMARK(json_yyjson<true>)->MinTime(10)->Name("json_yyjson<limited_arena>")->Threads(physical_cores());
 
 /**
  *  The `nlohmann::json` library is designed to be simple and easy to use, but it's
@@ -2947,7 +2955,7 @@ using json_with_alloc = nlohmann::basic_json<               //
 
 /**
  *  The `allocate_from_arena` and `deallocate_from_arena` are fairly elegant and simple.
- *  But we have no way of supplying our `fixed_buffer_arena_t` instance to the `nlohmann::json`
+ *  But we have no way of supplying our `limited_arena_t` instance to the `nlohmann::json`
  *  library and it has no mechanism internally to propagate the allocator state to the nested
  *  containers:
  *
@@ -2965,35 +2973,35 @@ using json_with_alloc = nlohmann::basic_json<               //
  *  which is an immediate @b code-smell, while with `yyjson` we can pass a context object down!
  */
 
-thread_local fixed_buffer_arena_t local_arena;
+thread_local limited_arena_t limited_arena;
 
 template <typename value_type_>
-struct fixed_buffer_allocator {
+struct limited_allocator {
     using value_type = value_type_;
 
-    fixed_buffer_allocator() noexcept = default;
+    limited_allocator() noexcept = default;
 
     template <typename other_type_>
-    fixed_buffer_allocator(fixed_buffer_allocator<other_type_> const &) noexcept {}
+    limited_allocator(limited_allocator<other_type_> const &) noexcept {}
 
     value_type *allocate(std::size_t n) noexcept(false) {
-        if (auto ptr = allocate_from_arena(local_arena, n * sizeof(value_type)); ptr)
+        if (auto ptr = allocate_from_arena(limited_arena, n * sizeof(value_type)); ptr)
             return reinterpret_cast<value_type *>(ptr);
         else
             throw std::bad_alloc();
     }
 
     void deallocate(value_type *ptr, std::size_t n) noexcept {
-        deallocate_from_arena(local_arena, reinterpret_cast<std::byte *>(ptr), n * sizeof(value_type));
+        deallocate_from_arena(limited_arena, reinterpret_cast<std::byte *>(ptr), n * sizeof(value_type));
     }
 
     // Rebind mechanism and comparators are for compatibility with STL containers
     template <typename other_type_>
     struct rebind {
-        using other = fixed_buffer_allocator<other_type_>;
+        using other = limited_allocator<other_type_>;
     };
-    bool operator==(fixed_buffer_allocator const &) const noexcept { return true; }
-    bool operator!=(fixed_buffer_allocator const &) const noexcept { return false; }
+    bool operator==(limited_allocator const &) const noexcept { return true; }
+    bool operator!=(limited_allocator const &) const noexcept { return false; }
 };
 
 template <typename json_type_>
@@ -3017,7 +3025,7 @@ bool contains_xss_nlohmann(json_type_ const &j) noexcept {
 }
 
 using default_json = json_with_alloc<std::allocator>;
-using fixed_buffer_json = json_with_alloc<fixed_buffer_allocator>;
+using fixed_buffer_json = json_with_alloc<limited_allocator>;
 
 enum class exception_handling_t { throw_k, noexcept_k };
 
@@ -3025,6 +3033,7 @@ template <typename json_type_, exception_handling_t exception_handling_>
 static void json_nlohmann(bm::State &state) {
     std::size_t bytes_processed = 0;
     std::size_t peak_memory_usage = 0;
+    std::size_t peak_memory_calls = 0;
     std::size_t iteration = 0;
     for (auto _ : state) {
 
@@ -3051,11 +3060,15 @@ static void json_nlohmann(bm::State &state) {
             json = json_type_::parse(packet_json, nullptr, false);
             if (!json.is_discarded()) bm::DoNotOptimize(contains_xss_nlohmann(json));
         }
-        if constexpr (!std::is_same_v<json_type_, default_json>)
-            peak_memory_usage = std::max(peak_memory_usage, local_arena.total_allocated);
+        if constexpr (!std::is_same_v<json_type_, default_json>) {
+            peak_memory_usage = std::max(peak_memory_usage, limited_arena.total_allocated);
+            peak_memory_calls = std::max(peak_memory_calls, limited_arena.unique_allocations);
+        }
     }
     state.SetBytesProcessed(bytes_processed);
     state.counters["peak_memory_usage"] = bm::Counter(peak_memory_usage, bm::Counter::kAvgThreads);
+    state.counters["mean_allocation_size"] =
+        bm::Counter(peak_memory_usage * 1.0 / peak_memory_calls, bm::Counter::kAvgThreads);
 }
 
 BENCHMARK(json_nlohmann<default_json, exception_handling_t::throw_k>)
@@ -3063,20 +3076,20 @@ BENCHMARK(json_nlohmann<default_json, exception_handling_t::throw_k>)
     ->Name("json_nlohmann<std::allocator, throw>");
 BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::throw_k>)
     ->MinTime(10)
-    ->Name("json_nlohmann<fixed_buffer, throw>");
+    ->Name("json_nlohmann<limited_arena, throw>");
 BENCHMARK(json_nlohmann<default_json, exception_handling_t::noexcept_k>)
     ->MinTime(10)
     ->Name("json_nlohmann<std::allocator, noexcept>");
 BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::noexcept_k>)
     ->MinTime(10)
-    ->Name("json_nlohmann<fixed_buffer, noexcept>");
+    ->Name("json_nlohmann<limited_arena, noexcept>");
 BENCHMARK(json_nlohmann<default_json, exception_handling_t::throw_k>)
     ->MinTime(10)
     ->Name("json_nlohmann<std::allocator, throw>")
     ->Threads(physical_cores());
 BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::throw_k>)
     ->MinTime(10)
-    ->Name("json_nlohmann<fixed_buffer, throw>")
+    ->Name("json_nlohmann<limited_arena, throw>")
     ->Threads(physical_cores());
 BENCHMARK(json_nlohmann<default_json, exception_handling_t::noexcept_k>)
     ->MinTime(10)
@@ -3084,7 +3097,7 @@ BENCHMARK(json_nlohmann<default_json, exception_handling_t::noexcept_k>)
     ->Threads(physical_cores());
 BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::noexcept_k>)
     ->MinTime(10)
-    ->Name("json_nlohmann<fixed_buffer, noexcept>")
+    ->Name("json_nlohmann<limited_arena, noexcept>")
     ->Threads(physical_cores());
 
 /**
@@ -3093,11 +3106,11 @@ BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::noexcept_k>)
  *  cores, are as follows:
  *
  *  - `json_yyjson<malloc>`:                       @b 359 ns       @b 369 ns
- *  - `json_yyjson<fixed_buffer>`:                 @b 326 ns       @b 326 ns
+ *  - `json_yyjson<limited_arena>`:                @b 326 ns       @b 326 ns
  *  - `json_nlohmann<std::allocator, throw>`:      @b 6'440 ns     @b 11'821 ns
- *  - `json_nlohmann<fixed_buffer, throw>`:        @b 6'041 ns     @b 11'601 ns
+ *  - `json_nlohmann<limited_arena, throw>`:       @b 6'041 ns     @b 11'601 ns
  *  - `json_nlohmann<std::allocator, noexcept>`:   @b 4'741 ns     @b 11'512 ns
- *  - `json_nlohmann<fixed_buffer, noexcept>`:     @b 4'316 ns     @b 12'209 ns
+ *  - `json_nlohmann<limited_arena, noexcept>`:    @b 4'316 ns     @b 12'209 ns
  *
  *  The reason, why `yyjson` numbers are less affected by the allocator change,
  *  is because it doesn't need many dynamic allocations. It manages a linked list
