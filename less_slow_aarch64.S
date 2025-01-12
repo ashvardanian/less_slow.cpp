@@ -11,6 +11,7 @@
     .global tops_f16_neon_asm_kernel
     .global tops_bf16_neon_asm_kernel
     .global tops_i8_neon_asm_kernel
+    .global tops_u8_neon_asm_kernel
 
 # ----------------------------------------------------------------------------
 # Simple function that adds two 32-bit integers. 
@@ -107,7 +108,7 @@ tops_bf16_neon_asm_kernel:
 
 # ----------------------------------------------------------------------------
 # i8 micro-kernel:
-# Requires Armv8.4 sdot or i8mm extension,
+# Requires Armv8.4 sdot or i8mm extension.
 # sdot vD.4s, vN.16b, vM.16b => 16 multiplies + 16 adds = 32 FLOPs.
 # We'll do 10 instructions => 320 FLOPs total, returning 320 in W0.
 # ----------------------------------------------------------------------------
@@ -122,6 +123,29 @@ tops_i8_neon_asm_kernel:
     sdot    v21.4s, v22.16b, v23.16b
     sdot    v24.4s, v25.16b, v26.16b
     sdot    v27.4s, v28.16b, v29.16b
+
+    mov     w0, #320
+    ret
+
+    .global tops_u8_neon_asm_kernel
+
+# ----------------------------------------------------------------------------
+# u8 micro-kernel:
+# Requires Armv8.4 i8mm extension.
+# udot vD.4s, vN.16b, vM.16b => 16 multiplies + 16 adds = 32 FLOPs.
+# We'll do 10 instructions => 320 FLOPs total, returning 320 in W0.
+# ----------------------------------------------------------------------------
+tops_u8_neon_asm_kernel:
+    udot    v0.4s,  v1.16b,  v2.16b
+    udot    v3.4s,  v4.16b,  v5.16b
+    udot    v6.4s,  v7.16b,  v8.16b
+    udot    v9.4s,  v10.16b, v11.16b
+    udot    v12.4s, v13.16b, v14.16b
+    udot    v15.4s, v16.16b, v17.16b
+    udot    v18.4s, v19.16b, v20.16b
+    udot    v21.4s, v22.16b, v23.16b
+    udot    v24.4s, v25.16b, v26.16b
+    udot    v27.4s, v28.16b, v29.16b
 
     mov     w0, #320
     ret
