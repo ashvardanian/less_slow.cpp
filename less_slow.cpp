@@ -1359,21 +1359,57 @@ static void measure_tops(bm::State &state, theoretic_tops_kernel_t theoretic_top
  *  Assuming we are not aiming for dynamic dispatch, we can simply check for
  *  the available features at compile time with more preprocessing directives:
  *
+ *  To list all available macros for x86, take a recent compiler, like GCC, and run:
+ *       gcc -march=sapphirerapids -dM -E - < /dev/null | egrep "SSE|AVX" | sort
+ *  On Arm machines you may want to check for other flags:
+ *       gcc -march=native -dM -E - < /dev/null | egrep "NEON|SVE|FP16|FMA" | sort
+ *
  *  @see Arm Feature Detection: https://developer.arm.com/documentation/101028/0010/Feature-test-macros
  */
 #if defined(__AVX512F__)
-
+extern "C" std::uint32_t tops_f64_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
 extern "C" std::uint32_t tops_f32_avx512_asm_kernel(void);
 BENCHMARK_CAPTURE(measure_tops, tops_f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10);
 BENCHMARK_CAPTURE(measure_tops, tops_f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
-
 #endif // defined(__AVX512F__)
 
-#if defined(__ARM_NEON)
+#if defined(__AVX512FP16__)
+extern "C" std::uint32_t tops_f16_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512FP16__)
 
+#if defined(__AVX512BF16__)
+extern "C" std::uint32_t tops_bf16_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512BF16__)
+
+#if defined(__AVX512VNNI__)
+extern "C" std::uint32_t tops_i16_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_i8_avx512, tops_i16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_i8_avx512, tops_i16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_u8i8_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512VNNI__)
+
+#if defined(__AVX2__)
+extern "C" std::uint32_t tops_f64_avx2_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_f32_avx2_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX2__)
+
+#if defined(__ARM_NEON)
 extern "C" std::uint32_t tops_f32_neon_asm_kernel(void);
 BENCHMARK_CAPTURE(measure_tops, tops_f32_neon, tops_f32_neon_asm_kernel)->MinTime(10);
 BENCHMARK_CAPTURE(measure_tops, tops_f32_neon, tops_f32_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_NEON)
 
 #if defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
 extern "C" std::uint32_t tops_f16_neon_asm_kernel(void);
@@ -1391,9 +1427,10 @@ BENCHMARK_CAPTURE(measure_tops, tops_bf16_neon, tops_bf16_neon_asm_kernel)->MinT
 extern "C" std::uint32_t tops_i8_neon_asm_kernel(void);
 BENCHMARK_CAPTURE(measure_tops, tops_i8_neon, tops_i8_neon_asm_kernel)->MinTime(10);
 BENCHMARK_CAPTURE(measure_tops, tops_i8_neon, tops_i8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_u8_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_u8_neon, tops_u8_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_u8_neon, tops_u8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__ARM_FEATURE_DOTPROD)
-
-#endif // defined(__ARM_NEON)
 
 #pragma endregion // Compute vs Memory Bounds with Matrix Multiplications
 
