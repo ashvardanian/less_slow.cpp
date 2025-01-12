@@ -25,7 +25,7 @@ Some of the highlights include:
 - __Scaling to many cores?__ Learn how to use OpenMP, Intel's oneTBB, or your custom thread pool.
 - __How to handle JSON avoiding memory allocations?__ Is it easier with C or C++ libraries?
 - __How to properly use associative containers__ with custom keys and transparent comparators?
-- __How to beat a hand-written parser__ with compile-time RegEx engines?
+- __How to beat a hand-written parser__ with `consteval` RegEx engines?
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
 Follow the instructions below to run the code in your environment and compare it to the comments as you read through the source.
@@ -86,3 +86,16 @@ Alternatively, use the Linux `perf` tool for performance counter collection:
 ```sh
 sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF build_release/less_slow --benchmark_enable_random_interleaving=true --benchmark_filter=super_sort
 ```
+
+## Memes and References
+
+Educational content without memes?!
+Come on!
+
+<table>
+  <tr>
+    <td><img src="https://github.com/ashvardanian/ashvardanian/blob/master/memes/ieee764-vs-gnu-compiler.jpg?raw=true" alt="IEEE 754 vs GNU Compiler"></td>
+    <td><img src="https://github.com/ashvardanian/ashvardanian/blob/master/memes/no-easter-bunny-no-free-abstractions.jpg?raw=true" alt="No Easter Bunny, No Free Abstractions"></td>
+  </tr>
+</table>
+
