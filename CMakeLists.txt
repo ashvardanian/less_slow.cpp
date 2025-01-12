@@ -4,7 +4,13 @@ cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 # ------------------------------------------------------------------------------
 # Project Setup
 # ------------------------------------------------------------------------------
-project(less_slow LANGUAGES CXX)
+project(less_slow
+  VERSION 0.1.0
+  LANGUAGES C CXX
+  DESCRIPTION "Learning how to write Less Slow code, from numerical micro-kernels and SIMD to coroutines, ranges, and polymorphic state machines"
+  HOMEPAGE_URL "https://github.com/ashvardanian/less_slow.cpp")
+
+set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_CXX_EXTENSIONS NO)
