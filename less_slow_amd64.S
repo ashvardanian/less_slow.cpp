@@ -6,7 +6,7 @@
 
     .section .text
     .global i32_add_asm_kernel
-    .global f32_matmul_avx512_flops_asm_kernel
+    .global tops_f32_avx512_asm_kernel
 
 # ----------------------------------------------------------------------------
 # Simple function that adds two 32-bit signed integers using System V AMD64.
@@ -21,7 +21,7 @@ i32_add_asm_kernel:
 # AVX-512 micro-kernel maximizing FLOPs across all ZMM registers.
 # ----------------------------------------------------------------------------
 
-f32_matmul_avx512_flops_asm_kernel:
+tops_f32_avx512_asm_kernel:
     #
     # Each vfmadd231ps does: DEST = DEST + (SRC1 * SRC2)
     # That is 16 multiplies + 16 adds = 32 FLOPs per instruction.

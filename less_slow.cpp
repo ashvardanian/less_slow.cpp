@@ -1343,37 +1343,57 @@ BENCHMARK(f32x4x4_matmul_avx512);
  *  means the performance will still degrade—@b around 5ns in practice.
  *
  *  Benchmark everything! Don't assume less work translates to faster execution.
+ *  Read the specs of your hardware to understand it's theoretical upper limits,
+ *  and double-check them with stress-tests. Pure @b Assembly is perfect for this!
  */
 
-#if defined(__AVX512F__)
+typedef std::uint32_t (*theoretic_tops_kernel_t)(void);
 
-extern "C" std::uint32_t f32_matmul_avx512_flops_asm_kernel(void);
-
-static void f32_matmul_avx512_flops(bm::State &state) {
-    std::size_t flops = 0;
-    for (auto _ : state) bm::DoNotOptimize(flops += f32_matmul_avx512_flops_asm_kernel());
-    state.SetItemsProcessed(flops);
+static void measure_tops(bm::State &state, theoretic_tops_kernel_t theoretic_tops_kernel) {
+    std::size_t tops = 0;
+    for (auto _ : state) bm::DoNotOptimize(tops += theoretic_tops_kernel());
+    state.SetItemsProcessed(tops);
 }
 
-BENCHMARK(f32_matmul_avx512_flops)->MinTime(10);
-BENCHMARK(f32_matmul_avx512_flops)->MinTime(10)->Threads(physical_cores());
+/**
+ *  Assuming we are not aiming for dynamic dispatch, we can simply check for
+ *  the available features at compile time with more preprocessing directives:
+ *
+ *  @see Arm Feature Detection: https://developer.arm.com/documentation/101028/0010/Feature-test-macros
+ */
+#if defined(__AVX512F__)
+
+extern "C" std::uint32_t tops_f32_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
 
 #endif // defined(__AVX512F__)
 
 #if defined(__ARM_NEON)
 
-extern "C" std::uint32_t f32_matmul_neon_flops_asm_kernel(void);
+extern "C" std::uint32_t tops_f32_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_f32_neon, tops_f32_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_f32_neon, tops_f32_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 
-static void f32_matmul_neon_flops(benchmark::State &state) {
-    std::size_t flops = 0;
-    for (auto _ : state) bm::DoNotOptimize(flops += f32_matmul_neon_flops_asm_kernel());
-    state.SetItemsProcessed(flops);
-}
+#if defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+extern "C" std::uint32_t tops_f16_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_f16_neon, tops_f16_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_f16_neon, tops_f16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
 
-BENCHMARK(f32_matmul_neon_flops)->MinTime(10);
-BENCHMARK(f32_matmul_neon_flops)->MinTime(10)->Threads(physical_cores());
+#if defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
+extern "C" std::uint32_t tops_bf16_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
 
-#endif
+#if defined(__ARM_FEATURE_DOTPROD)
+extern "C" std::uint32_t tops_i8_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(measure_tops, tops_i8_neon, tops_i8_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(measure_tops, tops_i8_neon, tops_i8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_FEATURE_DOTPROD)
+
+#endif // defined(__ARM_NEON)
 
 #pragma endregion // Compute vs Memory Bounds with Matrix Multiplications
 
