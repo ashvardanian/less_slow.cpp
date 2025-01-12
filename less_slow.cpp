@@ -2590,7 +2590,11 @@ BENCHMARK_CAPTURE(parse_regex, long_, long_config_text)->MinTime(2);
  */
 #include <ctre.hpp>
 
+#if defined(__cpp_consteval)
 consteval auto regex_for_config_ctre() { return ctre::multiline_search_all<R"(^\s*([^#:\s]+)\s*:\s*([^#:\s]+)\s*?$)">; }
+#else
+constexpr auto regex_for_config_ctre() { return ctre::multiline_search_all<R"(^\s*([^#:\s]+)\s*:\s*([^#:\s]+)\s*?$)">; }
+#endif
 
 void config_parse_ctre(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
     // ! CTRE isn't currently handling the `$` anchor correctly.
