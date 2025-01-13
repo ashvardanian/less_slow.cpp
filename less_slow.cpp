@@ -3908,7 +3908,15 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  */
 #pragma region ASIO
 
+#include <asio.hpp>
+
 #pragma endregion // ASIO
+
+#pragma region IO Uring
+
+#include <liburing.h> // `liburing`
+
+#pragma endregion // IO Uring
 
 #pragma endregion // - Networking and Databases
 

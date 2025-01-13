@@ -59,6 +59,8 @@ The build will pull and compile several third-party dependencies from the source
 - Yaoyuan Guo's [yyjson](https://github.com/ibireme/yyjson) for faster JSON processing.
 - Google's [Abseil](https://github.com/abseil/abseil-cpp) replaces STL's associative containers.
 - Lewis Baker's [cppcoro](https://github.com/lewissbaker/cppcoro) implements C++20 coroutines.
+- Jens Axboe's [liburing](https://github.com/axboe/liburing) to simplify Linux kernel-bypass.
+- Chris Kohlhoff's [ASIO](https://github.com/chriskohlhoff/asio) as a [networking TS](https://en.cppreference.com/w/cpp/experimental/networking) extension.
 
 To control the output or run specific benchmarks, use the following flags:
 

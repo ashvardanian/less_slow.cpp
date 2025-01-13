@@ -34,7 +34,8 @@ find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED)
 
 set(FETCHCONTENT_QUIET OFF)
-include(FetchContent)
+include(FetchContent) # For CMake-friendly dependencies
+include(ExternalProject) # If the dependency is not CMake-friendly
 
 # GTest (required by Google Benchmark)
 FetchContent_Declare(
@@ -79,7 +80,7 @@ FetchContent_Declare(
   GIT_TAG master
 )
 
-# Suppress TBB’s own tests:
+# Suppress TBB's own tests:
 set(TBB_TEST OFF CACHE BOOL "Do not build TBB tests" FORCE)
 FetchContent_MakeAvailable(IntelTBB)
 
@@ -159,13 +160,54 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(NielsLohmannJSON)
 
-# Yaoyuan Guo YYJSON for more flexible & performant C-style parsing
+# Yaoyuan Guo's YYJSON for more flexible & performant C-style parsing
 FetchContent_Declare(
   YaoyuanGuoYYJSON
   GIT_REPOSITORY https://github.com/ibireme/yyjson.git
   GIT_TAG 0.10.0
 )
 FetchContent_MakeAvailable(YaoyuanGuoYYJSON)
+
+# Chris Kohlhoff's ASIO standalone, avoiding Boost... integration is a bit tricky:
+# https://github.com/cpm-cmake/CPM.cmake/blob/master/examples/asio-standalone/CMakeLists.txt
+FetchContent_Declare(
+  ChrisKohlhoffASIO
+  GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+  GIT_TAG master
+)
+FetchContent_MakeAvailable(ChrisKohlhoffASIO)
+add_library(asio INTERFACE)
+target_include_directories(asio SYSTEM INTERFACE ${chriskohlhoffasio_SOURCE_DIR}/asio/include)
+target_compile_definitions(asio INTERFACE ASIO_STANDALONE ASIO_NO_DEPRECATED)
+
+# Jens Axboe's liburing to simplify I/O operations on Linux
+# https://github.com/axboe/liburing/pull/438
+# https://github.com/axboe/liburing/issues/946
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(LIBURING_DIR ${CMAKE_BINARY_DIR}/_deps/jensaxboeliburing)
+  ExternalProject_Add(
+      JensAxboeLibUring
+      GIT_REPOSITORY https://github.com/axboe/liburing.git
+      GIT_TAG liburing-2.8
+      GIT_SHALLOW 1
+      PREFIX ${CMAKE_BINARY_DIR}/_deps/
+      SOURCE_DIR ${LIBURING_DIR}
+      CONFIGURE_COMMAND echo Configuring LibUring && cd ${LIBURING_DIR} && ./configure --nolibc --cc=${CMAKE_C_COMPILER} --cxx=${CMAKE_CXX_COMPILER};
+      BUILD_COMMAND cd ${LIBURING_DIR} && make;
+      INSTALL_COMMAND ""
+      UPDATE_COMMAND ""
+  )
+  add_library(liburing_internal STATIC IMPORTED GLOBAL)
+  add_dependencies(liburing_internal JensAxboeLibUring)
+  set_property(TARGET liburing_internal
+      PROPERTY IMPORTED_LOCATION
+      ${LIBURING_DIR}/src/liburing.a
+  )
+  set_property(TARGET liburing_internal
+    PROPERTY INTERFACE_INCLUDE_DIRECTORIES
+    ${LIBURING_DIR}/src/include
+  )
+endif()
 
 # ------------------------------------------------------------------------------
 # Main Executable
@@ -219,6 +261,7 @@ target_link_libraries(less_slow
     range-v3
     cppcoro
     unifex
+    asio
     stringzilla
     yyjson
     ctre
@@ -226,6 +269,10 @@ target_link_libraries(less_slow
     # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
     absl::flat_hash_map
     nlohmann_json::nlohmann_json
-    $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:TBB::tbb>
-    $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:OpenMP::OpenMP_CXX>
 )
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_libraries(less_slow PRIVATE TBB::tbb)
+  target_link_libraries(less_slow PRIVATE OpenMP::OpenMP_CXX)
+  target_link_libraries(less_slow PRIVATE liburing_internal)
+endif()
