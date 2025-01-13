@@ -2881,7 +2881,7 @@ yyjson_alc yyjson_wrap_arena_prepend(arena_t &arena) noexcept {
 
 /**
  *  There is also an even cooler way to allocate memory! @b Pointer-tagging! 🏷️
- *  64-bit address space is a lie! Most systems only use 48 bits for addresses,
+ *  64-bit address space is a lie! Many systems only use 48 bits for addresses,
  *  some even less. So, we can use the remaining bits to store metadata about
  *  the allocated block, like its size, or the arena it came from.
  *
@@ -2893,22 +2893,31 @@ yyjson_alc yyjson_wrap_arena_prepend(arena_t &arena) noexcept {
  *          Byte Order:             Little Endian
  *
  *  48-bit virtual addressing allows mapping up to @b 256-TiB of virtual space,
- *  leaving 16 bits for metadata. On Armv8-A there is a Top Byte Ignore @b (TBI)
- *  mode, that frees 8 bits for such metadata, but it may not be enough for our
- *  current use-case.
+ *  leaving 16 bits for metadata. But there is a catch! On every OS and CPU vendor,
+ *  the mechanic is different. On Intel-based Linux systems, for example, the
+ *  feature is called "Linear Address Masking" or @b LAM for short. It has 2 modes:
  *
- *  There is a catch! On every OS and CPU vendor, the mechanic is different.
- *  On Intel-based Linux systems, for example, the feature is called "Linear Address
- *  Masking" or @b LAM for short. It can be configured in 2 modes
- *
- *  - LAM_U57: 57-bit linear addresses, 7 bits for metadata
- *  - LAM_U48: 48-bit linear addresses, 16 bits for metadata
+ *  - LAM_U57: 57-bit addresses with a 5-level TLB, 7 bits for metadata in @b [57:62]
+ *  - LAM_U48: 48-bit addresses with a 4-level TLB, 15 bits for metadata in @b [48:62]
  *
  *  The Linux kernel itself has to be compiled with LAM support, and the feature must
- *  also be enabled for the current running process.
+ *  also be enabled for the current running process. The bit #63 can't be touched!
+ *  Nightmare, and it doesn't get better 😱
+ *
+ *  On AMD, a similar feature is called "Upper Address Ignore" @b (UAI) and exposes
+ *  7 bits for metadata @b [57:62].
+ *
+ *  On Armv8-A there is a Top Byte Ignore @b (TBI) mode, that frees 8 bits for such
+ *  metadata, and on Armv8.5-A there is a Memory Tagging Extension @b (MTE) that
+ *  allows software to access a 4-bit allocation tag in bits @b [56:59], the lower
+ *  nibble of the top byte of the address.
  *
  *  @see "Support for Intel's Linear Address Masking" on Linux Weekly News:
  *       https://lwn.net/Articles/902094/
+ *  @see "AMD Posts New Linux Code For Zen 4's UAI Feature" on Phoronix:
+ *       https://www.phoronix.com/news/AMD-Linux-UAI-Zen-4-Tagging
+ *  @see "Memory Tagging Extension (MTE) in AArch64 Linux" in the Kernel docs:
+ *       https://docs.kernel.org/6.5/arch/arm64/memory-tagging-extension.html
  */
 
 #if defined(__x86_64__) && defined(__linux__)
