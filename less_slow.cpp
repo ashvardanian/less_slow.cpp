@@ -3908,7 +3908,105 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  */
 #pragma region ASIO
 
+#include <array>
 #include <asio.hpp>
+#include <atomic>
+
+// Configuration constants
+constexpr std::uint16_t udp_server_port_k = 12345;
+constexpr std::size_t udp_packet_size_k = 1024;
+constexpr auto udp_server_address_k = "127.0.0.1";
+
+class echo_asio_server {
+    asio::io_context &io_context_;
+    asio::ip::udp::socket socket_;
+    std::array<char, udp_packet_size_k> buffer_;
+    std::atomic<bool> running_ {true};
+
+  public:
+    explicit echo_asio_server(asio::io_context &io_context)
+        : io_context_(io_context),
+          socket_(io_context_, asio::ip::udp::endpoint(asio::ip::udp::v4(), udp_server_port_k)) {}
+
+    void stop() { running_ = false; }
+
+    void handle_one() {
+        asio::ip::udp::endpoint remote_endpoint;
+        std::error_code ec;
+
+        // Wait for one packet and echo it back
+        std::size_t bytes = socket_.receive_from(asio::buffer(buffer_), remote_endpoint, 0, ec);
+        if (!ec && bytes > 0) socket_.send_to(asio::buffer(buffer_, bytes), remote_endpoint, 0, ec);
+    }
+
+    void operator()() {
+        while (running_) {
+            try {
+                handle_one();
+            }
+            catch (...) {
+                break;
+            }
+        }
+    }
+};
+
+class echo_asio_client {
+    asio::io_context &io_context_;
+    asio::ip::udp::socket socket_;
+    asio::ip::udp::endpoint server_endpoint_;
+    std::array<char, udp_packet_size_k> buffer_;
+
+  public:
+    explicit echo_asio_client(asio::io_context &io_context)
+        : io_context_(io_context), socket_(io_context_, asio::ip::udp::endpoint(asio::ip::udp::v4(), 0)),
+          server_endpoint_(asio::ip::make_address(udp_server_address_k), udp_server_port_k) {
+
+        // Fill send buffer with some pattern
+        std::fill(buffer_.begin(), buffer_.end(), 'X');
+    }
+
+    bool operator()() {
+        std::error_code ec;
+
+        // Send data
+        socket_.send_to(asio::buffer(buffer_), server_endpoint_, 0, ec);
+        if (ec) return false;
+
+        // Wait for echo
+        asio::ip::udp::endpoint sender_endpoint;
+        std::size_t len = socket_.receive_from(asio::buffer(buffer_), sender_endpoint, 0, ec);
+        return !ec && len == udp_packet_size_k;
+    }
+};
+
+static void echo_asio(benchmark::State &state) {
+    // Create server and client
+    asio::io_context server_context;
+    asio::io_context client_context;
+    echo_asio_server server(server_context);
+    echo_asio_client client(client_context);
+
+    // Wait until server is ready
+    std::thread server_thread(std::ref(server));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Benchmark the round-trip time
+    for (auto _ : state) {
+        if (!client()) {
+            state.SkipWithError("Communication failed");
+            break;
+        }
+    }
+
+    // Cleanup
+    server.stop();
+    client_context.stop();
+    server_context.stop();
+    server_thread.join();
+}
+
+BENCHMARK(echo_asio)->MinTime(2)->UseRealTime();
 
 #pragma endregion // ASIO
 
