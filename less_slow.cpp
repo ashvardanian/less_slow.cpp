@@ -3905,108 +3905,243 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  *  There are legends about the complexity of dependency management in C++.
  *  It often prohibits developers from designing larger systems in C++, as
  *  the Web, for example, requires a lot of dependencies.
+ *
+ *  Let's demystify the process by building an echo server and client,
+ *  starting them within the same process and measuring the round-trip time.
+ *  This will teach us about the overhead of user-space vs kernel-space IO,
+ *  and the network stack in general. To benchmark both the latency and
+ *  throughput, we should process packets @b Out-Of-Order, keeping a reusable
+ *  buffer for incoming and outgoing packets. Keeping
+ *
+ *  Hopefully, it will also show, how ugly can state-management get in
+ *  Systems Design, and that reverting to abstraction-less C can often be a
+ *  better choice.
+ *
+ *  The naive approach would be to take the TCP/IP stack use LibC's native
+ *  @b `socket/bind/listen/accept/connect/send/recv` functions, just like
+ *  90% of the industry does. That solution is so bad, I don't know where
+ *  to start.
+ *
+ *  As you can see in the above examples, the common theme of this repo is
+ *  not relying on general purpose solutions and not pushing the problem
+ *  somewhere else out of laziness. Like, when you know your memory allocation
+ *  pattern, you shouldn't just expect the general purpose system-level allocator
+ *  to be better than your custom one. If you know how your code scales across
+ *  CPU cores, don't just spawn a million threads hoping the OS scheduler will
+ *  do a better job than yours. As we get to higher-level Systems, like
+ *  networking, it's expected that we will have to deal with the same problems.
+ *
+ *  LibC manages memory for you to grow and shrink buffers for incoming and
+ *  outgoing packets. It then introduces [operating] @b system-calls that can take
+ *  arbitrary time to complete. Until then, your thread is blocked, and you can't
+ *  do anything else. You'd pay for at least 2 context switches per packet,
+ *  one to the kernel and one back to the user-space.
+ *
+ *  @b ASIO is the default way C++ developers do networking. It comes in @b three
+ *  flavors, no less: standalone, @b Boost.Asio and the @b NetworkingTS for the
+ *  future STL releases. It's slightly better, than using LibC, but we will see
+ *  that there is an even better way with @b io_uring and @b DPDK.
+ *
+ *  If we drop the TCP stack, we need to track Out-Of-Order execution ourselves.
+ *  If some UDP packets are lost, we need to be able to continue the benchmark.
+ *  When the UDP packets are received, we need to track the time they took to
+ *  complete the round trip. A truly efficient design will be overly complicated
+ *  for a tutorial, but if we amortize the cost of logic with @b batching, we can
+ *  get a good-enough solution.
+ *
+ *  For something more serious, check out Unum's UCall 😉
+ *
+ *  @see Most recent ASIO docs: https://think-async.com/Asio/asio-1.30.2/doc/asio/overview.html
+ *  @see "User Datagram Protocol" on Wikipedia: https://en.wikipedia.org/wiki/User_Datagram_Protocol
+ *  @see "Asio 201 - timeouts, cancellation & custom tokens" by Klemens Morgenstern:
+ *       https://cppalliance.org/asio/2023/01/02/Asio201Timeouts.html
  */
 #pragma region ASIO
 
-#include <array>
-#include <asio.hpp>
-#include <atomic>
+#include <array>  // `std::array` for packet buffers
+#include <atomic> // `std::atomic_bool` for stopping the server
 
-// Configuration constants
-constexpr std::uint16_t udp_server_port_k = 12345;
-constexpr std::size_t udp_packet_size_k = 1024;
-constexpr auto udp_server_address_k = "127.0.0.1";
+#include <asio.hpp>
+
+/**
+ *  The User Datagram Protocol (UDP) is OSI Layer 4 "Transport protocol", and
+ *  should be able to operate on top of any OSI Layer 3 "Network protocol".
+ *
+ *  In most cases, it operates on top of the Internet Protocol (IP), which can
+ *  have Maximum Transmission Unit (MTU) ranging 20 for IPv4 and 40 for IPv6
+ *  to 65535 bytes. In our case, however, the OSI Layer 2 "Data Link Layer" is
+ *  likely to be Ethernet, which has a MTU of 1500 bytes, but most routers are
+ *  configured to fragment packets larger than 1460 bytes. Hence, our choice!
+ */
+constexpr std::size_t echo_mtu_k = 1460;
+using echo_buffer_t = std::array<char, echo_mtu_k>;
+
+struct echo_batch_result {
+    std::size_t sent_count = 0;
+    std::size_t received_count = 0;
+    std::chrono::nanoseconds total_latency = std::chrono::nanoseconds::zero();
+    std::chrono::nanoseconds max_latency = std::chrono::nanoseconds::zero();
+
+    echo_batch_result &operator+=(echo_batch_result const &other) {
+        sent_count += other.sent_count;
+        received_count += other.received_count;
+        total_latency += other.total_latency;
+        max_latency = std::max(max_latency, other.max_latency);
+        return *this;
+    }
+};
 
 class echo_asio_server {
-    asio::io_context &io_context_;
+
+    asio::io_context &context_;
     asio::ip::udp::socket socket_;
-    std::array<char, udp_packet_size_k> buffer_;
-    std::atomic<bool> running_ {true};
+
+    /// @brief Buffers, one per concurrent request
+    std::vector<echo_buffer_t> buffers_;
+    /// @brief Where did the packets come from
+    std::vector<asio::ip::udp::endpoint> clients_;
+    /// @brief Flag to stop the server without corrupting the state
+    std::atomic_bool should_stop_;
+    /// @brief Maximum time for this entire batch
+    std::chrono::microseconds max_cycle_duration_;
+
+    std::size_t failed_receptions_ = 0;
+    std::size_t failed_responses_ = 0;
 
   public:
-    explicit echo_asio_server(asio::io_context &io_context)
-        : io_context_(io_context),
-          socket_(io_context_, asio::ip::udp::endpoint(asio::ip::udp::v4(), udp_server_port_k)) {}
+    echo_asio_server(                                                          //
+        asio::io_context &ctx, std::string const &address, std::uint16_t port, //
+        std::size_t max_concurrency_level, std::chrono::microseconds max_cycle_duration)
+        : context_(ctx), socket_(context_, asio::ip::udp::endpoint(asio::ip::make_address(address), port)),
+          buffers_(max_concurrency_level), max_cycle_duration_(max_cycle_duration) {}
 
-    void stop() { running_ = false; }
-
-    void handle_one() {
-        asio::ip::udp::endpoint remote_endpoint;
-        std::error_code ec;
-
-        // Wait for one packet and echo it back
-        std::size_t bytes = socket_.receive_from(asio::buffer(buffer_), remote_endpoint, 0, ec);
-        if (!ec && bytes > 0) socket_.send_to(asio::buffer(buffer_, bytes), remote_endpoint, 0, ec);
-    }
+    void stop() { should_stop_.store(true, std::memory_order_relaxed); }
 
     void operator()() {
-        while (running_) {
-            try {
-                handle_one();
-            }
-            catch (...) {
-                break;
-            }
+        while (!should_stop_.load(std::memory_order_relaxed)) one_batch();
+    }
+
+    void one_batch() {
+        // For per-operation cancellations we could use the `asio::cancellation_signal`,
+        // but this is the simple lucky case when we only want to cancel all the outstanding
+        // transfers at once.
+        std::atomic<std::size_t> remaining = 0;
+        std::chrono::steady_clock::time_point expiry = std::chrono::steady_clock::now() + max_cycle_duration_;
+        asio::steady_timer timer(context_, expiry);
+        for (std::size_t job = 0; job < buffers_.size(); ++job, ++remaining) {
+            auto finalize = [this, &remaining](std::error_code error, [[maybe_unused]] std::size_t bytes) {
+                remaining--;
+                if (error) failed_responses_++;
+            };
+            auto respond = [this, job, finalize, &remaining](std::error_code error, std::size_t bytes) {
+                if (error) { remaining--; }
+                else { asio::async_write(socket_, asio::buffer(buffers_[job], bytes), clients_[job], finalize); }
+            };
+            asio::async_read(socket_, asio::buffer(buffers_[job]), clients_[job], respond);
         }
+        timer.async_wait([&](std::error_code error) {
+            if (!error && remaining) socket_.cancel(); // Forcibly abort all ops on this socket
+        });
     }
 };
 
 class echo_asio_client {
-    asio::io_context &io_context_;
+
+    asio::io_context &context_;
     asio::ip::udp::socket socket_;
     asio::ip::udp::endpoint server_endpoint_;
-    std::array<char, udp_packet_size_k> buffer_;
+
+    /// @brief Buffers, one per concurrent request
+    std::vector<echo_buffer_t> buffers_;
+
+    /// @brief Track the send timestamps for each slot to measure latency
+    std::vector<std::chrono::steady_clock::time_point> send_times_;
+
+    /// @brief Maximum time for this entire batch
+    std::chrono::microseconds max_cycle_duration_;
 
   public:
-    explicit echo_asio_client(asio::io_context &io_context)
-        : io_context_(io_context), socket_(io_context_, asio::ip::udp::endpoint(asio::ip::udp::v4(), 0)),
-          server_endpoint_(asio::ip::make_address(udp_server_address_k), udp_server_port_k) {
-
-        // Fill send buffer with some pattern
-        std::fill(buffer_.begin(), buffer_.end(), 'X');
+    echo_asio_client(                                                              //
+        asio::io_context &ctx, std::string const &server_addr, std::uint16_t port, //
+        std::size_t concurrency, std::chrono::microseconds max_cycle_duration)
+        : context_(ctx), socket_(ctx, asio::ip::udp::endpoint(asio::ip::udp::v4(), 0)), // ephemeral local port
+          server_endpoint_(asio::ip::make_address(server_addr), port), buffers_(concurrency), send_times_(concurrency),
+          max_cycle_duration_(max_cycle_duration) {
+        // Fill each buffer with some pattern (just 'X's, for example)
+        for (auto &buf : buffers_) { buf.fill('X'); }
     }
 
-    bool operator()() {
-        std::error_code ec;
+    echo_batch_result operator()() { return one_batch(); }
 
-        // Send data
-        socket_.send_to(asio::buffer(buffer_), server_endpoint_, 0, ec);
-        if (ec) return false;
+  private:
+    echo_batch_result one_batch() {
+        echo_batch_result result;
 
-        // Wait for echo
-        asio::ip::udp::endpoint sender_endpoint;
-        std::size_t len = socket_.receive_from(asio::buffer(buffer_), sender_endpoint, 0, ec);
-        return !ec && len == udp_packet_size_k;
+        // For per-operation cancellations we could use the `asio::cancellation_signal`,
+        // but this is the simple lucky case when we only want to cancel all the outstanding
+        // transfers at once.
+        std::atomic<std::size_t> remaining = 0;
+        std::chrono::steady_clock::time_point expiry = std::chrono::steady_clock::now() + max_cycle_duration_;
+        asio::steady_timer timer(context_, expiry);
+
+        for (std::size_t job = 0; job < buffers_.size(); ++job, ++remaining) {
+            send_times_[job] = std::chrono::steady_clock::now();
+            auto finalize = [this, job, &result, &remaining](std::error_code error, std::size_t bytes_returned) {
+                remaining--;
+                if (error) return;
+
+                // Measure latency
+                auto response_time = std::chrono::steady_clock::now();
+                auto diff = response_time - send_times_[job];
+                result.total_latency += diff;
+                result.max_latency = std::max(result.max_latency, diff);
+                result.received_count++;
+            };
+            auto receive = [this, job, finalize, &remaining](std::error_code error, std::size_t bytes_received) {
+                if (error) { remaining--; }
+                else { asio::async_read(socket_, asio::buffer(buffers_[job], bytes_received), finalize); }
+            };
+            asio::async_write(socket_, asio::buffer(buffers_[job]), receive);
+            result.sent_count++;
+        }
+        timer.async_wait([&](std::error_code error) {
+            if (!error && remaining) socket_.cancel(); // Forcibly abort all ops on this socket
+        });
+
+        return result;
     }
 };
 
-static void echo_asio(benchmark::State &state) {
+static void echo_asio(                            //
+    bm::State &state, std::string const &address, //
+    std::size_t batch_size, std::size_t packet_size, std::chrono::microseconds timeout) {
+
+    constexpr std::uint16_t echo_server_port_k = 12345;
+
     // Create server and client
     asio::io_context server_context;
     asio::io_context client_context;
-    echo_asio_server server(server_context);
-    echo_asio_client client(client_context);
+    echo_asio_server server(server_context, address, echo_server_port_k, batch_size, timeout);
+    echo_asio_client client(client_context, address, echo_server_port_k, batch_size, timeout);
 
     // Wait until server is ready
     std::thread server_thread(std::ref(server));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Benchmark the round-trip time
-    for (auto _ : state) {
-        if (!client()) {
-            state.SkipWithError("Communication failed");
-            break;
-        }
-    }
+    echo_batch_result stats;
+    for (auto _ : state) stats += client();
 
-    // Cleanup
-    server.stop();
-    client_context.stop();
-    server_context.stop();
-    server_thread.join();
+    stats.total_latency =
+        stats.received_count ? stats.total_latency / state.iterations() : std::chrono::nanoseconds::zero();
+    state.SetItemsProcessed(stats.sent_count);
+    state.SetBytesProcessed(stats.sent_count * packet_size);
+    state.counters["drop,%"] = 100.0 * (stats.sent_count - stats.received_count) / stats.sent_count;
+    state.counters["total_latency,ns"] = stats.total_latency.count();
+    state.counters["max_latency,ns"] = stats.max_latency.count();
 }
 
-BENCHMARK(echo_asio)->MinTime(2)->UseRealTime();
+BENCHMARK_CAPTURE(echo_asio, local, "127.0.0.1", 32, 1024, std::chrono::microseconds(5'000))->MinTime(2)->UseRealTime();
 
 #pragma endregion // ASIO
 
