@@ -77,7 +77,7 @@ endif()
 FetchContent_Declare(
   IntelTBB
   GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB.git
-  GIT_TAG master
+  GIT_TAG master # The tags are not up-to-date
 )
 
 # Suppress TBB's own tests:
@@ -99,7 +99,7 @@ endif()
 FetchContent_Declare(
   VictorZverovichFMT
   GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-  GIT_TAG 11.1.0
+  GIT_TAG 11.1.2
 )
 FetchContent_MakeAvailable(VictorZverovichFMT)
 
@@ -107,7 +107,7 @@ FetchContent_MakeAvailable(VictorZverovichFMT)
 FetchContent_Declare(
   EricNieblerRangeV3
   GIT_REPOSITORY https://github.com/ericniebler/range-v3
-  GIT_TAG master
+  GIT_TAG master # The tags are not up-to-date
 )
 FetchContent_MakeAvailable(EricNieblerRangeV3)
 
@@ -115,7 +115,7 @@ FetchContent_MakeAvailable(EricNieblerRangeV3)
 FetchContent_Declare(
   AndreasBuhrCppCoro
   GIT_REPOSITORY https://github.com/andreasbuhr/cppcoro
-  GIT_TAG main
+  GIT_TAG main # No tags on this fork
 )
 FetchContent_MakeAvailable(AndreasBuhrCppCoro)
 
@@ -124,7 +124,7 @@ set(CXX_COROUTINES_HAVE_COROUTINES 0)
 FetchContent_Declare(
   MetaLibUnifEx
   GIT_REPOSITORY https://github.com/facebookexperimental/libunifex.git
-  GIT_TAG main
+  GIT_TAG main # The tags are not up-to-date
 )
 FetchContent_MakeAvailable(MetaLibUnifEx)
 
@@ -132,7 +132,7 @@ FetchContent_MakeAvailable(MetaLibUnifEx)
 FetchContent_Declare(
   AshVardanianStringZilla
   GIT_REPOSITORY https://github.com/ashvardanian/stringzilla
-  GIT_TAG main
+  GIT_TAG v3.11.3
 )
 FetchContent_MakeAvailable(AshVardanianStringZilla)
 
@@ -140,7 +140,7 @@ FetchContent_MakeAvailable(AshVardanianStringZilla)
 FetchContent_Declare(
   HanaDusikovaCTRE
   GIT_REPOSITORY https://github.com/hanickadot/compile-time-regular-expressions
-  GIT_TAG main
+  GIT_TAG main # The tags are not up-to-date
 )
 FetchContent_MakeAvailable(HanaDusikovaCTRE)
 
@@ -173,7 +173,7 @@ FetchContent_MakeAvailable(YaoyuanGuoYYJSON)
 FetchContent_Declare(
   ChrisKohlhoffASIO
   GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-  GIT_TAG master
+  GIT_TAG asio-1-32-0 # Latest docs are for 1.30.2 😭
 )
 FetchContent_MakeAvailable(ChrisKohlhoffASIO)
 add_library(asio INTERFACE)
