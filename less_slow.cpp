@@ -3994,6 +3994,8 @@ constexpr std::size_t echo_mtu_k = 1460;
 using echo_buffer_t = std::array<char, echo_mtu_k>;
 constexpr uint16_t echo_server_port_k = 12345;
 
+auto to_microseconds(auto duration) { return std::chrono::duration_cast<std::chrono::microseconds>(duration); }
+
 #pragma region POSIX
 
 /**
@@ -4039,7 +4041,7 @@ class echo_libc_server {
         // Let's make sure we don't block forever on `recvfrom`
         struct timeval duration;
         duration.tv_sec = 0;
-        duration.tv_usec = std::chrono::duration_cast<std::chrono::microseconds>(echo_batch_timeout_k).count();
+        duration.tv_usec = to_microseconds(echo_batch_timeout_k).count();
         if (setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
             throw std::runtime_error("Failed to set sockets batch timeout");
     }
@@ -4083,7 +4085,7 @@ class echo_libc_client {
         // Let's make sure we don't block forever on `recvfrom`
         struct timeval duration;
         duration.tv_sec = 0;
-        duration.tv_usec = std::chrono::duration_cast<std::chrono::microseconds>(echo_batch_timeout_k).count();
+        duration.tv_usec = to_microseconds(echo_batch_timeout_k).count();
         if (setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
             throw std::runtime_error("Failed to set sockets batch timeout");
 
@@ -4110,7 +4112,7 @@ class echo_libc_client {
             // we are willing to wait for a single response.
             struct timeval expiry;
             expiry.tv_sec = 0;
-            expiry.tv_usec = std::chrono::duration_cast<std::chrono::microseconds>(echo_packet_timeout_k).count();
+            expiry.tv_usec = to_microseconds(echo_packet_timeout_k).count();
             fd_set read_fds;
             FD_ZERO(&read_fds);
             FD_SET(socket_fd_, &read_fds);
@@ -4129,6 +4131,12 @@ class echo_libc_client {
     }
 };
 
+/**
+ *  Here we can show-off one more Google Benchmark feature - overriding the
+ *  default timer! Measuring the time on the computer is an expensive operation,
+ *  and assuming we've already done that in the client itself, we can use the
+ *  `UseManualTime` feature to avoid the overhead of measuring time in the server.
+ */
 static void echo_libc(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
 
     std::string address = "127.0.0.1";
@@ -4142,27 +4150,33 @@ static void echo_libc(bm::State &state, networking_route_t route, std::size_t ba
 
     // Benchmark round-trip time
     echo_batch_result stats;
-    for (auto _ : state) stats += client();
+    for (auto _ : state) {
+        echo_batch_result batch_stats = client();
+        stats += batch_stats;
+        state.SetIterationTime(
+            std::chrono::duration_cast<std::chrono::duration<double>>(batch_stats.batch_latency).count());
+    }
 
     server.stop();
     server_thread.join();
 
     // Process and report stats
-    stats.batch_latency =
-        stats.received_packets ? stats.batch_latency / state.iterations() : std::chrono::nanoseconds::zero();
+    auto const mean_batch_latency_us =
+        stats.received_packets ? to_microseconds(stats.batch_latency).count() * 1.0 / state.iterations() : 0.0;
+    auto const mean_packet_latency_us = to_microseconds(stats.batch_latency).count() * 1.0 / stats.received_packets;
+
     state.SetItemsProcessed(stats.sent_packets);
     state.SetBytesProcessed(stats.sent_packets * packet_size);
     state.counters["drop,%"] = 100.0 * (stats.sent_packets - stats.received_packets) / stats.sent_packets;
-    state.counters["batch_latency,ns"] =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(stats.batch_latency).count();
-    state.counters["mean_packet_latency,ns"] =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(stats.batch_latency * 1.0 / stats.received_packets)
-            .count();
-    state.counters["max_packet_latency,ns"] =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(stats.max_packet_latency).count();
+    state.counters["mean_batch_latency,us"] = mean_batch_latency_us;
+    state.counters["mean_packet_latency,us"] = mean_packet_latency_us;
+    state.counters["max_packet_latency,us"] = to_microseconds(stats.max_packet_latency).count();
 }
 
-BENCHMARK_CAPTURE(echo_libc, local, networking_route_t::internal_k, 32, 1024)->MinTime(2)->UseRealTime();
+BENCHMARK_CAPTURE(echo_libc, local, networking_route_t::internal_k, 32, 1024)
+    ->MinTime(2)
+    ->UseManualTime()                // We are logging time with `SetIterationTime`
+    ->Unit(benchmark::kMicrosecond); // For IO, higher resolution than microseconds is too verbose
 
 #pragma endregion // POSIX
 
