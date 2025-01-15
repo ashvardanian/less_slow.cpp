@@ -41,6 +41,10 @@ If you are familiar with C++ and want to review code and measurements as you rea
 ```sh
 git clone https://github.com/ashvardanian/less_slow.cpp.git # Clone the repository
 cd less_slow.cpp                                            # Change the directory
+
+sudo apt-get install build-essential cmake g++              # Install default build tools
+sudo apt-get install pkg-config liburing-dev                # Install liburing for kernel-bypass
+
 cmake -B build_release -D CMAKE_BUILD_TYPE=Release          # Generate the build files
 cmake --build build_release --config Release                # Build the project
 build_release/less_slow                                     # Run the benchmarks

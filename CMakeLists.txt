@@ -1,5 +1,5 @@
 # Let's used CMake 3.16+ for native sanitizers support
-cmake_minimum_required(VERSION 3.16 FATAL_ERROR) 
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
 # ------------------------------------------------------------------------------
 # Project Setup
@@ -35,7 +35,6 @@ find_package(OpenMP REQUIRED)
 
 set(FETCHCONTENT_QUIET OFF)
 include(FetchContent) # For CMake-friendly dependencies
-include(ExternalProject) # If the dependency is not CMake-friendly
 
 # GTest (required by Google Benchmark)
 FetchContent_Declare(
@@ -78,6 +77,7 @@ FetchContent_Declare(
   IntelTBB
   GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB.git
   GIT_TAG master # The tags are not up-to-date
+  GIT_SHALLOW TRUE
 )
 
 # Suppress TBB's own tests:
@@ -108,6 +108,7 @@ FetchContent_Declare(
   EricNieblerRangeV3
   GIT_REPOSITORY https://github.com/ericniebler/range-v3
   GIT_TAG master # The tags are not up-to-date
+  GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(EricNieblerRangeV3)
 
@@ -116,6 +117,7 @@ FetchContent_Declare(
   AndreasBuhrCppCoro
   GIT_REPOSITORY https://github.com/andreasbuhr/cppcoro
   GIT_TAG main # No tags on this fork
+  GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(AndreasBuhrCppCoro)
 
@@ -125,6 +127,7 @@ FetchContent_Declare(
   MetaLibUnifEx
   GIT_REPOSITORY https://github.com/facebookexperimental/libunifex.git
   GIT_TAG main # The tags are not up-to-date
+  GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(MetaLibUnifEx)
 
@@ -141,6 +144,7 @@ FetchContent_Declare(
   HanaDusikovaCTRE
   GIT_REPOSITORY https://github.com/hanickadot/compile-time-regular-expressions
   GIT_TAG main # The tags are not up-to-date
+  GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(HanaDusikovaCTRE)
 
@@ -184,29 +188,16 @@ target_compile_definitions(asio INTERFACE ASIO_STANDALONE ASIO_NO_DEPRECATED)
 # https://github.com/axboe/liburing/pull/438
 # https://github.com/axboe/liburing/issues/946
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  set(LIBURING_DIR ${CMAKE_BINARY_DIR}/_deps/jensaxboeliburing)
-  ExternalProject_Add(
-      JensAxboeLibUring
-      GIT_REPOSITORY https://github.com/axboe/liburing.git
-      GIT_TAG liburing-2.8
-      GIT_SHALLOW 1
-      PREFIX ${CMAKE_BINARY_DIR}/_deps/
-      SOURCE_DIR ${LIBURING_DIR}
-      CONFIGURE_COMMAND echo Configuring LibUring && cd ${LIBURING_DIR} && ./configure --nolibc --cc=${CMAKE_C_COMPILER} --cxx=${CMAKE_CXX_COMPILER};
-      BUILD_COMMAND cd ${LIBURING_DIR} && make;
-      INSTALL_COMMAND ""
-      UPDATE_COMMAND ""
-  )
-  add_library(liburing_internal STATIC IMPORTED GLOBAL)
-  add_dependencies(liburing_internal JensAxboeLibUring)
-  set_property(TARGET liburing_internal
-      PROPERTY IMPORTED_LOCATION
-      ${LIBURING_DIR}/src/liburing.a
-  )
-  set_property(TARGET liburing_internal
-    PROPERTY INTERFACE_INCLUDE_DIRECTORIES
-    ${LIBURING_DIR}/src/include
-  )
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(LIBURING REQUIRED liburing)
+
+  if(LIBURING_FOUND)
+    message(STATUS "liburing found: version=${LIBURING_VERSION}")
+    message(STATUS "Include dirs: ${LIBURING_INCLUDE_DIRS}")
+    message(STATUS "Libraries:   ${LIBURING_LIBRARIES}")
+  else()
+    message(FATAL_ERROR "liburing not found. Please install liburing-dev.")
+  endif()
 endif()
 
 # ------------------------------------------------------------------------------
@@ -255,24 +246,27 @@ endif()
 # ------------------------------------------------------------------------------
 target_link_libraries(less_slow
   PRIVATE
-    Threads::Threads
-    benchmark
-    fmt::fmt
-    range-v3
-    cppcoro
-    unifex
-    asio
-    stringzilla
-    yyjson
-    ctre
-    # There is no `absl` shortcut:
-    # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
-    absl::flat_hash_map
-    nlohmann_json::nlohmann_json
+  Threads::Threads
+  benchmark
+  fmt::fmt
+  range-v3
+  cppcoro
+  unifex
+  asio
+  stringzilla
+  yyjson
+  ctre
+
+  # There is no `absl` shortcut:
+  # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
+  absl::flat_hash_map
+  nlohmann_json::nlohmann_json
 )
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(less_slow PRIVATE TBB::tbb)
   target_link_libraries(less_slow PRIVATE OpenMP::OpenMP_CXX)
-  target_link_libraries(less_slow PRIVATE liburing_internal)
+
+  # target_include_directories(less_slow PRIVATE ${LIBURING_INCLUDE_DIRS})
+  target_link_libraries(less_slow PRIVATE ${LIBURING_LIBRARIES})
 endif()
