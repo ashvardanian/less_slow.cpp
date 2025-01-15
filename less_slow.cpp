@@ -1691,6 +1691,16 @@ static void cblas_tops(bm::State &state) {
 BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
 BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
 
+/**
+ *  Eigen is a high-level C++ library for linear algebra that provides a
+ *  convenient templated API for matrix operations.
+ *
+ *  @see Supported Preprocessor Directives:
+ *       https://eigen.tuxfamily.org/dox/TopicPreprocessorDirectives.html
+ */
+#define EIGEN_FAST_MATH 1             // Affects mostly trigonometry, less relevant for GEMM
+#define EIGEN_NO_IO 1                 // Faster compilation
+#define EIGEN_NO_AUTOMATIC_RESIZING 1 // Cleaner logic
 #include <Eigen/Dense>
 
 template <typename scalar_type_>
