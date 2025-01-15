@@ -13,13 +13,13 @@
     "bootcamps",
     "Byrne",
     "chriskohlhoffasio",
-    "jensaxboeliburing",
     "clflush",
     "consteval",
     "coro",
     "cppcoro",
     "CTRE",
     "CUDA",
+    "DPDK",
     "Dusíková",
     "excerise",
     "fconcepts",
@@ -30,6 +30,8 @@
     "Ibireme",
     "JeanHeyd",
     "Jens",
+    "jensaxboeliburing",
+    "Klemens",
     "Kohlhoff",
     "Kulukundis",
     "Lelbach",
@@ -41,6 +43,7 @@
     "Maclaurin",
     "matmul",
     "Meneide",
+    "Morgenstern",
     "MSVC",
     "Müller",
     "Niebler",
@@ -172,6 +175,7 @@
     "unordered_set": "cpp",
     "utility": "cpp",
     "variant": "cpp",
-    "vector": "cpp"
+    "vector": "cpp",
+    "*.ipp": "cpp"
   }
 }

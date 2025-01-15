@@ -3978,7 +3978,7 @@ struct echo_batch_result {
     }
 };
 
-enum class networking_route_t { internal_k, public_k };
+enum class networking_route_t { loopback_k, public_k };
 
 /**
  *  The User Datagram Protocol (UDP) is OSI Layer 4 "Transport protocol", and
@@ -3995,6 +3995,39 @@ using echo_buffer_t = std::array<char, echo_mtu_k>;
 constexpr uint16_t echo_server_port_k = 12345;
 
 auto to_microseconds(auto duration) { return std::chrono::duration_cast<std::chrono::microseconds>(duration); }
+
+std::string execute_system_call(std::string const &command) {
+    std::array<char, 1024> buffer {};
+    std::string result;
+    if (FILE *pipe = popen(command.c_str(), "r")) {
+        while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe)) result += buffer.data();
+        pclose(pipe);
+    }
+    return result;
+}
+
+std::string fetch_public_ip() {
+#if defined(__linux__)
+    // Try Linux approach
+    std::string command = R"(ip route get 8.8.8.8 | sed -nE 's/.*src ([0-9\.]+).*/\1/p')";
+    std::string output = execute_system_call(command);
+    // Trim whitespace
+    if (!output.empty())
+        while (!output.empty() && isspace(output.back())) output.pop_back();
+    return output;
+#elif defined(__APPLE__)
+    // Try macOS approach with `ipconfig getifaddr en0`
+    std::string command = "ipconfig getifaddr en0";
+    std::string output = execute_system_call(command);
+    // Trim whitespace
+    if (!output.empty())
+        while (!output.empty() && isspace(output.back())) output.pop_back();
+
+    return output; // Could still be empty
+#else
+    return {};
+#endif
+}
 
 #pragma region POSIX
 
@@ -4139,7 +4172,7 @@ class echo_libc_client {
  */
 static void echo_libc(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
 
-    std::string address = "127.0.0.1";
+    std::string address = route == networking_route_t::loopback_k ? "127.0.0.1" : fetch_public_ip();
 
     // Create server and client
     echo_libc_server server(address, echo_server_port_k, batch_size);
@@ -4173,12 +4206,25 @@ static void echo_libc(bm::State &state, networking_route_t route, std::size_t ba
     state.counters["max_packet_latency,us"] = to_microseconds(stats.max_packet_latency).count();
 }
 
-BENCHMARK_CAPTURE(echo_libc, local, networking_route_t::internal_k, 32, 1024)
+BENCHMARK_CAPTURE(echo_libc, loopback, networking_route_t::loopback_k, //
+                  256 /* packets per batch */, 1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()                // We are logging time with `SetIterationTime`
+    ->Unit(benchmark::kMicrosecond); // For IO, higher resolution than microseconds is too verbose
+
+BENCHMARK_CAPTURE(echo_libc, public, networking_route_t::public_k, //
+                  256 /* packets per batch */, 1024 /* bytes per packet */)
     ->MinTime(2)
     ->UseManualTime()                // We are logging time with `SetIterationTime`
     ->Unit(benchmark::kMicrosecond); // For IO, higher resolution than microseconds is too verbose
 
 #pragma endregion // POSIX
+
+#pragma region IO Uring
+
+#include <liburing.h> // `liburing`
+
+#pragma endregion // IO Uring
 
 #pragma region ASIO
 #include <asio.hpp>
@@ -4350,12 +4396,6 @@ BENCHMARK_CAPTURE(echo_asio, local, "127.0.0.1", 32, 1024, std::chrono::microsec
 
 #pragma endregion // ASIO
 
-#pragma region IO Uring
-
-// #include <liburing.h> // `liburing`
-
-#pragma endregion // IO Uring
-
 #pragma endregion // - Networking and Databases
 
 /**
@@ -4368,7 +4408,9 @@ int main(int argc, char **argv) {
 
     // Let's log the CPU specs:
     std::size_t const cache_line_width = fetch_cache_line_width();
+    std::string const public_ip = fetch_public_ip();
     std::printf("Cache line width: %zu bytes\n", cache_line_width);
+    std::printf("Public IP address: %s\n", public_ip.c_str());
 
     // Make sure the defaults are set correctly:
     char arg0_default[] = "benchmark";
