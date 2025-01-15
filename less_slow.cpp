@@ -3960,12 +3960,25 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  *  @see "Asio 201 - timeouts, cancellation & custom tokens" by Klemens Morgenstern:
  *       https://cppalliance.org/asio/2023/01/02/Asio201Timeouts.html
  */
-#pragma region ASIO
+constexpr std::chrono::milliseconds echo_batch_timeout_k = std::chrono::milliseconds(50);
+constexpr std::chrono::milliseconds echo_packet_timeout_k = std::chrono::milliseconds(1);
 
-#include <array>  // `std::array` for packet buffers
-#include <atomic> // `std::atomic_bool` for stopping the server
+struct echo_batch_result {
+    std::size_t sent_packets = 0;
+    std::size_t received_packets = 0;
+    std::chrono::nanoseconds batch_latency = std::chrono::nanoseconds::zero();
+    std::chrono::nanoseconds max_packet_latency = std::chrono::nanoseconds::zero();
 
-#include <asio.hpp>
+    echo_batch_result &operator+=(echo_batch_result const &other) {
+        sent_packets += other.sent_packets;
+        received_packets += other.received_packets;
+        batch_latency += other.batch_latency;
+        max_packet_latency = std::max(max_packet_latency, other.max_packet_latency);
+        return *this;
+    }
+};
+
+enum class networking_route_t { internal_k, public_k };
 
 /**
  *  The User Datagram Protocol (UDP) is OSI Layer 4 "Transport protocol", and
@@ -3979,21 +3992,182 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  */
 constexpr std::size_t echo_mtu_k = 1460;
 using echo_buffer_t = std::array<char, echo_mtu_k>;
+constexpr uint16_t echo_server_port_k = 12345;
 
-struct echo_batch_result {
-    std::size_t sent_count = 0;
-    std::size_t received_count = 0;
-    std::chrono::nanoseconds total_latency = std::chrono::nanoseconds::zero();
-    std::chrono::nanoseconds max_latency = std::chrono::nanoseconds::zero();
+#pragma region POSIX
 
-    echo_batch_result &operator+=(echo_batch_result const &other) {
-        sent_count += other.sent_count;
-        received_count += other.received_count;
-        total_latency += other.total_latency;
-        max_latency = std::max(max_latency, other.max_latency);
-        return *this;
+/**
+ *  POSIX is an open standard (IEEE 1003) that defines a wide range of operating-system-level
+ *  interfaces and utilities, including file I/O, process control, threading, and networking.
+ *  Networking functions such as `socket`, `select`, `bind`, `send`, and `recv` come from
+ *  the POSIX specification.
+ *
+ *  In our case, focusing on UDP, we will use `sendto` and `recvfrom` functions, as in stateless
+ *  protocols, the server does not maintain any information about the client, and the client does
+ *  not maintain any information about the server. Each packet is treated independently.
+ *
+ *  Unlike other implementations, this one is synchronous and should result in the worst performance.
+ */
+#include <arpa/inet.h>  // `inet_addr`
+#include <netinet/in.h> // `sockaddr_in`
+#include <sys/socket.h> // `socket`, `bind`, `sendto`, `recvfrom`
+
+#include <array>  // `std::array` for packet buffers
+#include <atomic> // `std::atomic_bool` for stopping the server
+
+class echo_libc_server {
+    int socket_fd_;
+    sockaddr_in server_addr_;
+    std::vector<echo_buffer_t> buffers_;
+    std::atomic_bool should_stop_;
+
+  public:
+    echo_libc_server(std::string const &address, std::uint16_t port, std::size_t max_concurrency)
+        : buffers_(max_concurrency), should_stop_(false) {
+        // Initialize socket
+        socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (socket_fd_ < 0) throw std::runtime_error("Failed to create socket");
+
+        // Bind to address and port
+        server_addr_.sin_family = AF_INET;
+        server_addr_.sin_addr.s_addr = inet_addr(address.c_str());
+        server_addr_.sin_port = htons(port);
+
+        if (bind(socket_fd_, reinterpret_cast<sockaddr *>(&server_addr_), sizeof(server_addr_)) < 0)
+            throw std::runtime_error("Failed to bind socket");
+
+        // Let's make sure we don't block forever on `recvfrom`
+        struct timeval duration;
+        duration.tv_sec = 0;
+        duration.tv_usec = std::chrono::duration_cast<std::chrono::microseconds>(echo_batch_timeout_k).count();
+        if (setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
+            throw std::runtime_error("Failed to set sockets batch timeout");
+    }
+
+    ~echo_libc_server() { close(socket_fd_); }
+
+    void stop() { should_stop_.store(true, std::memory_order_relaxed); }
+
+    void operator()() {
+        sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+
+        while (!should_stop_.load(std::memory_order_relaxed)) {
+            for (auto &buffer : buffers_) {
+                ssize_t received = recvfrom(socket_fd_, buffer.data(), buffer.size(), 0,
+                                            reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+                if (received <= 0) continue;
+                sendto(socket_fd_, buffer.data(), received, 0, reinterpret_cast<sockaddr *>(&client_addr), client_len);
+            }
+        }
     }
 };
+
+class echo_libc_client {
+    int socket_fd_;
+    sockaddr_in server_addr_;
+    std::vector<echo_buffer_t> buffers_;
+
+  public:
+    echo_libc_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
+        : buffers_(concurrency) {
+        // Initialize socket
+        socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (socket_fd_ < 0) throw std::runtime_error("Failed to create socket");
+
+        // Resolve server address
+        server_addr_.sin_family = AF_INET;
+        server_addr_.sin_addr.s_addr = inet_addr(server_addr.c_str());
+        server_addr_.sin_port = htons(port);
+
+        // Let's make sure we don't block forever on `recvfrom`
+        struct timeval duration;
+        duration.tv_sec = 0;
+        duration.tv_usec = std::chrono::duration_cast<std::chrono::microseconds>(echo_batch_timeout_k).count();
+        if (setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
+            throw std::runtime_error("Failed to set sockets batch timeout");
+
+        // Fill buffers with data
+        for (auto &buf : buffers_) buf.fill('X');
+    }
+
+    ~echo_libc_client() { close(socket_fd_); }
+
+    echo_batch_result operator()() {
+        echo_batch_result result;
+
+        sockaddr_in reply_addr;
+        socklen_t reply_len = sizeof(reply_addr);
+        for (std::size_t i = 0; i < buffers_.size(); ++i) {
+            auto send_time = std::chrono::steady_clock::now();
+            ssize_t sent = sendto(socket_fd_, buffers_[i].data(), buffers_[i].size(), 0,
+                                  reinterpret_cast<sockaddr *>(&server_addr_), sizeof(server_addr_));
+            result.sent_packets++;
+            if (sent <= 0) continue;
+
+            // In general, `select` is used to monitor multiple file descriptors or sockets at once
+            // to see if they are ready for I/O, but in this case we use it to constrain the time
+            // we are willing to wait for a single response.
+            struct timeval expiry;
+            expiry.tv_sec = 0;
+            expiry.tv_usec = std::chrono::duration_cast<std::chrono::microseconds>(echo_packet_timeout_k).count();
+            fd_set read_fds;
+            FD_ZERO(&read_fds);
+            FD_SET(socket_fd_, &read_fds);
+            if (select(socket_fd_ + 1, &read_fds, nullptr, nullptr, &expiry) <= 0) continue;
+
+            ssize_t received = recvfrom(socket_fd_, buffers_[i].data(), buffers_[i].size(), 0,
+                                        reinterpret_cast<sockaddr *>(&reply_addr), &reply_len);
+            if (received <= 0) continue;
+            auto response_time = std::chrono::steady_clock::now();
+            auto diff = response_time - send_time;
+            result.batch_latency += diff;
+            result.max_packet_latency = std::max(result.max_packet_latency, diff);
+            result.received_packets++;
+        }
+        return result;
+    }
+};
+
+static void echo_libc(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+
+    std::string address = "127.0.0.1";
+
+    // Create server and client
+    echo_libc_server server(address, echo_server_port_k, batch_size);
+    echo_libc_client client(address, echo_server_port_k, batch_size);
+
+    std::thread server_thread(std::ref(server));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Benchmark round-trip time
+    echo_batch_result stats;
+    for (auto _ : state) stats += client();
+
+    server.stop();
+    server_thread.join();
+
+    // Process and report stats
+    stats.batch_latency =
+        stats.received_packets ? stats.batch_latency / state.iterations() : std::chrono::nanoseconds::zero();
+    state.SetItemsProcessed(stats.sent_packets);
+    state.SetBytesProcessed(stats.sent_packets * packet_size);
+    state.counters["drop,%"] = 100.0 * (stats.sent_packets - stats.received_packets) / stats.sent_packets;
+    state.counters["batch_latency,ns"] =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(stats.batch_latency).count();
+    state.counters["mean_packet_latency,ns"] =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(stats.batch_latency * 1.0 / stats.received_packets)
+            .count();
+    state.counters["max_packet_latency,ns"] =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(stats.max_packet_latency).count();
+}
+
+BENCHMARK_CAPTURE(echo_libc, local, networking_route_t::internal_k, 32, 1024)->MinTime(2)->UseRealTime();
+
+#pragma endregion // POSIX
+
+#pragma region ASIO
+#include <asio.hpp>
 
 class echo_asio_server {
 
@@ -4015,9 +4189,9 @@ class echo_asio_server {
   public:
     echo_asio_server(                                                          //
         asio::io_context &ctx, std::string const &address, std::uint16_t port, //
-        std::size_t max_concurrency_level, std::chrono::microseconds max_cycle_duration)
+        std::size_t max_concurrency, std::chrono::microseconds max_cycle_duration)
         : context_(ctx), socket_(context_, asio::ip::udp::endpoint(asio::ip::make_address(address), port)),
-          buffers_(max_concurrency_level), clients_(max_concurrency_level), max_cycle_duration_(max_cycle_duration) {}
+          buffers_(max_concurrency), clients_(max_concurrency), max_cycle_duration_(max_cycle_duration) {}
 
     void stop() { should_stop_.store(true, std::memory_order_relaxed); }
 
@@ -4096,16 +4270,16 @@ class echo_asio_client {
                 // Measure latency
                 auto response_time = std::chrono::steady_clock::now();
                 auto diff = response_time - send_times_[job];
-                result.total_latency += diff;
-                result.max_latency = std::max(result.max_latency, diff);
-                result.received_count++;
+                result.batch_latency += diff;
+                result.max_packet_latency = std::max(result.max_packet_latency, diff);
+                result.received_packets++;
             };
             auto receive = [this, job, finalize, &remaining](std::error_code error, std::size_t bytes) {
                 if (error) { remaining--; }
                 else { socket_.async_receive_from(asio::buffer(buffers_[job], bytes), server_, finalize); }
             };
             socket_.async_send_to(asio::buffer(buffers_[job]), server_, receive);
-            result.sent_count++;
+            result.sent_packets++;
         }
         std::chrono::steady_clock::time_point expiry = std::chrono::steady_clock::now() + max_cycle_duration_;
         asio::steady_timer timer(context_, expiry);
@@ -4147,13 +4321,13 @@ static void echo_asio(                            //
     client_context_thread.join(); // Wait for the client thread to finish
 
     // Process and report stats
-    stats.total_latency =
-        stats.received_count ? stats.total_latency / state.iterations() : std::chrono::nanoseconds::zero();
-    state.SetItemsProcessed(stats.sent_count);
-    state.SetBytesProcessed(stats.sent_count * packet_size);
-    state.counters["drop,%"] = 100.0 * (stats.sent_count - stats.received_count) / stats.sent_count;
-    state.counters["total_latency,ns"] = stats.total_latency.count();
-    state.counters["max_latency,ns"] = stats.max_latency.count();
+    stats.batch_latency =
+        stats.received_packets ? stats.batch_latency / state.iterations() : std::chrono::nanoseconds::zero();
+    state.SetItemsProcessed(stats.sent_packets);
+    state.SetBytesProcessed(stats.sent_packets * packet_size);
+    state.counters["drop,%"] = 100.0 * (stats.sent_packets - stats.received_packets) / stats.sent_packets;
+    state.counters["batch_latency,ns"] = stats.batch_latency.count();
+    state.counters["max_packet_latency,ns"] = stats.max_packet_latency.count();
 }
 
 BENCHMARK_CAPTURE(echo_asio, local, "127.0.0.1", 32, 1024, std::chrono::microseconds(50'000))
