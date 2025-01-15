@@ -32,6 +32,13 @@ endif()
 # ------------------------------------------------------------------------------
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED)
+find_package(BLAS REQUIRED)
+if (BLAS_FOUND)
+    message(STATUS "BLAS found: ${BLAS_LIBRARIES}")
+else ()
+    message(FATAL_ERROR "BLAS not found")
+endif ()
+
 
 set(FETCHCONTENT_QUIET OFF)
 include(FetchContent)
@@ -167,6 +174,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(YaoyuanGuoYYJSON)
 
+# Eigen is one of the few libraries not using GitHub
+FetchContent_Declare(
+  LibEigenEigen
+  GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+  GIT_TAG master
+)
+FetchContent_MakeAvailable(LibEigenEigen)
+
 # ------------------------------------------------------------------------------
 # Main Executable
 # ------------------------------------------------------------------------------
@@ -235,6 +250,8 @@ target_link_libraries(less_slow
     # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
     absl::flat_hash_map
     nlohmann_json::nlohmann_json
+    Eigen3::Eigen
+    ${BLAS_LIBRARIES}
     $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:TBB::tbb>
     $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:OpenMP::OpenMP_CXX>
 )
