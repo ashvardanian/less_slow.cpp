@@ -1646,7 +1646,25 @@ BENCHMARK_CAPTURE(spread_memory, scatter_avx512, spread_scatter_avx512, 64)->Ran
 #endif
 
 #if defined(__ARM_FEATURE_SVE) // Arm NEON has no gather/scatter instructions, but SVE does 🥳
+
+/**
+ *  Arm Scalable Vector Extension @b (SVE) is one of the weirdest current SIMD
+ *  extensions. Unlike AVX2, AVX-512, or even RVV on RISC-V, it doesn't preset
+ *  the register width at the ISA level! It's up to the physical implementation
+ *  to choose any power of two between 128 and @b 2048 bits.
+ *
+ *  In practice, Fugaku supercomputer likely has the largest SVE implementation
+ *  at 512-bits length. The Arm Neoverse N2 core has 256-bit SVE. It also
+ *  handles masking differently from AVX-512! Definitely worth reading about!
+ *
+ *  @see "ARM's Scalable Vector Extensions: A Critical Look at SVE2 For Integer
+ *       Workloads" by @ zingaburga:
+ *       https://gist.github.com/zingaburga/805669eb891c820bd220418ee3f0d6bd
+ *
+ */
 #include <arm_sve.h>
+
+constexpr std::size_t max_sve_size_k = 2048 / CHAR_BIT;
 
 void spread_gather_sve( //
     spread_data_t const *data, spread_index_t const *indices, spread_data_t *result, std::size_t size) {
@@ -1668,14 +1686,22 @@ void spread_scatter_sve( //
     }
 }
 
-BENCHMARK_CAPTURE(spread_memory, gather_sve, spread_gather_sve)->Range(1 << 10, 1 << 20);
-BENCHMARK_CAPTURE(spread_memory, scatter_sve, spread_scatter_sve)->Range(1 << 10, 1 << 20);
+BENCHMARK_CAPTURE(spread_memory, gather_sve, spread_gather_sve, max_sve_size_k)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, scatter_sve, spread_scatter_sve, max_sve_size_k)->Range(1 << 10, 1 << 20)->MinTime(5);
 
 /**
  *  @b Finally! This may just be the first place where SVE supersedes NEON
- *  in functionality and has a bigger improvement over scalar code than AVX-512
- *  on a similar-level x86 platform! Both gathers and scatters are consistently
- *  @b 30% faster across small and large inputs!
+ *  in functionality and may have a bigger improvement over scalar code than
+ *  AVX-512 on a similar-level x86 platform!
+ *
+ *  If you are very lucky with your input sizes, on small arrays under 65K
+ *  on AWS Graviton, gathers can be up to 4x faster compared to serial code!
+ *  On larger sizes, they again start losing to serial code. This makes
+ *  their applicability very limited 😡
+ *
+ *  Vectorized scatters are universally slower than serial code on Graviton
+ *  for small inputs, but on larger ones over 1MB start winning up to 50%!
+ *  Great way to get everyone confused 🤬
  */
 #endif
 
@@ -2917,7 +2943,7 @@ inline std::byte *reallocate_from_arena( //
         }
     }
 
-    // If we can’t grow in place, do: allocate new + copy + free old
+    // If we can't grow in place, do: allocate new + copy + free old
     std::byte *new_ptr = allocate_from_arena(arena, new_size);
     if (!new_ptr) return nullptr; // Out of memory
 
