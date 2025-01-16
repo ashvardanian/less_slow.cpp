@@ -1363,7 +1363,7 @@ BENCHMARK(f32x4x4_matmul_avx512);
 #include <cassert>  // `assert`
 #include <fstream>  // `std::ifstream`
 #include <iterator> // `std::random_access_iterator_tag`
-#include <memory>   // `std::assume_aligned`
+#include <memory>   // `std::assume_aligned`, `std::unique_ptr`
 #include <string>   // `std::string`, `std::stoull`
 
 /**
@@ -1471,6 +1471,13 @@ class strided_ptr {
     // clang-format on
 };
 
+template <typename type_>
+std::unique_ptr<type_[], decltype(&std::free)> make_aligned_array(std::size_t size, std::size_t alignment) {
+    type_ *raw_ptr = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size));
+    if (!raw_ptr) throw std::bad_alloc();
+    return std::unique_ptr<type_[], decltype(&std::free)>(raw_ptr, &std::free);
+}
+
 #if defined(__aarch64__)
 /**
  *  @brief  Helper derived from `__aarch64_sync_cache_range` in `libgcc`, used to
@@ -1495,9 +1502,7 @@ static void memory_access(bm::State &state) {
     // memory accesses may suffer from the same issues. For split-loads, pad our
     // buffer with an extra `cache_line_width` bytes of space.
     std::size_t const buffer_size = typical_l2_size + cache_line_width;
-    std::unique_ptr<std::byte, decltype(&std::free)> const buffer(                        //
-        reinterpret_cast<std::byte *>(std::aligned_alloc(cache_line_width, buffer_size)), //
-        &std::free);
+    auto const buffer = make_aligned_array<std::byte>(buffer_size, cache_line_width);
     std::byte *const buffer_ptr = buffer.get();
 
     // Let's initialize a strided range using out `strided_ptr` template, but
@@ -1585,21 +1590,23 @@ void spread_scatter_scalar( //
 }
 
 template <typename kernel_type_>
-static void spread_memory(bm::State &state, kernel_type_ kernel) {
+static void spread_memory(bm::State &state, kernel_type_ kernel, std::size_t align = sizeof(spread_data_t)) {
 
-    std::size_t size = static_cast<std::size_t>(state.range(0));
-    std::vector<spread_index_t> indices(size);
-    std::vector<spread_data_t> first(size), second(size);
-    std::iota(first.begin(), first.end(), 0);
+    std::size_t const size = static_cast<std::size_t>(state.range(0));
+    auto indices = make_aligned_array<spread_index_t>(size, align);
+    auto first = make_aligned_array<spread_data_t>(size, align);
+    auto second = make_aligned_array<spread_data_t>(size, align);
+
+    std::iota(indices.get(), indices.get() + size, 0);
     std::random_device random_device;
     std::mt19937 generator(random_device());
-    std::shuffle(indices.begin(), indices.end(), generator);
+    std::shuffle(indices.get(), indices.get() + size, generator);
 
-    for (auto _ : state) { kernel(first.data(), indices.data(), second.data(), size); }
+    for (auto _ : state) kernel(first.get(), indices.get(), second.get(), size);
 }
 
-BENCHMARK_CAPTURE(spread_memory, gather_scalar, spread_gather_scalar)->Range(1 << 10, 1 << 20);
-BENCHMARK_CAPTURE(spread_memory, scatter_scalar, spread_scatter_scalar)->Range(1 << 10, 1 << 20);
+BENCHMARK_CAPTURE(spread_memory, gather_scalar, spread_gather_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, scatter_scalar, spread_scatter_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
 
 #if defined(__AVX512F__)
 void spread_gather_avx512( //
@@ -1624,14 +1631,17 @@ void spread_scatter_avx512( //
     for (; i < size; ++i) data[indices[i]] = source[i];
 }
 
-BENCHMARK_CAPTURE(spread_memory, gather_avx512, spread_gather_avx512)->Range(1 << 10, 1 << 20);
-BENCHMARK_CAPTURE(spread_memory, scatter_avx512, spread_scatter_avx512)->Range(1 << 10, 1 << 20);
+BENCHMARK_CAPTURE(spread_memory, gather_avx512, spread_gather_avx512, 64)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, scatter_avx512, spread_scatter_avx512, 64)->Range(1 << 10, 1 << 20)->MinTime(5);
 
 /**
- *  AVX-512 shows a @b 5%-30% improvement over scalar implementations, with
- *  smaller datasets benefiting the most. For 1024 elements, AVX-512 reduces
- *  latency from ~271 ns to ~212 ns. For 1,048,576 elements, improvements are
- *  less pronounced: ~311 µs (scalar) vs. ~289 µs (AVX-512).
+ *  For consistent timing, for AVX-512 we align allocations to the ZMM register
+ *  size, which also coincides with the cache line width on x86 CPUs: @b 64!
+ *
+ *  For short arrays under 4K elements, gathers can get up to 50% faster,
+ *  dropping from @b 270ns to @b 136ns. On larger sizes gather can @b lose
+ *  to serial code. Like on arrays of 65K entries it can be 50% slower!
+ *  Scatters are even more questionable!
  */
 #endif
 
