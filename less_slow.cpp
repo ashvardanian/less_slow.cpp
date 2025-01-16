@@ -62,16 +62,6 @@ static void i32_addition(bm::State &state) {
 
 BENCHMARK(i32_addition);
 
-extern "C" std::int32_t i32_add_asm_kernel(std::int32_t a, std::int32_t b);
-
-static void i32_addition_asm(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
-    for (auto _ : state) c = i32_add_asm_kernel(a, b);
-    (void)c; // Silence "variable `c` set but not used" warning
-}
-
-BENCHMARK(i32_addition_asm);
-
 /**
  *  Trivial kernels operating on constant values are not the most
  *  straightforward candidates for benchmarking. The compiler can easily
@@ -82,6 +72,108 @@ BENCHMARK(i32_addition_asm);
  *  settings, discarding the @b `-O3` flag for "Release build" optimizations,
  *  we may see a non-zero value, but it won't represent real-world performance.
  *
+ *  One way to avoid, is just implementing the kernel in @b inline-assembly,
+ *  interleaving it with the higher-level C++ code:
+ */
+
+#if defined(__GNUC__) && !defined(__clang__) //! GCC and Clang support inline assembly, MSVC doesn't!
+
+#if defined(__x86_64__) || defined(__i386__) //? Works for both 64-bit and 32-bit x86 architectures
+
+static void i32_addition_inline_asm(bm::State &state) {
+    // In inline assembly for x86 we are not explicitly naming the registers,
+    // so in the 32-bit and 64-bit modes different registers will be used:
+    // - For 32-bit (`__i386__`): Registers like `eax` and `ebx` will be used,
+    //   and pointers will be 4 bytes wide.
+    // - For 64-bit targets (`__x86_64__`): Registers like `eax`, `r8d` will
+    //   be used for 32-bit values, while pointers will be 8 bytes wide.
+    std::int32_t a = 0, b = 0, c = 0;
+    for (auto _ : state) {
+        asm volatile(                  //
+            "addl %[b], %[a]\n\t"      // Sum `a + b` into `a`; `l` means 32-bit operation.
+            "movl %[a], %[c]\n\t"      // Move result to `c`, again using the `l` suffix.
+            : [c] "=r"(c), [a] "+r"(a) // Outputs: `c` and `a` (read-write)
+            : [b] "r"(b)               // Input: `b`
+            : "cc"                     // Clobbered: condition codes
+        );
+    }
+    (void)c; // Silence "variable `c` set but not used" warning
+}
+
+BENCHMARK(i32_addition_inline_asm);
+
+#elif defined(__aarch64__) //? The following kernel is just for the 64-bit Arm
+
+static void i32_addition_inline_asm(bm::State &state) {
+    std::int32_t a = 0, b = 0, c = 0;
+    for (auto _ : state) {
+        asm volatile(                     //
+            "add %w[a], %w[b], %w[a]\n\t" // Sum `a + b` into `a`
+            "mov %w[c], %w[a]\n\t"        // Move result to `c`
+            : [c] "=r"(c), [a] "+r"(a)    // Outputs: `c` and `a` (read-write)
+            : [b] "r"(b)                  // Input: `b`
+            : "cc"                        // Clobbered: condition codes
+        );
+    }
+    (void)c; // Silence "variable `c` set but not used" warning
+}
+BENCHMARK(i32_addition_inline_asm);
+
+#endif // defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
+
+#endif // defined(__GNUC__) && !defined(__clang__)
+
+/**
+ *  We can also put the assembly kernels into separate `.S` files and link them
+ *  to our C++ target. Each approach has its technical tradeoffs:
+ *
+ *  - Inline Assembly:
+ *    Requires direct interaction with registers, which must be carefully managed
+ *    using constraints and clobbers to ensure the compiler knows which registers
+ *    are modified.  While inline assembly enables tight coupling with C++ logic
+ *    and access to local variables, it is less portable due to compiler-specific
+ *    syntax and optimization variability. Debugging inline assembly can also be
+ *    challenging as it is embedded in higher-level code.
+ *
+ *  - Separate Assembly Files:
+ *    Abstracts away register management through adherence to the platform's
+ *    Application Binary Interface @b (ABI). This makes the assembly routines
+ *    easier to debug, test, and reuse across projects. However, separate files
+ *    require more boilerplate for function calls, stack management, and
+ *    parameter passing. They are preferred for large or standalone routines
+ *    that benefit from modularity and clear separation from C++ code.
+ *
+ *  In this project, we provide assembly kernels for two platforms:
+ *
+ *  - @b less_slow_aarch64.S - for the 64-bit ARM architecture.
+ *  - @b less_slow_amd64.S - for the x86_64 architecture, with 64-bit extensions,
+ *    originally introduced by AMD.
+ */
+#if defined(__x86_64__) || defined(__aarch64__)
+
+extern "C" std::int32_t i32_add_asm_kernel(std::int32_t a, std::int32_t b);
+
+static void i32_addition_asm(bm::State &state) {
+    std::int32_t a = 0, b = 0, c = 0;
+    for (auto _ : state) c = i32_add_asm_kernel(a, b);
+    (void)c; // Silence "variable `c` set but not used" warning
+}
+
+BENCHMARK(i32_addition_asm);
+
+#endif // defined(__x86_64__) || defined(__aarch64__)
+
+/**
+ *  So far the results may be:
+ *
+ *  - `i32_addition` - @b 0ns, as the compiler optimized the code away.
+ *  - `i32_addition_inline_asm` - @b 0.2ns, a single instruction was inlined.
+ *  - `i32_addition_asm` - @b 0.9ns, a new stack frame was created!
+ *
+ *  Keep this in mind! Even with Link-Time Optimization @b (LTO) enabled,
+ *  most of the time, compilers won't be able to inline your Assembly kernels.
+ *
+ *  Don't want to switch to Assembly to fool the compilers? No problem!
  *  Another thing we can try - is generating random inputs on the fly with
  *  @b `std::rand()`, one of the most controversial operations in the
  *  C standard library.
