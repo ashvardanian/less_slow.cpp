@@ -10,6 +10,7 @@
     "Boccara",
     "bootcamps",
     "Byrne",
+    "CCCL",
     "clflush",
     "consteval",
     "coro",
@@ -164,6 +165,7 @@
     "vector": "cpp",
     "sstream": "cpp",
     "cfenv": "cpp",
-    "expected": "cpp"
+    "expected": "cpp",
+    "*.ipp": "cpp"
   }
 }

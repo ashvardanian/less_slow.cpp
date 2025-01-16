@@ -1,5 +1,5 @@
 # Let's used CMake 3.16+ for native sanitizers support
-cmake_minimum_required(VERSION 3.16 FATAL_ERROR) 
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
 # ------------------------------------------------------------------------------
 # Project Setup
@@ -94,6 +94,15 @@ if(TARGET tbb)
   endif()
 endif()
 
+# Nvidia's CUDA Core Compute Libraries for GPU acceleration
+FetchContent_Declare(
+  NvidiaCCCL
+  GIT_REPOSITORY https://github.com/nvidia/cccl.git
+  GIT_TAG v2.7.0
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(NvidiaCCCL)
+
 # FMT for logging, as `std::format` has limited functionality
 FetchContent_Declare(
   VictorZverovichFMT
@@ -181,6 +190,8 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
   target_compile_options(less_slow PRIVATE -march=native)
 endif()
 
+# List of all possible compiler IDs:
+# https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_COMPILER_ID.html
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   # A few useful options for GCC:
   target_compile_options(less_slow PRIVATE
@@ -189,6 +200,11 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     -fconcepts-diagnostics-depth=10 # Needed to debug concepts
     -fopenmp # OpenMP support, also requires linking
   )
+elseif(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" OR CMAKE_CUDA_COMPILER_ID STREQUAL "NVHPC")
+  enable_language(CUDA)
+  set_property(SOURCE less_slow.cpp PROPERTY LANGUAGE CUDA)
+  set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  set_target_properties(less_slow PROPERTIES CUDA_ARCHITECTURES "86")
 else()
   # For other compilers (Clang, MSVC, Intel, etc.)
   target_compile_options(less_slow PRIVATE
@@ -213,19 +229,24 @@ endif()
 # ------------------------------------------------------------------------------
 target_link_libraries(less_slow
   PRIVATE
-    Threads::Threads
-    benchmark
-    fmt::fmt
-    range-v3
-    cppcoro
-    unifex
-    stringzilla
-    yyjson
-    ctre
-    # There is no `absl` shortcut:
-    # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
-    absl::flat_hash_map
-    nlohmann_json::nlohmann_json
-    $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:TBB::tbb>
-    $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:OpenMP::OpenMP_CXX>
+  Threads::Threads
+  benchmark
+  fmt::fmt
+  range-v3
+  cppcoro
+  unifex
+  stringzilla
+  yyjson
+  ctre
+
+  # There is no `absl` shortcut:
+  # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
+  absl::flat_hash_map
+  nlohmann_json::nlohmann_json
 )
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  target_link_libraries(less_slow PRIVATE TBB::tbb OpenMP::OpenMP_CXX)
+elseif(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" OR CMAKE_CUDA_COMPILER_ID STREQUAL "NVHPC")
+  target_link_libraries(less_slow PRIVATE CCCL::cccl)
+endif()

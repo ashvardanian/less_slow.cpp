@@ -443,6 +443,95 @@ BENCHMARK(sorting_with_openmp)
 
 #endif // defined(_OPENMP)
 
+#if defined(__CUDACC__)
+
+/**
+ *  Unlike STL, Thrust provides some very handy abstractions for sorting
+ *  one array by values in another.
+ *
+ *  @see Sorting in Thrust: https://nvidia.github.io/cccl/thrust/api_docs/algorithms/sorting
+ */
+
+#include <thrust/device_vector.h> // `thrust::device_vector`
+#include <thrust/sort.h>          // `thrust::sort`
+
+static void sorting_with_thrust(benchmark::State &state) {
+    const auto count = static_cast<std::size_t>(state.range(0));
+
+    // Typically, the data is first allocated on the "host" CPU side,
+    // initialized, and then transferred to the "device" GPU memory.
+    // In our specific case, we could have also used `thrust::sequence`.
+    thrust::host_vector<std::uint32_t> host_array(count);
+    std::iota(host_array.begin(), host_array.end(), 1u);
+    thrust::device_vector<std::uint32_t> device_array = host_array;
+
+    for (auto _ : state) {
+        thrust::reverse(device_array.begin(), device_array.end());
+        thrust::sort(device_array.begin(), device_array.end());
+        cudaError_t error = cudaDeviceSynchronize(); //! Block until the GPU has completed all tasks
+        if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: " + cudaGetErrorString(error));
+        benchmark::DoNotOptimize(device_array.data());
+    }
+
+    state.SetComplexityN(count);
+    state.SetItemsProcessed(count * state.iterations());
+    state.SetBytesProcessed(count * state.iterations() * sizeof(std::uint32_t));
+}
+
+BENCHMARK(sorting_with_thrust)
+    ->RangeMultiplier(4)
+    ->Range(1ll << 20, 1ll << 28)
+    ->MinTime(10)
+    ->Complexity(benchmark::oN) // Not `oNLogN` - it's Radix Sort!
+    ->UseRealTime();
+
+/**
+ *  Thrust, just like STL, is often convenient but not always the fastest.
+ *  It may allocate temporary memory, perform extra copies, or use suboptimal
+ *  algorithms. Thrust's underlying CUB provides more control and a lot of
+ *  functionality for both device-wide, block-wide, and warp-wide operations.
+ *
+ *  @see CUB docs: https://nvidia.github.io/cccl/cub/modules
+ *
+ *  Sadly, CUB provides no `reverse` functionality, so we need to combine it
+ *  with a Thrust call, scheduling them on the same job queue. We will also
+ *  pre-allocate temporary memory for CUB's sorting algorithm, and will use
+ *  device-side timers for more accurate measurements.
+ */
+#include <cub/cub.cuh>
+#include <cuda_runtime.h>
+
+static void sorting_with_cub(bm::State &state) {
+    auto count = static_cast<std::size_t>(state.range(0));
+    thrust::device_vector<std::uint32_t> device_array(count);
+    thrust::device_vector<std::byte_t> temporary(count);
+
+    // One of the interesting design choices of CUB is that you can call
+    // the target method with `NULL` arguments to infer the required temporary
+    // memory amount.
+    cub::DeviceRadixSort::SortKeys(...);
+    temporary.resize(temporary_bytes);
+
+    for (auto _ : state) {
+        thrust::reverse(thrust::device.on(), device_array.begin(), device_array.end());
+        cub::DeviceRadixSort::SortKeys(...);
+        ...
+    }
+
+    state.SetComplexityN(count);
+    state.SetItemsProcessed(count * state.iterations());
+    state.SetBytesProcessed(count * state.iterations() * sizeof(std::uint32_t));
+}
+
+BENCHMARK(sorting_with_cub)
+    ->RangeMultiplier(4)
+    ->Range(1l << 20, 1l << 28)
+    ->MinTime(10)
+    ->Complexity(bm::oNLogN)
+    ->UseRealTime();
+
+#endif // defined(__CUDACC__)
+
 #pragma endregion // Parallelism and Computational Complexity
 
 #pragma region Recursion
