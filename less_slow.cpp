@@ -1635,6 +1635,40 @@ BENCHMARK_CAPTURE(spread_memory, scatter_avx512, spread_scatter_avx512)->Range(1
  */
 #endif
 
+#if defined(__ARM_FEATURE_SVE) // Arm NEON has no gather/scatter instructions, but SVE does 🥳
+#include <arm_sve.h>
+
+void spread_gather_sve( //
+    spread_data_t const *data, spread_index_t const *indices, spread_data_t *result, std::size_t size) {
+    for (std::size_t i = 0; i < size; i += svcntw()) {
+        svbool_t pg = svwhilelt_b32(i, size);
+        svuint32_t sv_indices = svld1(pg, &indices[i]);
+        svfloat32_t sv_data = svld1_gather_offset(pg, data, sv_indices);
+        svst1(pg, &result[i], sv_data);
+    }
+}
+
+void spread_scatter_sve( //
+    spread_data_t *data, spread_index_t const *indices, spread_data_t const *source, std::size_t size) {
+    for (std::size_t i = 0; i < size; i += svcntw()) {
+        svbool_t pg = svwhilelt_b32(i, size);
+        svuint32_t sv_indices = svld1(pg, &indices[i]);
+        svfloat32_t sv_data = svld1(pg, &source[i]);
+        svst1_scatter_offset(pg, data, sv_indices, sv_data);
+    }
+}
+
+BENCHMARK_CAPTURE(spread_memory, gather_sve, spread_gather_sve)->Range(1 << 10, 1 << 20);
+BENCHMARK_CAPTURE(spread_memory, scatter_sve, spread_scatter_sve)->Range(1 << 10, 1 << 20);
+
+/**
+ *  @b Finally! This may just be the first place where SVE supersedes NEON
+ *  in functionality and has a bigger improvement over scalar code than AVX-512
+ *  on a similar-level x86 platform! Both gathers and scatters are consistently
+ *  @b 30% faster across small and large inputs!
+ */
+#endif
+
 #pragma endregion // Gather & Scatter Operations for Spread Data
 
 #pragma region Non Uniform Memory Access
