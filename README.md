@@ -59,6 +59,7 @@ The build will pull and compile several third-party dependencies from the source
 - Yaoyuan Guo's [yyjson](https://github.com/ibireme/yyjson) for faster JSON processing.
 - Google's [Abseil](https://github.com/abseil/abseil-cpp) replaces STL's associative containers.
 - Lewis Baker's [cppcoro](https://github.com/lewissbaker/cppcoro) implements C++20 coroutines.
+- Nvidia's [CCCL](https://github.com/nvidia/cccl) for GPU-accelerated computations.
 
 To control the output or run specific benchmarks, use the following flags:
 
