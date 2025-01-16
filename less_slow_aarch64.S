@@ -21,8 +21,6 @@ i32_add_asm_kernel:
     add     w0, w0, w1
     ret
 
-    .global tops_f64_neon_asm_kernel
-
 # ----------------------------------------------------------------------------
 # f64 micro-kernel:
 # Each FMLA vD.2d, vN.2d, vM.2d => 2 multiplies + 2 adds = 4 FLOPs.
@@ -126,8 +124,6 @@ tops_i8_neon_asm_kernel:
 
     mov     w0, #320
     ret
-
-    .global tops_u8_neon_asm_kernel
 
 # ----------------------------------------------------------------------------
 # u8 micro-kernel:
