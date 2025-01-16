@@ -1025,7 +1025,7 @@ BENCHMARK(bits_population_count_native);
 
 #pragma endregion // Expensive Integer Operations
 
-#pragma region Compute vs Memory Bounds with Matrix Multiplications
+#pragma region Compute Bound Linear Algebra
 
 /**
  *  Understanding common algorithmic design patterns across various computational
@@ -1349,7 +1349,7 @@ BENCHMARK(f32x4x4_matmul_avx512);
 
 typedef std::uint32_t (*theoretic_tops_kernel_t)(void);
 
-static void measure_tops(bm::State &state, theoretic_tops_kernel_t theoretic_tops_kernel) {
+static void theoretic_tops(bm::State &state, theoretic_tops_kernel_t theoretic_tops_kernel) {
     std::size_t tops = 0;
     for (auto _ : state) bm::DoNotOptimize(tops += theoretic_tops_kernel());
     state.SetItemsProcessed(tops);
@@ -1368,71 +1368,75 @@ static void measure_tops(bm::State &state, theoretic_tops_kernel_t theoretic_top
  */
 #if defined(__AVX512F__)
 extern "C" std::uint32_t tops_f64_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
 extern "C" std::uint32_t tops_f32_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__AVX512F__)
 
 #if defined(__AVX512FP16__)
 extern "C" std::uint32_t tops_f16_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__AVX512FP16__)
 
 #if defined(__AVX512BF16__)
 extern "C" std::uint32_t tops_bf16_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__AVX512BF16__)
 
 #if defined(__AVX512VNNI__)
 extern "C" std::uint32_t tops_i16_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, i8_avx512, tops_i16_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, i8_avx512, tops_i16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, i8_avx512, tops_i16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8_avx512, tops_i16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
 extern "C" std::uint32_t tops_u8i8_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__AVX512VNNI__)
 
 #if defined(__AVX2__)
 extern "C" std::uint32_t tops_f64_avx2_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
 extern "C" std::uint32_t tops_f32_avx2_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__AVX2__)
 
 #if defined(__ARM_NEON)
 extern "C" std::uint32_t tops_f32_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__ARM_NEON)
 
 #if defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
 extern "C" std::uint32_t tops_f16_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, f16_neon, tops_f16_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, f16_neon, tops_f16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f16_neon, tops_f16_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_neon, tops_f16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
 
 #if defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
 extern "C" std::uint32_t tops_bf16_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
 
 #if defined(__ARM_FEATURE_DOTPROD)
 extern "C" std::uint32_t tops_i8_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, i8_neon, tops_i8_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, i8_neon, tops_i8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, i8_neon, tops_i8_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8_neon, tops_i8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 extern "C" std::uint32_t tops_u8_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(measure_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(measure_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__ARM_FEATURE_DOTPROD)
 
-#pragma endregion // Compute vs Memory Bounds with Matrix Multiplications
+#pragma endregion // Compute Bound Linear Algebra
+
+#pragma endregion // - Numerics
+
+#pragma region - Memory
 
 #pragma region Alignment of Memory Accesses
 
@@ -1654,7 +1658,97 @@ std::size_t parse_size_string(std::string const &str) {
 
 #pragma endregion // Non Uniform Memory Access
 
-#pragma endregion // - Numerics
+#pragma region Memory Bound Linear Algebra
+#include <cblas.h>
+
+template <typename scalar_type_>
+static void cblas_tops(bm::State &state) {
+    // BLAS expects leading dimensions: `lda` = `ldb` = `ldc` = `n` for square inputs.
+    std::size_t n = static_cast<std::size_t>(state.range(0));
+    int const lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
+
+    // Allocate and initialize data
+    std::vector<scalar_type_> a(n * n), b(n * n), c(n * n, 0);
+    std::iota(a.begin(), a.end(), 0);
+    std::iota(b.begin(), b.end(), 0);
+
+    // BLAS defines GEMM routines as: alpha * a * b + beta * c
+    for (auto _ : state)
+        if constexpr (std::is_same_v<scalar_type_, float>)
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n, n, n, //
+                        /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
+                        /* beta: */ 0, c.data(), ldc);
+        else
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n, n, n, //
+                        /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
+                        /* beta: */ 0, c.data(), ldc);
+
+    std::size_t flops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    state.SetComplexityN(n);
+}
+
+BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+
+/**
+ *  Eigen is a high-level C++ library for linear algebra that provides a
+ *  convenient templated API for matrix operations.
+ *
+ *  @see Supported Preprocessor Directives:
+ *       https://eigen.tuxfamily.org/dox/TopicPreprocessorDirectives.html
+ */
+#define EIGEN_FAST_MATH 1             // Affects mostly trigonometry, less relevant for GEMM
+#define EIGEN_NO_IO 1                 // Faster compilation
+#define EIGEN_NO_AUTOMATIC_RESIZING 1 // Cleaner logic
+#include <Eigen/Dense>
+
+template <typename scalar_type_>
+static void eigen_tops(bm::State &state) {
+    // Matrix dimension
+    std::size_t n = static_cast<std::size_t>(state.range(0));
+
+    // Allocate Eigen matrices
+    Eigen::Matrix<scalar_type_, Eigen::Dynamic, Eigen::Dynamic> a(n, n);
+    Eigen::Matrix<scalar_type_, Eigen::Dynamic, Eigen::Dynamic> b(n, n);
+    Eigen::Matrix<scalar_type_, Eigen::Dynamic, Eigen::Dynamic> c(n, n);
+    std::iota(a.data(), a.data() + (n * n), scalar_type_(0));
+    std::iota(b.data(), b.data() + (n * n), scalar_type_(0));
+
+    for (auto _ : state) {
+        c.noalias() = a * b;         // `noalias()` avoids temporary accumulation overhead
+        bm::DoNotOptimize(c.data()); // prevent compiler from optimizing out
+    }
+
+    std::size_t flops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    state.SetComplexityN(n);
+}
+
+BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+
+/**
+ *  Arm provides C language extensions for half-precision numbers, like
+ *  the @b `__fp16` and @b `__bf16` types. When `__ARM_BF16_FORMAT_ALTERNATIVE`
+ *  is defined to 1 the only scalar instructions available are conversion
+ *  intrinsics between `bfloat16_t` and `float32_t`.
+ *
+ *  @see Arm C extensions: https://developer.arm.com/documentation/101028/0010/C-language-extensions?lang=en
+ */
+#if defined(__ARM_FEATURE_FP16_FML) && defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC)
+#include <arm_fp16.h>
+BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+#endif
+
+#if defined(__ARM_FEATURE_BF16)
+#include <arm_bf16.h>
+BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+#endif
+
+#pragma endregion // Memory Bound Linear Algebra
+
+#pragma endregion // - Memory
 
 #pragma region - Pipelines and Abstractions
 
