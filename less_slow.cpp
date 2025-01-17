@@ -1628,6 +1628,33 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
 
 #endif // defined(__AMX_TILE__)
 
+/**
+ *  For starters, Nvidia H100, the most common GPU in current HPC workloads,
+ *  claims the following numbers for its scalar operations and tensor cores:
+ *
+ *  - `f64`:        @b 34 Tera-OPS          @b 67 Tera-OPS
+ *  - `f32`:        @b 67 Tera-OPS          @b 989 Tera-OPS
+ *  - `bf16`:                               @b 1.9 Peta-OPS
+ *  - `f16`:                                @b 2.9 Peta-OPS
+ *  - `i8`:                                 @b 3.9 Peta-OPS
+ *
+ *  This requires up to 700 W of power. A typical high-end server CPU uses
+ *  under 500 W of power, and has similar number of cores to the GPUs number
+ *  of Streaming Multiprocessors @b (SMs). The CPU can also run at a higher
+ *  frequency, and has a larger cache, which is crucial for many workloads.
+ *
+ *  On Intel Granite Rapids, on a single core:
+ *
+ *  - AVX-512 `f64`:        @b 1.5 Giga-OPS
+ *  - AVX-512 `f32`:        @b 4.8 Giga-OPS
+ *
+ *  - AVX-512 `bf16`:       @b 123 Giga-OPS
+ *  - AVX-512 `f16`:        @b 357 Giga-OPS 🤯
+ *  - AVX-512 `i8`:         @b 708 Giga-OPS 🤯🤯
+ *
+ *  - AMX `bf16`:           @b 3.7 Tera-OPS
+ *  - AMX `i8` & `u8`:      @b 7.5 Tera-OPS 🤯🤯🤯
+ */
 #pragma endregion // Compute Bound Linear Algebra
 
 #pragma endregion // - Numerics
