@@ -751,7 +751,8 @@ BENCHMARK(rvo_impossible);
 
 static void f64_sin(bm::State &state) {
     double argument = std::rand(), result = 0;
-    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 1.0));
+    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 0.001));
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin);
@@ -775,10 +776,11 @@ BENCHMARK(f64_sin);
 static void f64_sin_maclaurin(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = argument - std::pow(argument, 3) / 6 + std::pow(argument, 5) / 120;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin);
@@ -806,11 +808,12 @@ BENCHMARK(f64_sin_maclaurin);
 static void f64_sin_maclaurin_powless(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin_powless);
@@ -850,11 +853,12 @@ BENCHMARK(f64_sin_maclaurin_powless);
 FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin_with_fast_math);
