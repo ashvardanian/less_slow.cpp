@@ -2,6 +2,7 @@
 # 3.16+ for native sanitizers support
 # 3.17+ for `FindCUDAToolkit`
 # 3.25.2 for CUDA20 support
+# The good news is that Ubuntu 24.04 comes with 3.28!
 cmake_minimum_required(VERSION 3.25.2 FATAL_ERROR)
 
 # ------------------------------------------------------------------------------
@@ -135,13 +136,15 @@ endif()
 
 # Nvidia's CUDA Core Compute Libraries for GPU acceleration
 if(USE_NVIDIA_CCCL)
-  FetchContent_Declare(
-    NvidiaCCCL
-    GIT_REPOSITORY https://github.com/nvidia/cccl.git
-    GIT_TAG v2.7.0
-    GIT_SHALLOW TRUE
-  )
-  FetchContent_MakeAvailable(NvidiaCCCL)
+  # CUB, Thrust, and other libraries of interest are now included into the
+  # CUDA Toolkit, so we don't need this anymore:
+  #
+  # FetchContent_Declare(NvidiaCCCL GIT_REPOSITORY https://github.com/nvidia/cccl.git)
+  # FetchContent_MakeAvailable(NvidiaCCCL)
+  find_package(CUDAToolkit REQUIRED)
+  message(STATUS "CUDA Toolkit Version: ${CUDAToolkit_VERSION}")
+  message(STATUS "CUDA Toolkit Include Path: ${CUDAToolkit_INCLUDE_DIRS}")
+  message(STATUS "CUDA Toolkit Libraries Path: ${CUDAToolkit_LIBRARY_DIR}")
 endif()
 
 # FMT for logging, as `std::format` has limited functionality
@@ -286,7 +289,10 @@ if(USE_INTEL_TBB)
 endif()
 
 if(USE_NVIDIA_CCCL)
-  target_link_libraries(less_slow PRIVATE CUB::CUB)
+  # For CUB/Thrust, rely on CUDA Toolkit's bundled versions
+  # These are automatically included when you include the CUDA Toolkit directories.
+  target_include_directories(less_slow PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+  target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas)
 endif()
 
 if(OpenMP_FOUND)
