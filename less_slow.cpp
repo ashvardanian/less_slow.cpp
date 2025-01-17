@@ -242,10 +242,10 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(physical_cores());
 
 static void sorting(bm::State &state) {
 
-    auto count = static_cast<std::size_t>(state.range(0));
+    auto length = static_cast<std::size_t>(state.range(0));
     auto include_preprocessing = static_cast<bool>(state.range(1));
 
-    std::vector<std::uint32_t> array(count);
+    std::vector<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -258,6 +258,8 @@ static void sorting(bm::State &state) {
         std::sort(array.begin(), array.end());
         bm::DoNotOptimize(array.size());
     }
+
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
 }
 
 BENCHMARK(sorting)->Args({3, false})->Args({3, true});
@@ -288,8 +290,8 @@ template <typename execution_policy_>
 static void sorting_with_executors( //
     bm::State &state, execution_policy_ &&policy) {
 
-    auto count = static_cast<std::size_t>(state.range(0));
-    std::vector<std::uint32_t> array(count);
+    auto length = static_cast<std::size_t>(state.range(0));
+    std::vector<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -298,9 +300,8 @@ static void sorting_with_executors( //
         bm::DoNotOptimize(array.size());
     }
 
-    state.SetComplexityN(count);
-    state.SetItemsProcessed(count * state.iterations());
-    state.SetBytesProcessed(count * state.iterations() * sizeof(std::uint32_t));
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
+    state.SetComplexityN(length);
 
     // Want to report something else? Sure, go ahead:
     //
@@ -429,9 +430,8 @@ static void sorting_with_openmp(bm::State &state) {
         bm::DoNotOptimize(array.size());
     }
 
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
     state.SetComplexityN(length);
-    state.SetItemsProcessed(length * state.iterations());
-    state.SetBytesProcessed(length * state.iterations() * sizeof(std::uint32_t));
 }
 
 BENCHMARK(sorting_with_openmp)
@@ -561,11 +561,14 @@ template <typename sorter_type_, std::size_t length_> //
 static void recursion_cost(bm::State &state) {
     using element_t = typename sorter_type_::element_t;
     sorter_type_ sorter;
-    std::vector<element_t> arr(length_);
+    std::vector<element_t> array(length_);
     for (auto _ : state) {
-        for (std::size_t i = 0; i != length_; ++i) arr[i] = length_ - i;
-        sorter(arr.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
+        for (std::size_t i = 0; i != length_; ++i) array[i] = length_ - i;
+        sorter(array.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
     }
+
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
+    state.SetComplexityN(length_);
 }
 
 using recursive_sort_i32s = quick_sort_recurse<std::int32_t>;
