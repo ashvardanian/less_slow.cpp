@@ -1551,26 +1551,19 @@ BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10)
  */
 
 bool enable_amx() {
-    // Thanks to the good people of the Rust community:
-    // https://github.com/rust-lang/rust/issues/107795
-    int _XFEATURE_MASK_XTILECFG = 1 << 17;
-    int _XFEATURE_MASK_XTILEDATA = 1 << 18;
-    int _ARCH_GET_XCOMP_PERM = 0x1022;
-    int _ARCH_REQ_XCOMP_PERM = 0x1023;
-    int _SYS_arch_prctl = 158;
-
+    constexpr int _SYS_arch_prctl = 158;
+    constexpr int ARCH_REQ_XCOMP_PERM = 0x1023;
+    constexpr int ARCH_GET_XCOMP_PERM = 0x1022;
+    constexpr int XFEATURE_XTILEDATA = 18;
+    constexpr int XFEATURE_XTILECFG = 17;
+    constexpr unsigned long XFEATURE_MASK_XTILE = (1UL << XFEATURE_XTILECFG) | (1UL << XFEATURE_XTILEDATA);
     unsigned long bitmask = 0;
-    long status = syscall(_SYS_arch_prctl, _ARCH_GET_XCOMP_PERM, &bitmask);
-    if (status != 0) return false;
-    if (bitmask & _XFEATURE_MASK_XTILEDATA) return true;
 
-    status = syscall(_SYS_arch_prctl, _ARCH_REQ_XCOMP_PERM, 18);
-    if (status != 0) return false;
-    status = syscall(_SYS_arch_prctl, _ARCH_GET_XCOMP_PERM, &bitmask);
-
-    if (status != 0 || !(bitmask & _XFEATURE_MASK_XTILEDATA)) return false;
-    (void)_XFEATURE_MASK_XTILECFG;
-    return true;
+    // Request `XTILEDATA` permission
+    if (syscall(_SYS_arch_prctl, ARCH_REQ_XCOMP_PERM, XFEATURE_XTILEDATA) != 0) return false;
+    // Validate `XTILEDATA` and `XTILECFG` permissions
+    if (syscall(_SYS_arch_prctl, ARCH_GET_XCOMP_PERM, &bitmask) != 0) return false;
+    return (bitmask & XFEATURE_MASK_XTILE) != 0;
 }
 
 void configure_amx() {
@@ -1583,7 +1576,7 @@ void configure_amx() {
     alignas(64) char tiles_config[64];
 
     // Memset in one cycle, like a boss :)
-    // std::memset(tiles_config, 0, sizeof(tiles_config));
+    // As opposed to: `std::memset(tiles_config, 0, sizeof(tiles_config))`.
     _mm512_storeu_si512((__m512i *)tiles_config, _mm512_setzero_si512());
 
     // Only one palette is currently supported:
@@ -1600,13 +1593,16 @@ void configure_amx() {
     // the next person reading this will be painting the walls with their brains :)
     tiles_rows_ptr[0] = tiles_rows_ptr[1] = tiles_rows_ptr[2] = tiles_rows_ptr[3] = 16;
     tiles_colsb_ptr[0] = tiles_colsb_ptr[1] = tiles_colsb_ptr[2] = tiles_colsb_ptr[3] = 64;
+    // If you forget to set any one of those, you'll see an "Illegal Instruction"!
+    tiles_rows_ptr[4] = tiles_rows_ptr[5] = tiles_rows_ptr[6] = tiles_rows_ptr[7] = 16;
+    tiles_colsb_ptr[4] = tiles_colsb_ptr[5] = tiles_colsb_ptr[6] = tiles_colsb_ptr[7] = 64;
 
     // We will use 4 registers for inputs, and 4 registers for outputs
     _tile_loadconfig(&tiles_config);
-    // _tile_zero(4);
-    // _tile_zero(5);
-    // _tile_zero(6);
-    // _tile_zero(7);
+    _tile_zero(4);
+    _tile_zero(5);
+    _tile_zero(6);
+    _tile_zero(7);
 }
 
 #if defined(__AMX_BF16__)
