@@ -2284,16 +2284,17 @@ BENCHMARK(packaging_stl_any)->MinTime(2);
  *       https://github.com/ashvardanian/stringzilla?tab=readme-ov-file#memory-ownership-and-small-string-optimization
  */
 
-static void small_string(bm::State &state) {
+static void construct_string(bm::State &state) {
     std::size_t length = static_cast<std::size_t>(state.range(0));
     for (auto _ : state) bm::DoNotOptimize(std::string(length, 'x'));
 }
 
 // clang-format off
-BENCHMARK(small_string)
+BENCHMARK(construct_string)
     ->Arg(7)->Arg(8)->Arg(15)->Arg(16)
     ->Arg(22)->Arg(23)->Arg(24)->Arg(25)
-    ->Arg(31)->Arg(32)->Arg(33);
+    ->Arg(31)->Arg(32)->Arg(33)
+    ->Name("construct_string/length=");
 // clang-format on
 
 /**
