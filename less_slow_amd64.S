@@ -17,6 +17,10 @@
     .global tops_f64_avx2_asm_kernel
     .global tops_f32_avx2_asm_kernel
 
+    .global tops_bf16_amx_asm_kernel
+    .global tops_u8_amx_asm_kernel
+    .global tops_i8_amx_asm_kernel
+
 # ----------------------------------------------------------------------------
 # Simple function that adds two 32-bit signed integers using System V AMD64.
 # Arguments in 32-bit registers EDI (a) and ESI (b). Return value in EAX.
@@ -152,6 +156,46 @@ tops_f32_avx2_asm_kernel:
     vfmadd231ps %ymm9, %ymm10, %ymm11
     vfmadd231ps %ymm12, %ymm13, %ymm14
     movabsq $80, %rax
+    ret
+
+# ----------------------------------------------------------------------------
+# AMX is an Intel-specific extension that introduces a new set of registers
+# and instructions for matrix multiplication. Proper usage would require
+# loading the tile configuration file, setting up the tile registers, loading
+# a rectangular tile of the bigger matrix, performing the multiplications and
+# putting back. We will avoid most of those steps!
+#
+# https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#amxtechs=AMX_BF16,AMX_INT8,AMX_FP16
+# ----------------------------------------------------------------------------
+
+tops_bf16_amx_asm_kernel:
+    # Each line performs a 16x32x16 matrix multiplication.
+    # That's 16x32x16 scalar multiplications and 16x31x16 scalar additions.
+    # That's 16,128 scalar operations per line or 64,512 scalar operations total.
+    tdpbf16ps %tmm7, %tmm0, %tmm1
+    tdpbf16ps %tmm6, %tmm2, %tmm3
+    tdpbf16ps %tmm5, %tmm0, %tmm2
+    tdpbf16ps %tmm4, %tmm1, %tmm3
+    movabsq $64512, %rax
+    ret
+
+tops_u8_amx_asm_kernel:
+    # Each line performs a 16x64x16 matrix multiplication.
+    # That's 16x64x16 scalar multiplications and 16x63x16 scalar additions.
+    # That's 32,512 scalar operations per line or 130,048 scalar operations total.
+    tdpbuud %tmm7, %tmm0, %tmm1
+    tdpbuud %tmm6, %tmm2, %tmm3
+    tdpbuud %tmm5, %tmm0, %tmm2
+    tdpbuud %tmm4, %tmm1, %tmm3
+    movabsq $130048, %rax
+    ret
+
+tops_i8_amx_asm_kernel:
+    tdpbssd %tmm7, %tmm0, %tmm1
+    tdpbssd %tmm6, %tmm2, %tmm3
+    tdpbssd %tmm5, %tmm0, %tmm2
+    tdpbssd %tmm4, %tmm1, %tmm3
+    movabsq $130048, %rax
     ret
 
 # ----------------------------------------------------------------------------

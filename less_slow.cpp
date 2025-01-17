@@ -1440,8 +1440,23 @@ BENCHMARK(f32x4x4_matmul_avx512);
  */
 
 typedef std::uint32_t (*theoretic_tops_kernel_t)(void);
+typedef void (*theoretic_tops_prepare_t)(void);
 
-static void theoretic_tops(bm::State &state, theoretic_tops_kernel_t theoretic_tops_kernel) {
+static void theoretic_tops(                        //
+    bm::State &state,                              //
+    theoretic_tops_kernel_t theoretic_tops_kernel, //
+    theoretic_tops_prepare_t prepare = nullptr) {
+
+    // If there is some preparation to be done, do it.
+    if (prepare) try {
+            prepare();
+        }
+        catch (std::exception const &e) {
+            state.SkipWithError(e.what());
+            return;
+        }
+
+    // Each kernel returns the number of TOPS.
     std::size_t tops = 0;
     for (auto _ : state) bm::DoNotOptimize(tops += theoretic_tops_kernel());
     state.SetItemsProcessed(tops);
@@ -1523,6 +1538,99 @@ extern "C" std::uint32_t tops_u8_neon_asm_kernel(void);
 BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10);
 BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__ARM_FEATURE_DOTPROD)
+
+#if defined(__AMX_TILE__)
+/**
+ *  Most modern chip vendors introduce specialized instructions for matrix
+ *  multiplications! On Intel (unlike AMD), they are called Advanced Matrix
+ *  Extensions @b (AMX).
+ *
+ *  There are 8 specialized @b TMM registers, most compilers don't even have
+ *  working intrinsics for them, but even writing Assembly is not enough to
+ *  use them - you need to instruct the Linux kernel to enable them.
+ */
+
+bool enable_amx() {
+    // Thanks to the good people of the Rust community:
+    // https://github.com/rust-lang/rust/issues/107795
+    int _XFEATURE_MASK_XTILECFG = 1 << 17;
+    int _XFEATURE_MASK_XTILEDATA = 1 << 18;
+    int _ARCH_GET_XCOMP_PERM = 0x1022;
+    int _ARCH_REQ_XCOMP_PERM = 0x1023;
+    int _SYS_arch_prctl = 158;
+
+    unsigned long bitmask = 0;
+    long status = syscall(_SYS_arch_prctl, _ARCH_GET_XCOMP_PERM, &bitmask);
+    if (status != 0) return false;
+    if (bitmask & _XFEATURE_MASK_XTILEDATA) return true;
+
+    status = syscall(_SYS_arch_prctl, _ARCH_REQ_XCOMP_PERM, 18);
+    if (status != 0) return false;
+    status = syscall(_SYS_arch_prctl, _ARCH_GET_XCOMP_PERM, &bitmask);
+
+    if (status != 0 || !(bitmask & _XFEATURE_MASK_XTILEDATA)) return false;
+    (void)_XFEATURE_MASK_XTILECFG;
+    return true;
+}
+
+void configure_amx() {
+    if (!enable_amx()) throw std::runtime_error("AMX not enabled!");
+
+    // Using Intel AMX instructions we can perform 16x32x16 brain-float
+    // multiplication using specialized matrix-multiplication hardware,
+    // accumulating the results in a 16x16 single-precision matrix.
+    // Alternatively we can perform 16x64x16 `int8` multiplications.
+    alignas(64) char tiles_config[64];
+
+    // Memset in one cycle, like a boss :)
+    // std::memset(tiles_config, 0, sizeof(tiles_config));
+    _mm512_storeu_si512((__m512i *)tiles_config, _mm512_setzero_si512());
+
+    // Only one palette is currently supported:
+    std::uint8_t *palette_id_ptr = (std::uint8_t *)(&tiles_config[0]);
+    *palette_id_ptr = 1;
+
+    // The geniuses behind AMX decided to use different precisions for
+    // the rows and columns. Wasted 2 hours of my life not noticing this!
+    std::uint16_t *tiles_colsb_ptr = (std::uint16_t *)(&tiles_config[16]);
+    std::uint8_t *tiles_rows_ptr = (std::uint8_t *)(&tiles_config[48]);
+
+    // Important to note, AMX doesn't care about the real shape of our matrix,
+    // it only cares about it's own tile shape. Keep it simple, otherwise
+    // the next person reading this will be painting the walls with their brains :)
+    tiles_rows_ptr[0] = tiles_rows_ptr[1] = tiles_rows_ptr[2] = tiles_rows_ptr[3] = 16;
+    tiles_colsb_ptr[0] = tiles_colsb_ptr[1] = tiles_colsb_ptr[2] = tiles_colsb_ptr[3] = 64;
+
+    // We will use 4 registers for inputs, and 4 registers for outputs
+    _tile_loadconfig(&tiles_config);
+    // _tile_zero(4);
+    // _tile_zero(5);
+    // _tile_zero(6);
+    // _tile_zero(7);
+}
+
+#if defined(__AMX_BF16__)
+extern "C" std::uint32_t tops_bf16_amx_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_amx, tops_bf16_amx_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_amx, tops_bf16_amx_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+#endif // defined(__AMX_BF16__)
+
+#if defined(__AMX_INT8__)
+extern "C" std::uint32_t tops_u8_amx_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, u8_amx, tops_u8_amx_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, u8_amx, tops_u8_amx_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+extern "C" std::uint32_t tops_i8_amx_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+#endif // defined(__AMX_INT8__)
+
+#endif // defined(__AMX_TILE__)
 
 #pragma endregion // Compute Bound Linear Algebra
 
