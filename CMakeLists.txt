@@ -244,6 +244,7 @@ if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" OR CMAKE_CUDA_COMPILER_ID STREQUAL "
     -Wfatal-errors # Stop on first error
     -fopenmp # OpenMP support, also requires linking
     --expt-relaxed-constexpr # Relax `constexpr` restrictions
+    -w # Suppress warnings, we can't resolve all warning across all compilers
   )
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   # A few useful options for GCC:
