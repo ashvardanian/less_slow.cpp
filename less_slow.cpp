@@ -1171,8 +1171,8 @@ static void f32x4x4_matmul(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul);
@@ -1231,8 +1231,8 @@ static void f32x4x4_matmul_unrolled(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_unrolled_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul_unrolled);
@@ -1329,8 +1329,8 @@ static void f32x4x4_matmul_sse41(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_sse41_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul_sse41);
@@ -1418,8 +1418,8 @@ static void f32x4x4_matmul_avx512(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_avx512_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 BENCHMARK(f32x4x4_matmul_avx512);
 
@@ -1444,6 +1444,11 @@ BENCHMARK(f32x4x4_matmul_avx512);
  *  Benchmark everything! Don't assume less work translates to faster execution.
  *  Read the specs of your hardware to understand it's theoretical upper limits,
  *  and double-check them with stress-tests. Pure @b Assembly is perfect for this!
+ *
+ *  Let's implement a few simple Assembly kernels for Fused-Multiply-Add @b (FMA)
+ *  operations, assuming the data is already in our registers and aligned and
+ *  represents a small slice of a very large matrix. That way we can infer the
+ *  theoretical upper bounds for matrix multiplication throughput on our CPU.
  */
 
 typedef std::uint32_t (*theoretic_tops_kernel_t)(void);
@@ -1465,8 +1470,8 @@ static void theoretic_tops(                        //
 
     // Each kernel returns the number of TOPS.
     std::size_t tops = 0;
-    for (auto _ : state) bm::DoNotOptimize(tops += theoretic_tops_kernel());
-    state.SetItemsProcessed(tops);
+    for (auto _ : state) bm::DoNotOptimize(tops = theoretic_tops_kernel());
+    state.counters["TOPS"] = bm::Counter(tops * state.iterations() * state.threads() * 1.0, bm::Counter::kIsRate);
 }
 
 /**
@@ -1503,11 +1508,11 @@ BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->Min
 
 #if defined(__AVX512VNNI__)
 extern "C" std::uint32_t tops_i16_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, i8_avx512, tops_i16_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, i8_avx512, tops_i16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, i16_avx512, tops_i16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i16_avx512, tops_i16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
 extern "C" std::uint32_t tops_u8i8_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, u8i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, u8i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__AVX512VNNI__)
 
 #if defined(__AVX2__)
@@ -1639,6 +1644,8 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *  For starters, Nvidia H100, the most common GPU in current HPC workloads,
  *  claims the following numbers for its scalar operations and tensor cores:
  *
+ *                  Scalar Operations       Tensor Operations
+ *
  *  - `f64`:        @b 34 Tera-OPS          @b 67 Tera-OPS
  *  - `f32`:        @b 67 Tera-OPS          @b 989 Tera-OPS
  *  - `bf16`:                               @b 1.9 Peta-OPS
@@ -1649,18 +1656,33 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *  under 500 W of power, and has similar number of cores to the GPUs number
  *  of Streaming Multiprocessors @b (SMs). The CPU can also run at a higher
  *  frequency, and has a larger cache, which is crucial for many workloads.
+ *  On a single CPU core, we can achieve the following FMA throughput:
  *
- *  On Intel Granite Rapids, on a single core:
+ *                          Intel Granite Rapids    AMD Zen4
  *
- *  - AVX-512 `f64`:        @b 1.5 Giga-OPS
- *  - AVX-512 `f32`:        @b 4.8 Giga-OPS
+ *  - AVX-512 `f64`:        @b 1.5 Giga-OPS         @b 58 Giga-OPS
+ *  - AVX-512 `f32`:        @b 4.8 Giga-OPS         @b 117 Giga-OPS
  *
- *  - AVX-512 `bf16`:       @b 123 Giga-OPS
- *  - AVX-512 `f16`:        @b 357 Giga-OPS 🤯
- *  - AVX-512 `i8 • u8`:    @b 708 Giga-OPS 🤯🤯
+ *  - AVX-512 `bf16`:       @b 123 Giga-OPS         @b 235 Giga-OPS
+ *  - AVX-512 `f16`:        @b 357 Giga-OPS 🤯🤯
+ *  - AVX-512 `i8 • u8`:    @b 708 Giga-OPS         @b 470 Giga-Ops 🤯🤯
  *
  *  - AMX `bf16`:           @b 3.7 Tera-OPS
- *  - AMX `i8` & `u8`:      @b 7.5 Tera-OPS 🤯🤯🤯
+ *  - AMX `i8` and `u8`:    @b 7.5 Tera-OPS 🤯🤯🤯
+ *
+ *  On a typical dual-socket system:
+ *
+ *                          Intel Granite Rapids    AMD Zen4
+ *
+ *  - AVX-512 `f64`:        @b ___ Tera-OPS         @b 9.3 Tera-OPS
+ *  - AVX-512 `f32`:        @b ___ Tera-OPS         @b 20.1 Tera-OPS
+ *
+ *  - AVX-512 `bf16`:       @b ___ Tera-OPS         @b 41.8 Tera-OPS
+ *  - AVX-512 `f16`:        @b ___ Tera-OPS         @b 39.6 Tera-Ops
+ *  - AVX-512 `i8 • u8`:    @b ___ Tera-OPS         @b 81.3 Tera-Ops
+ *
+ *  - AMX `bf16`:           @b __ Tera-OPS
+ *  - AMX `i8` and `u8`:    @b __ Tera-OPS
  */
 #pragma endregion // Compute Bound Linear Algebra
 
@@ -1952,13 +1974,13 @@ static void cblas_tops(bm::State &state) {
                         /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
                         /* beta: */ 0, c.data(), ldc);
 
-    std::size_t flops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
     state.SetComplexityN(n);
 }
 
-BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
-BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
 
 /**
  *  Eigen is a high-level C++ library for linear algebra that provides a
@@ -1989,13 +2011,13 @@ static void eigen_tops(bm::State &state) {
         bm::DoNotOptimize(c.data()); // prevent compiler from optimizing out
     }
 
-    std::size_t flops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
     state.SetComplexityN(n);
 }
 
-BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
-BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
 
 /**
  *  Arm provides C language extensions for half-precision numbers, like
@@ -2007,14 +2029,18 @@ BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(be
  */
 #if defined(__ARM_FEATURE_FP16_FML) && defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC)
 #include <arm_fp16.h>
-BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
 #endif
 
 #if defined(__ARM_FEATURE_BF16)
 #include <arm_bf16.h>
-BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
 #endif
 
+/**
+ *  Now we can compare the theoretical limits to the actual performance
+ *  of Eigen and BLAS libraries.
+ */
 #pragma endregion // Memory Bound Linear Algebra
 
 #pragma endregion // - Memory
