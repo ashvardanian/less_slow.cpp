@@ -240,7 +240,11 @@ if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" OR CMAKE_CUDA_COMPILER_ID STREQUAL "
   set_property(SOURCE less_slow.cpp PROPERTY LANGUAGE CUDA)
   set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
   set_target_properties(less_slow PROPERTIES CUDA_ARCHITECTURES "86")
-  target_compile_options(less_slow PRIVATE --expt-relaxed-constexpr)
+  target_compile_options(less_slow PRIVATE
+    -Wfatal-errors # Stop on first error
+    -fopenmp # OpenMP support, also requires linking
+    --expt-relaxed-constexpr # Relax `constexpr` restrictions
+  )
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   # A few useful options for GCC:
   target_compile_options(less_slow PRIVATE

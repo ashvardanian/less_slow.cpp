@@ -1941,14 +1941,14 @@ class prime_factors_view : public std::ranges::view_interface<prime_factors_view
     std::uint64_t number_ = 0;
 
   public:
-    prime_factors_view() noexcept {}
-    explicit prime_factors_view(std::uint64_t n) noexcept : number_(n) {}
+    constexpr prime_factors_view() noexcept {}
+    explicit constexpr prime_factors_view(std::uint64_t n) noexcept : number_(n) {}
 
     class iterator {
         std::uint64_t number_ = 0;
         std::uint64_t factor_ = 0;
 
-        inline void advance() noexcept {
+        constexpr void advance() noexcept {
             // Handle factor 2 separately
             if (factor_ == 2) {
                 // Keep dividing by 2 as long as the number is even
@@ -1979,25 +1979,25 @@ class prime_factors_view : public std::ranges::view_interface<prime_factors_view
         using iterator_category = std::input_iterator_tag;
         using iterator_concept = std::input_iterator_tag;
 
-        iterator() = default;
-        iterator(std::uint64_t n) noexcept : number_(n), factor_(2) { advance(); }
-        std::uint64_t operator*() const noexcept { return factor_; }
-        iterator &operator++() noexcept {
+        constexpr iterator() = default;
+        constexpr iterator(std::uint64_t n) noexcept : number_(n), factor_(2) { advance(); }
+        constexpr std::uint64_t operator*() const noexcept { return factor_; }
+        constexpr iterator &operator++() noexcept {
             advance();
             return *this;
         }
-        iterator operator++(int) noexcept {
+        constexpr iterator operator++(int) noexcept {
             iterator temp = *this;
             ++(*this);
             return temp;
         }
 
-        bool operator==(iterator const &other) const noexcept { return factor_ == other.factor_; }
-        bool operator!=(iterator const &other) const noexcept { return factor_ != other.factor_; }
+        constexpr bool operator==(iterator const &other) const noexcept { return factor_ == other.factor_; }
+        constexpr bool operator!=(iterator const &other) const noexcept { return factor_ != other.factor_; }
     };
 
-    iterator begin() const noexcept { return iterator(number_); }
-    iterator end() const noexcept { return iterator(); }
+    constexpr iterator begin() const noexcept { return iterator(number_); }
+    constexpr iterator end() const noexcept { return iterator(); }
 };
 
 static_assert(std::ranges::view<prime_factors_view>, "The range must model `std::ranges::view`");
@@ -2008,7 +2008,7 @@ static_assert(std::ranges::input_range<prime_factors_view>, "The range must mode
  *          Useful for search predicates.
  */
 template <typename function_type_>
-auto not_fn(function_type_ f) noexcept {
+constexpr auto not_fn(function_type_ f) noexcept {
     return [f](auto &&...args) { return !f(std::forward<decltype(args)>(args)...); };
 }
 
