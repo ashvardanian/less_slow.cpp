@@ -1771,6 +1771,7 @@ static void pipeline_cpp11_std_function(bm::State &state) {
 
 BENCHMARK(pipeline_cpp11_std_function);
 
+#if defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine) && !defined(__NVCC__)
 /**
  *  C++20 introduces @b coroutines in the language, but not in the library,
  *  so we need to provide a minimal implementation of a "generator" class.
@@ -1907,6 +1908,7 @@ BENCHMARK(pipeline_cpp20_coroutine<cppcoro_generator_t>);
 BENCHMARK(pipeline_cpp20_coroutine<cppcoro_recursive_generator_t>);
 
 #pragma endregion // Coroutines and Asynchronous Programming
+#endif            // defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine) && !defined(__NVCC__)
 
 #pragma region Ranges and Iterators
 #if defined(__cpp_lib_ranges)
@@ -2464,6 +2466,7 @@ void parse_stl(bm::State &state, std::string_view config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
+#if !defined(__NVCC__)
 /**
  *  The STL's `std::ranges::views::split` won't compile with a predicate lambda,
  *  but Eric Niebler's `ranges-v3` library has a `ranges::view::split_when` that does.
@@ -2508,6 +2511,8 @@ void parse_ranges(bm::State &state, std::string_view config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
+#endif // !defined(__NVCC__)
+
 #include <stringzilla/stringzilla.hpp>
 
 void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
@@ -2542,7 +2547,9 @@ void parse_sz(bm::State &state, std::string_view config_text) {
 }
 
 BENCHMARK_CAPTURE(parse_stl, short_, short_config_text)->MinTime(2);
+#if !defined(__NVCC__)
 BENCHMARK_CAPTURE(parse_ranges, short_, short_config_text)->MinTime(2);
+#endif
 BENCHMARK_CAPTURE(parse_sz, short_, short_config_text)->MinTime(2);
 
 /**
@@ -2590,7 +2597,9 @@ monitoring_dashboard_url_for_production_insights: https://dashboard.company.com/
 )";
 
 BENCHMARK_CAPTURE(parse_stl, long_, long_config_text)->MinTime(2);
+#if !defined(__NVCC__)
 BENCHMARK_CAPTURE(parse_ranges, long_, long_config_text)->MinTime(2);
+#endif
 BENCHMARK_CAPTURE(parse_sz, long_, long_config_text)->MinTime(2);
 
 /**
@@ -3325,6 +3334,12 @@ struct graph_flat_set_t {
         node_id_t from;
         node_id_t to;
         edge_weight_t weight;
+
+        //! NVCC's `std::construct_at` requires those default constructors
+        constexpr edge_t() noexcept = default;
+        constexpr edge_t(edge_t const &) noexcept = default;
+        constexpr edge_t(node_id_t from, node_id_t to, edge_weight_t weight) noexcept
+            : from(from), to(to), weight(weight) {}
     };
     struct equal_t {
         using is_transparent = std::true_type;
