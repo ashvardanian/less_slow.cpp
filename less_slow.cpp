@@ -1650,12 +1650,51 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *
  *  - AVX-512 `bf16`:       @b 123 Giga-OPS
  *  - AVX-512 `f16`:        @b 357 Giga-OPS 🤯
- *  - AVX-512 `i8`:         @b 708 Giga-OPS 🤯🤯
+ *  - AVX-512 `i8 • u8`:    @b 708 Giga-OPS 🤯🤯
  *
  *  - AMX `bf16`:           @b 3.7 Tera-OPS
  *  - AMX `i8` & `u8`:      @b 7.5 Tera-OPS 🤯🤯🤯
  */
 #pragma endregion // Compute Bound Linear Algebra
+
+#pragma region // Port Interleaving and Latency Hiding
+
+/**
+ *  You may have noticed, that we sometimes have multiple pieces of silicon
+ *  with same functionality. If we know that different instructions are
+ *  executed on different ports (or execution units), we can interleave them
+ *  saturating the CPU even further!
+ */
+
+#if defined(__AVX512VNNI__) && defined(__AMX_INT8__)
+
+extern "C" std::uint32_t tops_i8u8_amx_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i8u8_amx_avx512, tops_i8u8_amx_avx512_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8u8_amx_avx512, tops_i8u8_amx_avx512_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+
+#endif // defined(__AVX512VNNI__) && defined(__AMX_INT8__)
+
+/**
+ *  Combining "AMX_INT8" and "AVX512_VNNI" instructions, we can grow
+ *  from 7.5 Tera-OPS and 708 Giga-OPS to @b 7.8 Tera-OPS. Granted, its not
+ *  a life-altering improvement, but in other applications it could be!
+ *
+ *  A great can be CRC32 hashing, combining dedicated `CRC32` and `VPCLMULQDQ`
+ *  instructions to achieve 31 GB/s throughput, hiding the latency of some
+ *  instructions while others execute on a different port.
+ *
+ *  - `CRC32 (R64, R64)`: 3 cycle latency on port 1 on Intel Ice Lake.
+ *  - `VPCLMULQDQ (ZMM, ZMM, ZMM, I8)`: 8 cycle latency, which starts execution
+ *    on ports 0 or 5 and retires from port 5 on the same CPU.
+ *
+ *  @see "Faster CRC32-C on x86" by Peter Cawley:
+ *       https://www.corsix.org/content/fast-crc32c-4k
+ *       https://github.com/corsix/fast-crc32
+ */
+
+#pragma endregion // Port Interleaving and Latency Hiding
 
 #pragma endregion // - Numerics
 

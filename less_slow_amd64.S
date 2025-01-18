@@ -20,6 +20,8 @@
     .global tops_bf16_amx_asm_kernel
     .global tops_u8_amx_asm_kernel
     .global tops_i8_amx_asm_kernel
+    
+    .global tops_i8u8_amx_avx512_asm_kernel
 
 # ----------------------------------------------------------------------------
 # Simple function that adds two 32-bit signed integers using System V AMD64.
@@ -196,6 +198,64 @@ tops_i8_amx_asm_kernel:
     tdpbssd %tmm5, %tmm0, %tmm2
     tdpbssd %tmm4, %tmm1, %tmm3
     movabsq $130048, %rax
+    ret
+
+# ----------------------------------------------------------------------------
+# Mixed kernels that combine AMX and AVX-512 instructions, hiding the latency
+# of some instructions by interleaving them with others.
+# ----------------------------------------------------------------------------
+
+tops_i8u8_amx_avx512_asm_kernel:
+
+    tdpbssd %tmm7, %tmm0, %tmm1
+    vpdpbusd %zmm0, %zmm1, %zmm2
+    vpdpbusd %zmm3, %zmm4, %zmm5
+    vpdpbusd %zmm6, %zmm7, %zmm8
+    vpdpbusd %zmm9, %zmm10, %zmm11
+    vpdpbusd %zmm12, %zmm13, %zmm14
+    vpdpbusd %zmm15, %zmm16, %zmm17
+    vpdpbusd %zmm18, %zmm19, %zmm20
+    vpdpbusd %zmm21, %zmm22, %zmm23
+    vpdpbusd %zmm24, %zmm25, %zmm26
+    vpdpbusd %zmm27, %zmm28, %zmm29
+
+    tdpbssd %tmm6, %tmm2, %tmm3
+    vpdpbusd %zmm0, %zmm1, %zmm2
+    vpdpbusd %zmm3, %zmm4, %zmm5
+    vpdpbusd %zmm6, %zmm7, %zmm8
+    vpdpbusd %zmm9, %zmm10, %zmm11
+    vpdpbusd %zmm12, %zmm13, %zmm14
+    vpdpbusd %zmm15, %zmm16, %zmm17
+    vpdpbusd %zmm18, %zmm19, %zmm20
+    vpdpbusd %zmm21, %zmm22, %zmm23
+    vpdpbusd %zmm24, %zmm25, %zmm26
+    vpdpbusd %zmm27, %zmm28, %zmm29
+
+    tdpbssd %tmm5, %tmm0, %tmm2
+    vpdpbusd %zmm0, %zmm1, %zmm2
+    vpdpbusd %zmm3, %zmm4, %zmm5
+    vpdpbusd %zmm6, %zmm7, %zmm8
+    vpdpbusd %zmm9, %zmm10, %zmm11
+    vpdpbusd %zmm12, %zmm13, %zmm14
+    vpdpbusd %zmm15, %zmm16, %zmm17
+    vpdpbusd %zmm18, %zmm19, %zmm20
+    vpdpbusd %zmm21, %zmm22, %zmm23
+    vpdpbusd %zmm24, %zmm25, %zmm26
+    vpdpbusd %zmm27, %zmm28, %zmm29
+    
+    tdpbssd %tmm4, %tmm1, %tmm3
+    vpdpbusd %zmm0, %zmm1, %zmm2
+    vpdpbusd %zmm3, %zmm4, %zmm5
+    vpdpbusd %zmm6, %zmm7, %zmm8
+    vpdpbusd %zmm9, %zmm10, %zmm11
+    vpdpbusd %zmm12, %zmm13, %zmm14
+    vpdpbusd %zmm15, %zmm16, %zmm17
+    vpdpbusd %zmm18, %zmm19, %zmm20
+    vpdpbusd %zmm21, %zmm22, %zmm23
+    vpdpbusd %zmm24, %zmm25, %zmm26
+    vpdpbusd %zmm27, %zmm28, %zmm29
+
+    movabsq $135168, %rax
     ret
 
 # ----------------------------------------------------------------------------
