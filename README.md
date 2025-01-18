@@ -1,7 +1,7 @@
 # Learning to Write _Less Slow_ C, C++, and Assembly Code
 
 > The benchmarks in this repository don't aim to cover every topic entirely, but they help form a mindset and intuition for performance-oriented software design.
-> It also provides an example of using some non-STL but de facto standard libraries in C++, importing them via CMake, and compiling from source.
+> It also provides an example of using some non-[STL](https://en.wikipedia.org/wiki/Standard_Template_Library) but de facto standard libraries in C++, importing them via CMake, and compiling from source.
 > For higher-level abstractions and languages, check out [`less_slow.rs`](https://github.com/ashvardanian/less_slow.rs) and [`less_slow.py`](https://github.com/ashvardanian/less_slow.py).
 
 Much modern code suffers from common pitfalls, such as bugs, security vulnerabilities, and __performance bottlenecks__.
@@ -32,7 +32,7 @@ Follow the instructions below to run the code in your environment and compare it
 
 ## Running the Benchmarks
 
-If you are on Windows, it's recommended that you set up a Linux environment using [WSL](https://docs.microsoft.com/en-us/windows/wsl/install).
+- If you are on Windows, it's recommended that you set up a Linux environment using [WSL](https://docs.microsoft.com/en-us/windows/wsl/install).
 - If you are on MacOS, consider using the non-native distribution of Clang from [Homebrew](https://brew.sh) or [MacPorts](https://www.macports.org).
 - If you are on Linux, make sure to install CMake and a recent version of GCC or Clang compilers to support C++20 features.
 

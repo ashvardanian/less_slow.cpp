@@ -344,10 +344,10 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(physical_cores());
 
 static void sorting(bm::State &state) {
 
-    auto count = static_cast<std::size_t>(state.range(0));
+    auto length = static_cast<std::size_t>(state.range(0));
     auto include_preprocessing = static_cast<bool>(state.range(1));
 
-    std::vector<std::uint32_t> array(count);
+    std::vector<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -360,6 +360,8 @@ static void sorting(bm::State &state) {
         std::sort(array.begin(), array.end());
         bm::DoNotOptimize(array.size());
     }
+
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
 }
 
 BENCHMARK(sorting)->Args({3, false})->Args({3, true});
@@ -390,8 +392,8 @@ template <typename execution_policy_>
 static void sorting_with_executors( //
     bm::State &state, execution_policy_ &&policy) {
 
-    auto count = static_cast<std::size_t>(state.range(0));
-    std::vector<std::uint32_t> array(count);
+    auto length = static_cast<std::size_t>(state.range(0));
+    std::vector<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -400,9 +402,8 @@ static void sorting_with_executors( //
         bm::DoNotOptimize(array.size());
     }
 
-    state.SetComplexityN(count);
-    state.SetItemsProcessed(count * state.iterations());
-    state.SetBytesProcessed(count * state.iterations() * sizeof(std::uint32_t));
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
+    state.SetComplexityN(length);
 
     // Want to report something else? Sure, go ahead:
     //
@@ -531,9 +532,8 @@ static void sorting_with_openmp(bm::State &state) {
         bm::DoNotOptimize(array.size());
     }
 
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
     state.SetComplexityN(length);
-    state.SetItemsProcessed(length * state.iterations());
-    state.SetBytesProcessed(length * state.iterations() * sizeof(std::uint32_t));
 }
 
 BENCHMARK(sorting_with_openmp)
@@ -663,11 +663,14 @@ template <typename sorter_type_, std::size_t length_> //
 static void recursion_cost(bm::State &state) {
     using element_t = typename sorter_type_::element_t;
     sorter_type_ sorter;
-    std::vector<element_t> arr(length_);
+    std::vector<element_t> array(length_);
     for (auto _ : state) {
-        for (std::size_t i = 0; i != length_; ++i) arr[i] = length_ - i;
-        sorter(arr.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
+        for (std::size_t i = 0; i != length_; ++i) array[i] = length_ - i;
+        sorter(array.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
     }
+
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
+    state.SetComplexityN(length_);
 }
 
 using recursive_sort_i32s = quick_sort_recurse<std::int32_t>;
@@ -853,7 +856,8 @@ BENCHMARK(rvo_impossible);
 
 static void f64_sin(bm::State &state) {
     double argument = std::rand(), result = 0;
-    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 1.0));
+    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 0.001));
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin);
@@ -877,10 +881,11 @@ BENCHMARK(f64_sin);
 static void f64_sin_maclaurin(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = argument - std::pow(argument, 3) / 6 + std::pow(argument, 5) / 120;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin);
@@ -908,11 +913,12 @@ BENCHMARK(f64_sin_maclaurin);
 static void f64_sin_maclaurin_powless(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin_powless);
@@ -952,11 +958,12 @@ BENCHMARK(f64_sin_maclaurin_powless);
 FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin_with_fast_math);
@@ -2730,16 +2737,17 @@ BENCHMARK(packaging_stl_any)->MinTime(2);
  *       https://github.com/ashvardanian/stringzilla?tab=readme-ov-file#memory-ownership-and-small-string-optimization
  */
 
-static void small_string(bm::State &state) {
+static void construct_string(bm::State &state) {
     std::size_t length = static_cast<std::size_t>(state.range(0));
     for (auto _ : state) bm::DoNotOptimize(std::string(length, 'x'));
 }
 
 // clang-format off
-BENCHMARK(small_string)
+BENCHMARK(construct_string)
     ->Arg(7)->Arg(8)->Arg(15)->Arg(16)
     ->Arg(22)->Arg(23)->Arg(24)->Arg(25)
-    ->Arg(31)->Arg(32)->Arg(33);
+    ->Arg(31)->Arg(32)->Arg(33)
+    ->Name("construct_string/length=");
 // clang-format on
 
 /**
@@ -2814,8 +2822,7 @@ void config_parse_stl(std::string_view config_text, std::vector<std::pair<std::s
     });
 }
 
-template <typename string_view_>
-void parse_stl(bm::State &state, string_view_ config_text) {
+void parse_stl(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
@@ -2859,8 +2866,7 @@ void config_parse_ranges(std::string_view config_text, std::vector<std::pair<std
     for (auto [key, value] : std::move(lines)) settings.emplace_back(key, value);
 }
 
-template <typename string_view_>
-void parse_ranges(bm::State &state, string_view_ config_text) {
+void parse_ranges(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
@@ -2893,8 +2899,7 @@ void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::st
     }
 }
 
-template <typename string_view_>
-void parse_sz(bm::State &state, string_view_ config_text) {
+void parse_sz(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
     for (auto _ : state) {
@@ -3007,8 +3012,7 @@ void config_parse_regex(std::string_view config_text, std::vector<std::pair<std:
     }
 }
 
-template <typename string_view_>
-void parse_regex(bm::State &state, string_view_ config_text) {
+void parse_regex(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
 
@@ -3061,8 +3065,7 @@ void config_parse_ctre(std::string_view config_text, std::vector<std::pair<std::
     }
 }
 
-template <typename string_view_>
-void parse_ctre(bm::State &state, string_view_ config_text) {
+void parse_ctre(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
 
@@ -3374,7 +3377,7 @@ template <template <typename> typename allocator_>
 struct json_containers_for_alloc {
     // Must allow `map<Key, Value, typename... Args>`, replaces `std::map`
     template <typename key_type_, typename value_type_, typename...>
-    using object = std::map<key_type_, value_type_, std::less<>, allocator_<std::pair<const key_type_, value_type_>>>;
+    using object = std::map<key_type_, value_type_, std::less<>, allocator_<std::pair<key_type_ const, value_type_>>>;
 
     // Must allow `vector<Value, typename... Args>`, replaces `std::vector`
     template <typename value_type_, typename...>
@@ -3893,7 +3896,18 @@ BENCHMARK(graph_rank<graph_flat_set_t, 2'500, 150>)->MinTime(10)->Name("graph_ra
 
 #pragma endregion // Trees, Graphs, and Data Layouts
 
-#pragma region Concurrent Data Structures
+#pragma region Smart Pointers
+
+/**
+ *  More often than not, people allocate nodes of graphs or trees individually,
+ *  never considering @b implicit or @b succinct data-structures, as alternatives.
+ */
+
+#include <memory> // `std::unique_ptr`, `std::shared_ptr`, `std::weak_ptr`
+
+#pragma endregion // Smart Pointers
+
+#pragma region Concurrency
 
 /**
  *  @see "C++ atomics, from basic to advanced. What do they really do?"
@@ -3904,7 +3918,7 @@ BENCHMARK(graph_rank<graph_flat_set_t, 2'500, 150>)->MinTime(10)->Name("graph_ra
 #include <mutex>        // `std::mutex`
 #include <shared_mutex> // `std::shared_mutex`
 
-#pragma endregion // Concurrent Data Structures
+#pragma endregion // Concurrency
 
 #pragma endregion // - Structures, Tuples, ADTs, AOS, SOA
 
@@ -4345,6 +4359,19 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
 #pragma endregion // Logs
 
 #pragma endregion // - Exceptions, Backups, Logging
+
+#pragma region - Networking and Databases
+
+/**
+ *  There are legends about the complexity of dependency management in C++.
+ *  It often prohibits developers from designing larger systems in C++, as
+ *  the Web, for example, requires a lot of dependencies.
+ */
+#pragma region ASIO
+
+#pragma endregion // ASIO
+
+#pragma endregion // - Networking and Databases
 
 /**
  *  The default variant is to invoke the `BENCHMARK_MAIN()` macro.
