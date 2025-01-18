@@ -451,9 +451,12 @@ BENCHMARK(sorting_with_openmp)
  *
  *  @see Sorting in Thrust: https://nvidia.github.io/cccl/thrust/api_docs/algorithms/sorting
  */
-
+#include <cuda_runtime.h>         // `cudaError_t`
 #include <thrust/device_vector.h> // `thrust::device_vector`
+#include <thrust/host_vector.h>   // `thrust::host_vector`
 #include <thrust/sort.h>          // `thrust::sort`
+
+using namespace std::string_literals;
 
 static void sorting_with_thrust(benchmark::State &state) {
     const auto count = static_cast<std::size_t>(state.range(0));
@@ -469,7 +472,7 @@ static void sorting_with_thrust(benchmark::State &state) {
         thrust::reverse(device_array.begin(), device_array.end());
         thrust::sort(device_array.begin(), device_array.end());
         cudaError_t error = cudaDeviceSynchronize(); //! Block until the GPU has completed all tasks
-        if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: " + cudaGetErrorString(error));
+        if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: "s + cudaGetErrorString(error));
         benchmark::DoNotOptimize(device_array.data());
     }
 
@@ -499,23 +502,59 @@ BENCHMARK(sorting_with_thrust)
  *  device-side timers for more accurate measurements.
  */
 #include <cub/cub.cuh>
-#include <cuda_runtime.h>
 
 static void sorting_with_cub(bm::State &state) {
     auto count = static_cast<std::size_t>(state.range(0));
     thrust::device_vector<std::uint32_t> device_array(count);
-    thrust::device_vector<std::byte_t> temporary(count);
+    thrust::device_vector<std::byte> temporary;
 
     // One of the interesting design choices of CUB is that you can call
     // the target method with `NULL` arguments to infer the required temporary
-    // memory amount.
-    cub::DeviceRadixSort::SortKeys(...);
+    // memory amount. The Radix Sort generally requires ~ 2N temporary memory.
+    //
+    // Another one is the naming of the operations - `SortKeys` instead of `Sort`.
+    // There is also `SortPairs` and `SortPairsDescending` in for key-value pairs.
+    std::size_t temporary_bytes = 0;
+    cub::DeviceRadixSort::SortKeys(                           //
+        NULL, temporary_bytes,                                // temporary memory and its size
+        device_array.data().get(), device_array.data().get(), // "in" and "out" arrays
+        count                                                 // number of elements and optional parameters
+    );
     temporary.resize(temporary_bytes);
 
+    // To schedule the Thrust and CUB operations on the same CUDA stream,
+    // we need to wrap it into a "policy" object.
+    cudaStream_t sorting_stream;
+    cudaStreamCreate(&sorting_stream);
+    auto policy = thrust::cuda::par.on(sorting_stream);
+
+    // Create CUDA events for timing
+    cudaEvent_t start_event, stop_event;
+    cudaEventCreate(&start_event);
+    cudaEventCreate(&stop_event);
+
     for (auto _ : state) {
-        thrust::reverse(thrust::device.on(), device_array.begin(), device_array.end());
-        cub::DeviceRadixSort::SortKeys(...);
-        ...
+
+        // Record the start event
+        cudaEventRecord(start_event, sorting_stream);
+
+        thrust::reverse(policy, device_array.begin(), device_array.end());
+        cub::DeviceRadixSort::SortKeys(                           //
+            temporary.data().get(), temporary_bytes,              // temporary memory and its size
+            device_array.data().get(), device_array.data().get(), // "in" and "out" arrays pin to same memory
+            count,                                                // number of elements
+            0, sizeof(std::uint32_t) * CHAR_BIT,                  // begin and end bit positions
+            sorting_stream                                        // CUDA stream
+        );
+
+        // Record the stop event
+        cudaEventRecord(stop_event, sorting_stream);
+        cudaError_t error = cudaEventSynchronize(stop_event); //! Block until the GPU has completed all tasks
+        if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: "s + cudaGetErrorString(error));
+
+        float milliseconds = 0.0f;
+        cudaEventElapsedTime(&milliseconds, start_event, stop_event);
+        state.SetIterationTime(milliseconds / 1000.0f);
     }
 
     state.SetComplexityN(count);
@@ -528,7 +567,17 @@ BENCHMARK(sorting_with_cub)
     ->Range(1l << 20, 1l << 28)
     ->MinTime(10)
     ->Complexity(bm::oNLogN)
-    ->UseRealTime();
+    ->UseManualTime();
+
+/**
+ *  Comparing CPU to GPU performance is not straightforward, but we can compare
+ *  Thrust to CUB solutions. On a consumer-grade 4060 Ada Lovelace GPU:
+ *
+ *  - `sorting_with_thrust` takes from ~ @b 1ms to @b 84ms
+ *  - `sorting_with_cub` takes ~ @b 0.16ms to @b 51ms
+ *
+ *  50% performance improvements are typical for CUB.
+ */
 
 #endif // defined(__CUDACC__)
 

@@ -13,6 +13,7 @@
     "CCCL",
     "clflush",
     "consteval",
+    "constexpr",
     "coro",
     "cppcoro",
     "CTRE",
@@ -168,6 +169,8 @@
     "sstream": "cpp",
     "cfenv": "cpp",
     "expected": "cpp",
-    "*.ipp": "cpp"
+    "*.ipp": "cpp",
+    "inplace_vector": "cpp",
+    "version": "cpp"
   }
 }
