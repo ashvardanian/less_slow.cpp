@@ -151,7 +151,7 @@ endif()
 FetchContent_Declare(
   VictorZverovichFMT
   GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-  GIT_TAG 11.1.0
+  GIT_TAG 11.1.2
 )
 FetchContent_MakeAvailable(VictorZverovichFMT)
 
