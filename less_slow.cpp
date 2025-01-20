@@ -3973,76 +3973,245 @@ BENCHMARK(json_nlohmann<arena_json, exception_handling_t::noexcept_k>)
  *  passed down to the data-structure, and how it can be used to optimize the memory
  *  management of the graph.
  *
+ *  We will define the following APIs:
+ *
+ *  - `upsert_edge(from, to, weight)`: Inserts or updates an existing edge between two vertices.
+ *  - `get_edge(from, to)`: Retrieves the `std::optional` weight of the edge between two vertices.
+ *  - `remove_edge(from, to)`: Removes the edge between two vertices, if present.
+ *  - `for_edges(from, visitor)`: Applies a callback to all edges starting from a vertex.
+ *  - `size()`: Returns the number of vertices and edges in the graph.
+ *  - `reserve(capacity)`: Reserves memory for the given number of vertices.
+ *  - `compact()`: Compacts the memory layout of the graph, preparing for read-intensive workloads.
+ *
+ *  None of the interfaces raise exceptions directly, but will propagate the exceptions
+ *  of the underlying associative container for now.
+ *
  *  @see "Designing a Fast, Efficient, Cache-friendly Hash Table, Step by Step"
  *       by Matt Kulukundis at CppCon 2017: https://youtu.be/ncHmEUmJZf4
  */
-#include <map>           // `std::map`
-#include <unordered_map> // `std::unordered_map`
+#include <map> // `std::map`
 
-using node_id_t = std::uint16_t; // 65'536 node IDs should be enough for everyone :)
-using edge_weight_t = float;     // Weights are typically floating-point numbers
-struct node_ids_t {
-    node_id_t from, to;
+using vertex_id_t = std::uint16_t; // 65'536 vertex IDs should be enough for everyone :)
+using edge_weight_t = float;       // Weights are typically floating-point numbers
+
+struct graph_size_t {
+    std::size_t vertices = 0;
+    std::size_t edges = 0;
 };
 
-struct graph_unordered_maps_t {
-    std::unordered_map<node_id_t, std::unordered_map<node_id_t, edge_weight_t>> nodes_;
+/**
+ *  The most common way to define a sparse graph in C++ applications is to use
+ *  a two-level nested associative container (like `std::unordered_map` or `std::map`).
+ *
+ *     struct basic_graph_unordered_maps {
+ *         std::unordered_map<vertex_id_t, std::unordered_map<vertex_id_t, edge_weight_t>> vertices_;
+ *     };
+ *
+ *  That's not great, assuming the memory allocations happen independently for each
+ *  vertex, and the memory layout is not contiguous. Let's generalize it to arbitrary
+ *  memory allocators and propagate the parent allocator state to the child containers.
+ *
+ *  Assuming the `unordered_map` will store the state of the allocator internally, we
+ *  don't need to add a separate member field in the `basic_graph_unordered_maps` structure...
+ *  But if we were to add one - there is a @b `[[no_unique_address]]` attribute in C++20,
+ *  which can be used in such cases to save space!
+ *
+ *  @see No-Unique-Address attribute: https://en.cppreference.com/w/cpp/language/attributes/no_unique_address
+ */
+template <typename allocator_type_ = std::allocator<std::byte>>
+struct basic_graph_unordered_maps {
 
-    void reserve(std::size_t nodes, [[maybe_unused]] std::size_t edges) { nodes_.reserve(nodes); }
-    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
-        if (from == to) return;                               // Skip self-loop
-        nodes_[from][to] = weight, nodes_[to][from] = weight; // Insert edge in both directions
+    using allocator_type = allocator_type_;
+    using equal_t = std::equal_to<vertex_id_t>; // Equality check for vertex IDs
+    using hash_t = std::hash<vertex_id_t>;      // Hash function for vertex IDs
+
+    using inner_allocator_type = typename std::allocator_traits<allocator_type_>::template rebind_alloc<
+        std::pair<vertex_id_t const, edge_weight_t>>;
+    using inner_map_type = std::unordered_map<vertex_id_t, edge_weight_t, hash_t, equal_t, inner_allocator_type>;
+    using outer_allocator_type = typename std::allocator_traits<allocator_type_>::template rebind_alloc<
+        std::pair<vertex_id_t const, inner_map_type>>;
+    using outer_map_type = std::unordered_map<vertex_id_t, inner_map_type, hash_t, equal_t, outer_allocator_type>;
+
+    outer_map_type vertices_;
+
+    explicit basic_graph_unordered_maps(allocator_type const &alloc = allocator_type()) noexcept(false)
+        : vertices_(0, hash_t {}, equal_t {}, alloc) {}
+
+    void reserve(graph_size_t capacity) noexcept(false) { vertices_.reserve(capacity.vertices); }
+
+    graph_size_t size() const noexcept {
+        graph_size_t size;
+        size.vertices = vertices_.size();
+        for (auto const &[_, inner] : vertices_) size.edges += inner.size();
+        return size;
     }
-    std::optional<edge_weight_t> get_edge(node_id_t from, node_id_t to) const noexcept {
-        if (auto it = nodes_.find(from); it != nodes_.end())
+
+    void upsert_edge(vertex_id_t from, vertex_id_t to, edge_weight_t weight) noexcept(false) {
+        if (from == to) return; // Skip self-loop
+
+        // Now inserting a new edge should be trivial, right? Maybe something like this:
+        //
+        //      vertices_[from][to] = weight, vertices_[to][from] = weight;
+        //
+        // That, however, hides the inner map allocation logic, and we can't propagate
+        // the allocator state down to the inner map. So we have to do it manually:
+        auto it = vertices_.find(from);
+        if (it == vertices_.end())
+            it = vertices_
+                     .emplace( //
+                         std::piecewise_construct, std::forward_as_tuple(from),
+                         std::forward_as_tuple(         //
+                             1,                         // At least one bucket for the new entry
+                             vertices_.hash_function(), // The parent's hash function
+                             vertices_.key_eq(),        // The parent's equality check
+                             vertices_.get_allocator()  // The parent's run-time allocator:
+                             ))
+                     .first;
+        it->second[to] = weight;
+
+        // Repeat in the opposite direction:
+        it = vertices_.find(to);
+        if (it == vertices_.end())
+            it = vertices_
+                     .emplace( //
+                         std::piecewise_construct, std::forward_as_tuple(to),
+                         std::forward_as_tuple(         //
+                             1,                         // At least one bucket for the new entry
+                             vertices_.hash_function(), // The parent's hash function
+                             vertices_.key_eq(),        // The parent's equality check
+                             vertices_.get_allocator()  // The parent's run-time allocator:
+                             ))
+                     .first;
+        it->second[from] = weight;
+    }
+
+    std::optional<edge_weight_t> get_edge(vertex_id_t from, vertex_id_t to) const noexcept {
+        if (auto it = vertices_.find(from); it != vertices_.end())
             if (auto jt = it->second.find(to); jt != it->second.end()) return jt->second;
         return std::nullopt;
     }
-    void remove_edge(node_id_t from, node_id_t to) noexcept {
+
+    void remove_edge(vertex_id_t from, vertex_id_t to) noexcept {
         // It's unlikely that we are removing a non-existent edge
-        if (auto it = nodes_.find(from); it != nodes_.end()) [[likely]]
+        if (auto it = vertices_.find(from); it != vertices_.end()) [[likely]]
             it->second.erase(to);
-        if (auto it = nodes_.find(to); it != nodes_.end()) [[likely]]
+        if (auto it = vertices_.find(to); it != vertices_.end()) [[likely]]
             it->second.erase(from);
     }
+
+    void compact() noexcept(false) {
+        // The `std::unordered_map::rehash(0)` may be used to force an unconditional rehash,
+        // such as after suspension of automatic rehashing by temporarily increasing `max_load_factor()`.
+        vertices_.rehash(0);
+        for (auto &[_, inner] : vertices_) inner.rehash(0);
+    }
+
     template <typename visitor_type_>
-    void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
-        if (auto it = nodes_.find(from); it != nodes_.end())
+    void for_edges(vertex_id_t from, visitor_type_ visitor) const noexcept {
+        if (auto it = vertices_.find(from); it != vertices_.end())
             for (auto const &[to, weight] : it->second) visitor(from, to, weight);
     }
 };
 
-struct graph_map_t {
-    struct compare_t {
-        using is_transparent = std::true_type;
-        bool operator()(node_ids_t const &lhs, node_ids_t const &rhs) const noexcept {
-            return lhs.from < rhs.from || (lhs.from == rhs.from && lhs.to < rhs.to);
-        }
-        bool operator()(node_id_t lhs, node_ids_t const &rhs) const noexcept { return lhs < rhs.from; }
-        bool operator()(node_ids_t const &lhs, node_id_t rhs) const noexcept { return lhs.from < rhs; }
-    };
+/**
+ *  Assuming the graph is sparse, the size of the inner containers will differ greatly.
+ *  We can balance the situation by flattening our 2-level construction into a single
+ *  associative container, with a custom @b `less_t` comparison function.
+ *
+ *      struct basic_graph_map {
+ *          struct less_t {
+ *              using is_transparent = std::true_type;
+ *              bool operator()(vertex_ids_t const &, vertex_ids_t const &) const noexcept { ... }
+ *              bool operator()(vertex_id_t, vertex_ids_t const &) const noexcept { ... }
+ *              bool operator()(vertex_ids_t const &, vertex_id_t) const noexcept { ... }
+ *          }
+ *          std::map<vertex_ids_t, edge_weight_t, less_t> edges_;
+ *      };
+ *
+ *  The comparison function object must define @b `is_transparent` and support not only
+ *  a comparison between two keys (`vertex_ids_t` in this case), but also between a key
+ *  and an arbitrary "search key" that will be used for lookups (like `vertex_id_t`).
+ *
+ *  Assuming `std::map` is a strictly ordered Binary Search Tree @b (BST), usually
+ *  a Red-Black Tree, we can order it in the lexigraphical order of the `(from, to)` pairs,
+ *  and use @b `std::map::equal_range` to iterate over all edges starting from a given vertex.
+ *
+ *  ? Even though our data-structure contains "edges" as opposed to "vertices + their edges",
+ *  ? the fact that all edges are flattened and ordered by the source vertex ID, allows us
+ *  ? to reuse this structure in both "vertex-centric" and "edge-centric" algorithms.
+ *
+ *  We can use C++20 three-way comparison operator @b `<=>` to define the comparison
+ *  functions just once per "other type", and the default `std::less` will automatically
+ *  work. Comparing with another `vertex_ids_t` is straightforward, and will result in a
+ *  @b `std::strong_ordering`, while comparing with a `vertex_id_t` will result in a less
+ *  strict @b `std::weak_ordering`.
+ */
+#include <compare>       // `std::weak_ordering`
+#include <tuple>         // `std::tie`
+#include <unordered_map> // `std::unordered_map`
 
-    std::map<node_ids_t, edge_weight_t, compare_t> links_;
+struct vertex_ids_t {
+    vertex_id_t from, to;
 
-    void reserve([[maybe_unused]] std::size_t nodes, [[maybe_unused]] std::size_t edges) {
+    std::strong_ordering operator<=>(vertex_ids_t other) const noexcept {
+        return std::tie(from, to) <=> std::tie(other.from, other.to);
+    }
+    std::weak_ordering operator<=>(vertex_id_t other) const noexcept { return from <=> other; }
+};
+
+template <typename allocator_type_ = std::allocator<std::byte>>
+struct basic_graph_map {
+
+    using allocator_type = allocator_type_;
+    using compare_t = std::less<>;
+    using map_allocator_type = typename std::allocator_traits<allocator_type_>::template rebind_alloc<
+        std::pair<vertex_ids_t const, edge_weight_t>>;
+    using map_type = std::map<vertex_ids_t, edge_weight_t, compare_t, map_allocator_type>;
+
+    map_type edges_;
+
+    void reserve([[maybe_unused]] graph_size_t) noexcept {
         //! The `std::map` doesn't support `reserve` 🤕
     }
-    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
-        if (from == to) return; // Skip self-loop
-        links_.emplace(node_ids_t(from, to), weight);
-        links_.emplace(node_ids_t(to, from), weight);
+
+    graph_size_t size() const noexcept {
+        if (edges_.empty()) return {};
+        graph_size_t size;
+        // The number of edges is half the container size, as we store each edge twice.
+        size.edges = edges_.size() / 2;
+        // Assuming all the edges are ordered by their source vertex ID,
+        // we can iterate through tuples and check, how many unique vertices we have.
+        size.vertices = 1;
+        auto it = edges_.begin();
+        auto last_id = it->first.from;
+        while (++it != edges_.end())
+            if (it->first.from != last_id) ++size.vertices, last_id = it->first.from;
+        return size;
     }
-    std::optional<edge_weight_t> get_edge(node_id_t from, node_id_t to) const noexcept {
-        if (auto it = links_.find(node_ids_t(from, to)); it != links_.end()) return it->second;
+
+    void upsert_edge(vertex_id_t from, vertex_id_t to, edge_weight_t weight) noexcept(false) {
+        if (from == to) return; // Skip self-loop
+        edges_.emplace(vertex_ids_t(from, to), weight);
+        edges_.emplace(vertex_ids_t(to, from), weight);
+    }
+
+    std::optional<edge_weight_t> get_edge(vertex_id_t from, vertex_id_t to) const noexcept {
+        if (auto it = edges_.find(vertex_ids_t(from, to)); it != edges_.end()) return it->second;
         return std::nullopt;
     }
-    void remove_edge(node_id_t from, node_id_t to) noexcept {
-        links_.erase(node_ids_t(from, to));
-        links_.erase(node_ids_t(to, from));
+
+    void remove_edge(vertex_id_t from, vertex_id_t to) noexcept {
+        edges_.erase(vertex_ids_t(from, to));
+        edges_.erase(vertex_ids_t(to, from));
     }
+
+    void compact() noexcept {
+        // The `std::map` is already a balanced BST, so no need to do anything here.
+    }
+
     template <typename visitor_type_>
-    void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
-        auto [begin, end] = links_.equal_range(from);
+    void for_edges(vertex_id_t from, visitor_type_ visitor) const noexcept {
+        auto [begin, end] = edges_.equal_range(from);
         for (auto it = begin; it != end; ++it) visitor(from, it->first.to, it->second);
     }
 };
@@ -4050,70 +4219,128 @@ struct graph_map_t {
 /**
  *  During construction, we need fast lookups and insertions - so a single-level hash-map
  *  would be the best choice. But during processing, we need to iterate over all edges
- *  starting from a given node, and with non-flat hash-map and a typical hash function,
+ *  starting from a given vertex, and with non-flat hash-map and a typical hash function,
  *  the iteration would be slow.
  *
- *  Instead, we can override the hash function to only look at source node ID, but use
+ *  Instead, we can override the hash function to only look at source vertex ID, but use
  *  both identifiers for equality comparison. Assuming that hash function is highly
  *  unbalanced for a sparse graph, we need to pre-allocate more memory.
+ *
+ *  ! Sadly, the `absl::flat_hash_set` doesn't yet support the three-way comparison operator,
+ *  ! so we are manually defining the `equal_t` for every possible pair of arguments.
  */
 
 #include <absl/container/flat_hash_set.h> // `absl::flat_hash_set`
 #include <absl/hash/hash.h>               // `absl::Hash`
 
-struct graph_flat_set_t {
-    struct edge_t {
-        node_id_t from;
-        node_id_t to;
-        edge_weight_t weight;
-    };
+struct edge_t {
+    vertex_id_t from;
+    vertex_id_t to;
+    edge_weight_t weight;
+};
+
+static_assert( //
+    sizeof(edge_t) == sizeof(vertex_id_t) + sizeof(vertex_id_t) + sizeof(edge_weight_t),
+    "With a single-level flat structure we can guarantee structure packing");
+
+template <typename allocator_type_ = std::allocator<std::byte>>
+struct basic_graph_flat_set {
+
     struct equal_t {
         using is_transparent = std::true_type;
         bool operator()(edge_t const &lhs, edge_t const &rhs) const noexcept {
             return lhs.from == rhs.from && lhs.to == rhs.to;
         }
-        bool operator()(node_id_t lhs, edge_t const &rhs) const noexcept { return lhs == rhs.from; }
-        bool operator()(edge_t const &lhs, node_id_t rhs) const noexcept { return lhs.from == rhs; }
-        bool operator()(edge_t const &lhs, node_ids_t const &rhs) const noexcept {
+        bool operator()(vertex_id_t lhs, edge_t const &rhs) const noexcept { return lhs == rhs.from; }
+        bool operator()(edge_t const &lhs, vertex_id_t rhs) const noexcept { return lhs.from == rhs; }
+        bool operator()(edge_t const &lhs, vertex_ids_t const &rhs) const noexcept {
             return lhs.from == rhs.from && lhs.to == rhs.to;
         }
-        bool operator()(node_ids_t const &lhs, edge_t const &rhs) const noexcept {
+        bool operator()(vertex_ids_t const &lhs, edge_t const &rhs) const noexcept {
             return lhs.from == rhs.from && lhs.to == rhs.to;
         }
     };
+
     struct hash_t {
         using is_transparent = std::true_type;
-        std::size_t operator()(node_id_t from) const noexcept { return absl::Hash<node_id_t> {}(from); }
-        std::size_t operator()(edge_t const &edge) const noexcept { return absl::Hash<node_id_t> {}(edge.from); }
-        std::size_t operator()(node_ids_t const &pair) const noexcept { return absl::Hash<node_id_t> {}(pair.from); }
+        std::size_t operator()(vertex_id_t from) const noexcept { return absl::Hash<vertex_id_t> {}(from); }
+        std::size_t operator()(edge_t const &edge) const noexcept { return absl::Hash<vertex_id_t> {}(edge.from); }
+        std::size_t operator()(vertex_ids_t const &pair) const noexcept {
+            return absl::Hash<vertex_id_t> {}(pair.from);
+        }
     };
 
-    static_assert( //
-        sizeof(edge_t) == sizeof(node_id_t) + sizeof(node_id_t) + sizeof(edge_weight_t),
-        "With a single-level flat structure we can guarantee structure packing");
+    using allocator_type = allocator_type_;
+    using set_allocator_type = typename std::allocator_traits<allocator_type>::template rebind_alloc<allocator_type>;
+    using flat_set_type = absl::flat_hash_set<edge_t, hash_t, equal_t, set_allocator_type>;
 
-    absl::flat_hash_set<edge_t, hash_t, equal_t> links_;
+    flat_set_type edges_;
 
-    void reserve([[maybe_unused]] std::size_t nodes, std::size_t edges) { links_.reserve(edges); }
-    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
-        if (from == to) return; // Skip self-loop
-        links_.emplace(from, to, weight);
-        links_.emplace(to, from, weight);
+    explicit basic_graph_flat_set(allocator_type const &alloc = allocator_type()) noexcept(false)
+        : edges_(0 /* bucket_count */, hash_t {}, equal_t {}, alloc) {}
+
+    void reserve(graph_size_t capacity) noexcept(false) {
+        // Assuming the irregular structure of our graph, it's a great idea to "over-provision"
+        // memory by changing the `max_load_factor` to a lower value, like 0.5, to reduce the
+        // number of unsuccessful probes.
+        //
+        // That operation, however, is a no-op in Abseil and is only provided for compatibility
+        // with the STL, so we resort to a much more blunt approach - reserving a large number
+        // of slots 🤦‍♂️
+        edges_.reserve(capacity.edges * 2);
     }
-    std::optional<edge_weight_t> get_edge(node_id_t from, node_id_t to) const noexcept {
-        if (auto it = links_.find(edge_t {from, to, 0.0f}); it != links_.end()) return it->weight;
+
+    graph_size_t size() const noexcept {
+        graph_size_t size;
+        size.edges = edges_.size();
+        size.vertices = 0;
+        for (auto const &edge : edges_) size.vertices = std::max(size.vertices, edge.from);
+        return size;
+    }
+
+    void upsert_edge(vertex_id_t from, vertex_id_t to, edge_weight_t weight) noexcept(false) {
+        if (from == to) return; // Skip self-loop
+        edges_.emplace(from, to, weight);
+        edges_.emplace(to, from, weight);
+    }
+
+    std::optional<edge_weight_t> get_edge(vertex_id_t from, vertex_id_t to) const noexcept {
+        if (auto it = edges_.find(edge_t {from, to, 0.0f}); it != edges_.end()) return it->weight;
         return std::nullopt;
     }
-    void remove_edge(node_id_t from, node_id_t to) noexcept {
-        links_.erase(node_ids_t(from, to));
-        links_.erase(node_ids_t(to, from));
+
+    void remove_edge(vertex_id_t from, vertex_id_t to) noexcept {
+        edges_.erase(vertex_ids_t(from, to));
+        edges_.erase(vertex_ids_t(to, from));
     }
+
+    void compact() noexcept(false) {
+        // Erasing does not trigger a rehash, so we do it manually:
+        edges_.rehash(0);
+    }
+
     template <typename visitor_type_>
-    void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
-        auto [begin, end] = links_.equal_range(from);
+    void for_edges(vertex_id_t from, visitor_type_ visitor) const noexcept {
+        auto [begin, end] = edges_.equal_range(from);
         for (auto it = begin; it != end; ++it) visitor(it->from, it->to, it->weight);
     }
 };
+
+/**
+ *  Now we have 3 fairly generic implementations that will behave differently based on
+ *  the underlying associative container, memory allocator used, the shape of the graph,
+ *  and countless other parameters!
+ *
+ *  Let's consider a Small World graph of a community of 2'500 people, a typical upper
+ *  bound for what is considered a "village", with roughly 200 connections per person,
+ *  the Dunbar's number.
+ */
+constexpr std::size_t graph_vertices_count_k = 2'500;
+constexpr std::size_t graph_vertices_degree_k = 200;
+
+enum class graph_allocation_mode_t { global_k, arena_k };
+enum class graph_compaction_mode_t { disabled_k, enabled_k };
+enum class execution_mode_t { serial_k, parallel_k };
 
 #include <cassert> // `assert`
 #include <random>  // `std::mt19937_64`
@@ -4121,21 +4348,21 @@ struct graph_flat_set_t {
 
 /**
  *  @brief  Generates a Watts-Strogatz small-world graph forming a ring lattice
- *          with `k` neighbors per node and rewiring probability `p`.
+ *          with `k` neighbors per vertex and rewiring probability `p`.
  *
  *  @param[out] graph The graph to be generated.
  *  @param[inout] generator Random number generator to be used.
- *  @param[in] nodes Node IDs to be used in the graph.
- *  @param[in] k Number of neighbors per node.
- *  @param[in] p Rewiring probability to modify the initial ring lattice.
+ *  @param[in] vertices Node IDs to be used in the graph.
+ *  @param[in] k Number of neighbors per vertex.
+ *  @param[in] p Rewiring probability to modify the initial ring lattice, default 0.1.
  */
 template <typename graph_type_>
 void watts_strogatz(                                //
-    graph_type_ &graph, std::mt19937_64 &generator, //
-    std::span<node_id_t const> nodes,               //
-    std::size_t const k, float const p) {
+    graph_type_ &graph, std::mt19937_64 &generator, // Mutable in/out parameters
+    std::span<vertex_id_t const> vertices,          // Immutable input parameters
+    std::size_t const k, float const p = 0.1f) {    // Configuration parameters
 
-    auto const n = nodes.size();
+    auto const n = vertices.size();
     assert(k < n && "k should be smaller than n");
     assert(k % 2 == 0 && "k should be even for symmetrical neighbors");
 
@@ -4143,11 +4370,11 @@ void watts_strogatz(                                //
     // reusing it for different distributions.
     std::uniform_real_distribution<float> distribution_probability(0.0f, 1.0f);
     std::uniform_real_distribution<edge_weight_t> distribution_weight(0.0f, 1.0f);
-    std::uniform_int_distribution<node_id_t> distribution_node(0, static_cast<node_id_t>(n - 1));
+    std::uniform_int_distribution<vertex_id_t> distribution_vertices(0, static_cast<vertex_id_t>(n - 1));
 
     // The ring lattice has `n * (k / 2)` edges if we only add `j>i`.
     // Then each edge is stored twice in adjacency for undirected.
-    graph.reserve(n, n * k);
+    graph.reserve({n, n * k});
 
     // Build the initial ring lattice:
     for (std::size_t i = 0; i < n; ++i) {
@@ -4156,7 +4383,7 @@ void watts_strogatz(                                //
             std::size_t j = (i + offset) % n;
             if (j <= i) continue; // If j < i, it will come up in its own iteration
             edge_weight_t w = distribution_weight(generator);
-            graph.upsert_edge(nodes[i], nodes[j], w);
+            graph.upsert_edge(vertices[i], vertices[j], w);
         }
     }
 
@@ -4168,100 +4395,161 @@ void watts_strogatz(                                //
             // With probability `p`, remove `(i, j)` and add some new `(i, m)`
             if (distribution_probability(generator) >= p) continue;
             // Remove the old edge `(i, j)`
-            graph.remove_edge(nodes[i], nodes[j]);
-            node_id_t m;
-            do { m = distribution_node(generator); } while (graph.get_edge(nodes[i], nodes[m]));
+            graph.remove_edge(vertices[i], vertices[j]);
+            vertex_id_t m;
+            do { m = distribution_vertices(generator); } while (graph.get_edge(vertices[i], vertices[m]));
             edge_weight_t w = distribution_weight(generator);
-            graph.upsert_edge(nodes[i], nodes[m], w);
+            graph.upsert_edge(vertices[i], vertices[m], w);
         }
     }
 }
 
 /**
- *  @brief  Produces a non-repeating sorted sequence of node IDs.
- *  @param[in] size The number of unique node IDs to generate.
+ *  @brief  Produces a non-repeating sorted (monotonically increasing) sequence of vertex IDs.
+ *  @param[in] size The number of unique vertex IDs to generate.
  */
-std::vector<node_id_t> make_node_ids(std::mt19937_64 &generator, std::size_t size) noexcept(false) {
-    std::set<node_id_t> ids;
-    std::uniform_int_distribution<node_id_t> distribution(0, std::numeric_limits<node_id_t>::max());
+std::vector<vertex_id_t> make_vertex_ids(std::mt19937_64 &generator, std::size_t size) noexcept(false) {
+    std::set<vertex_id_t> ids;
+    std::uniform_int_distribution<vertex_id_t> distribution(0, std::numeric_limits<vertex_id_t>::max());
     while (ids.size() < size) ids.insert(distribution(generator));
     return {ids.begin(), ids.end()};
 }
 
-template <typename graph_type_>
-void page_rank(                                                    //
-    graph_type_ const &graph, std::span<node_id_t const> node_ids, //
-    std::span<float> old_scores, std::span<float> new_scores,      //
-    std::size_t iterations, float damping) {
+template <                       //
+    execution_mode_t execution_, //
+    typename graph_type_>        // This parameter can be inferred, so put it last ;)
 
-    while (iterations--) {
+void page_rank(                                                        //
+    graph_type_ const &graph, std::span<vertex_id_t const> vertex_ids, //
+    std::span<float> old_scores, std::span<float> new_scores,          //
+    std::size_t const iterations, float const damping = 0.85f) {
+
+    std::size_t iterations_left = iterations;
+    while (iterations_left--) {
         float total_score = 0.0f;
-        for (std::size_t i = 0; i < node_ids.size(); ++i) {
-            node_id_t node_id = node_ids[i];
+        for (std::size_t i = 0; i < vertex_ids.size(); ++i) {
+            vertex_id_t vertex_id = vertex_ids[i];
             float &old_score = old_scores[i];
             float &new_score = new_scores[i];
             float replacing_score = 0.0f;
-            graph.for_edges(node_id, [&](node_id_t from, node_id_t to, edge_weight_t weight) {
-                std::size_t j = std::lower_bound(node_ids.begin(), node_ids.end(), to) - node_ids.begin();
+            graph.for_edges(vertex_id, [&](vertex_id_t from, vertex_id_t to, edge_weight_t weight) {
+                std::size_t j = std::lower_bound(vertex_ids.begin(), vertex_ids.end(), to) - vertex_ids.begin();
                 replacing_score += old_scores[j] * weight;
             });
             new_score = replacing_score;
             total_score += replacing_score;
         }
         // Normalize the scores and apply damping
-        for (std::size_t i = 0; i < node_ids.size(); ++i)
+        for (std::size_t i = 0; i < vertex_ids.size(); ++i)
             new_scores[i] = (1.0f - damping) + damping * new_scores[i] / total_score;
         std::swap(old_scores, new_scores);
     }
 }
 
-template <typename graph_type_, std::size_t count_nodes_, std::size_t average_degree_>
+/**
+ *  @brief  Benchmarks building a Watts-Strogatz small-world graph.
+ *
+ *  @tparam allocation_mode_ Do we allocate from the default global allocator or an arena?
+ *  @tparam compaction_mode_ Do we compact the graph after construction or not?
+ *
+ *  @param[out] graph The graph to be generated.
+ *  @param[inout] generator Random number generator to be used.
+ *  @param[in] vertices Node IDs to be used in the graph.
+ *  @param[in] k Number of neighbors per vertex.
+ *  @param[in] p Rewiring probability to modify the initial ring lattice.
+ */
+template <                                                                    //
+    typename graph_type_,                                                     //
+    graph_allocation_mode_t allocation_ = graph_allocation_mode_t::global_k,  //
+    graph_compaction_mode_t compaction_ = graph_compaction_mode_t::disabled_k //
+    >
+
 static void graph_make(bm::State &state) {
 
     // Seed all graph types identically
     std::mt19937_64 generator(42);
-    std::vector<node_id_t> node_ids = make_node_ids(generator, count_nodes_);
-    std::vector<float> old_scores(count_nodes_, 1.0f);
-    std::vector<float> new_scores(count_nodes_, 0.0f);
+    std::vector<vertex_id_t> vertex_ids = make_vertex_ids(generator, graph_vertices_count_k);
+    std::vector<float> old_scores(graph_vertices_count_k, 1.0f);
+    std::vector<float> new_scores(graph_vertices_count_k, 0.0f);
 
     for (auto _ : state) {
         graph_type_ graph;
-        graph.reserve(count_nodes_, count_nodes_ * average_degree_);
-        watts_strogatz(graph, generator, node_ids, average_degree_, 0.1f);
+        graph.reserve({graph_vertices_count_k, graph_vertices_count_k * graph_vertices_degree_k});
+        watts_strogatz(graph, generator, vertex_ids, graph_vertices_degree_k, 0.1f);
     }
 }
+
+using graph_unordered_maps = basic_graph_unordered_maps<>;
+using graph_map = basic_graph_map<>;
+using graph_flat_set = basic_graph_flat_set<>;
 
 /**
  *  Let's imagine a Small World graph of a community of 2'500 people, a typical upper
  *  bound for what is considered a village, with roughly 200 connections per person,
  *  the Dunbar's number.
  */
-BENCHMARK(graph_make<graph_unordered_maps_t, 2'500, 150>)->MinTime(10)->Name("graph_make<unordered_maps_t>(village)");
-BENCHMARK(graph_make<graph_map_t, 2'500, 150>)->MinTime(10)->Name("graph_make<map_t>(village)");
-BENCHMARK(graph_make<graph_flat_set_t, 2'500, 150>)->MinTime(10)->Name("graph_make<flat_set_t>(village)");
+BENCHMARK(graph_make<graph_unordered_maps>)
+    ->MinTime(10)
+    ->Name("graph_make<std::unordered_maps>")
+    ->Unit(bm::kMicrosecond);
+BENCHMARK(graph_make<graph_map>)->MinTime(10)->Name("graph_make<std::map>")->Unit(bm::kMicrosecond);
+BENCHMARK(graph_make<graph_flat_set>)->MinTime(10)->Name("graph_make<absl::flat_set>")->Unit(bm::kMicrosecond);
 
-template <typename graph_type_, std::size_t count_nodes_, std::size_t average_degree_>
+template <                                                                     //
+    typename graph_type_,                                                      //
+    graph_allocation_mode_t allocation_ = graph_allocation_mode_t::global_k,   //
+    graph_compaction_mode_t compaction_ = graph_compaction_mode_t::disabled_k, //
+    execution_mode_t execution_ = execution_mode_t::serial_k                   //
+    >
+
 static void graph_rank(bm::State &state) {
 
     // Seed all graph types identically
     std::mt19937_64 generator(42);
-    std::vector<node_id_t> node_ids = make_node_ids(generator, count_nodes_);
-    std::vector<float> old_scores(count_nodes_, 1.0f);
-    std::vector<float> new_scores(count_nodes_, 0.0f);
+    std::vector<vertex_id_t> vertex_ids = make_vertex_ids(generator, graph_vertices_count_k);
+    std::vector<float> old_scores(graph_vertices_count_k, 1.0f);
+    std::vector<float> new_scores(graph_vertices_count_k, 0.0f);
 
+    // Build once
     graph_type_ graph;
-    graph.reserve(count_nodes_, count_nodes_ * average_degree_);
-    watts_strogatz(graph, generator, node_ids, average_degree_, 0.1f);
+    graph.reserve({graph_vertices_count_k, graph_vertices_count_k * graph_vertices_degree_k});
+    watts_strogatz(graph, generator, vertex_ids, graph_vertices_degree_k, 0.1f);
 
-    for (auto _ : state) { page_rank(graph, node_ids, old_scores, new_scores, 2, 0.85f); }
+    // Rank many times, with an even number of iterations per cycle to account for score swaps
+    for (auto _ : state) { page_rank<execution_>(graph, vertex_ids, old_scores, new_scores, 2); }
 }
 
 /**
- *  Now let's rank those 2'500 people in the village, using the PageRank-like algorithm.
+ *  Now let's rank those villagers, using the PageRank-like algorithm.
  */
-BENCHMARK(graph_rank<graph_unordered_maps_t, 2'500, 150>)->MinTime(10)->Name("graph_rank<unordered_maps_t>(village)");
-BENCHMARK(graph_rank<graph_map_t, 2'500, 150>)->MinTime(10)->Name("graph_rank<map_t>(village)");
-BENCHMARK(graph_rank<graph_flat_set_t, 2'500, 150>)->MinTime(10)->Name("graph_rank<flat_set_t>(village)");
+BENCHMARK(graph_rank<graph_unordered_maps>)
+    ->MinTime(10)
+    ->Name("graph_rank<std::unordered_maps>")
+    ->Unit(bm::kMicrosecond);
+BENCHMARK(graph_rank<graph_map>)->MinTime(10)->Name("graph_rank<std::map>")->Unit(bm::kMicrosecond);
+BENCHMARK(graph_rank<graph_flat_set>)->MinTime(10)->Name("graph_rank<absl::flat_set>")->Unit(bm::kMicrosecond);
+
+/**
+ *  After benchmarking on both x86 and ARM architectures, we can draw several
+ *  interesting conclusions about our three graph implementations:
+ *
+ *  1. For graph construction (`graph_make`):
+ *     - `std::unordered_map` consistently outperforms other containers, being ~2x faster
+ *       than `std::map` on both architectures. This aligns with its O(1) insertion time.
+ *     - `absl::flat_hash_set` falls between the two, being ~40% slower than `std::unordered_map`.
+ *
+ *  2. For the Page-Rank algorithm (`graph_rank`):
+ *     - `absl::flat_hash_set` absolutely dominates, being ~150x faster than `std::unordered_map`
+ *       on x86 and ~320x faster on ARM! This validates our custom hash function strategy.
+ *     - `std::map` shrinks its gap with `std::unordered_map` during ranking,
+ *       likely due to its cache-friendly tree traversal patterns.
+ *
+ *  What we've learned:
+ *
+ *  - For read-heavy workloads using flat memory layouts, `absl::flat_hash_set` is king.
+ *  - Custom hash functions combined with transparent comparators are key to building efficient
+ *    large-scale systems, like databases and recommendation engines.
+ */
 
 #pragma endregion // Trees, Graphs, and Data Layouts
 
