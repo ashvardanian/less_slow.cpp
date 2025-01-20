@@ -1474,6 +1474,13 @@ static void theoretic_tops(                        //
     state.counters["TOP"] = bm::Counter(tops * state.iterations() * state.threads() * 1.0, bm::Counter::kIsRate);
 }
 
+#if defined(__AVX512F__) || defined(__AVX2__)
+void configure_x86_denormals(void) {
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);         // Flush results to zero
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON); // Treat denormal inputs as zero
+}
+#endif
+
 /**
  *  Assuming we are not aiming for dynamic dispatch, we can simply check for
  *  the available features at compile time with more preprocessing directives:
@@ -1487,43 +1494,57 @@ static void theoretic_tops(                        //
  */
 #if defined(__AVX512F__)
 extern "C" std::uint32_t tops_f64_avx512fma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx512fma, tops_f64_avx512fma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx512fma, tops_f64_avx512fma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512fma, tops_f64_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512fma, tops_f64_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 extern "C" std::uint32_t tops_f32_avx512fma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx512fma, tops_f32_avx512fma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx512fma, tops_f32_avx512fma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512fma, tops_f32_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512fma, tops_f32_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX512F__)
 
 #if defined(__AVX512FP16__)
 extern "C" std::uint32_t tops_f16_avx512fma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f16_avx512fma, tops_f16_avx512fma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f16_avx512fma, tops_f16_avx512fma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512fma, tops_f16_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512fma, tops_f16_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX512FP16__)
 
 #if defined(__AVX512BF16__)
 extern "C" std::uint32_t tops_bf16_avx512fma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512fma, tops_bf16_avx512fma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512fma, tops_bf16_avx512fma_asm_kernel)
+BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512fma, tops_bf16_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512fma, tops_bf16_avx512fma_asm_kernel, configure_x86_denormals)
     ->MinTime(10)
     ->Threads(physical_cores());
 #endif // defined(__AVX512BF16__)
 
 #if defined(__AVX512VNNI__)
 extern "C" std::uint32_t tops_i16_avx512fma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, i16_avx512fma, tops_i16_avx512fma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, i16_avx512fma, tops_i16_avx512fma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, i16_avx512fma, tops_i16_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i16_avx512fma, tops_i16_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 extern "C" std::uint32_t tops_i7_avx512fma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, i7_avx512fma, tops_i7_avx512fma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, i7_avx512fma, tops_i7_avx512fma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, i7_avx512fma, tops_i7_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i7_avx512fma, tops_i7_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX512VNNI__)
 
 #if defined(__AVX2__)
 extern "C" std::uint32_t tops_f64_avx2fma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx2fma, tops_f64_avx2fma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx2fma, tops_f64_avx2fma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2fma, tops_f64_avx2fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2fma, tops_f64_avx2fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 extern "C" std::uint32_t tops_f32_avx2fma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx2fma, tops_f32_avx2fma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx2fma, tops_f32_avx2fma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2fma, tops_f32_avx2fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2fma, tops_f32_avx2fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX2__)
 
 #if defined(__ARM_NEON)
@@ -1665,8 +1686,8 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *
  *                              Intel Xeon 4     AMD Zen 4        Graviton 4
  *    @b FMA in AVX-512 & NEON:
- *    - `f64`:                  @b 1.2 G ¹       @b 58 G          @b 31 G
- *    - `f32`:                  @b 3.1 G ¹       @b 117 G         @b 63 G
+ *    - `f64`:                  @b 1.2-76 G ¹    @b 58 G          @b 31 G
+ *    - `f32`:                  @b 3.1-135 G ¹   @b 117 G         @b 63 G
  *    - `bf16`:                 @b 121 G         @b 235 G         @b 101 G
  *    - `f16`:                  @b 286 G 🤯🤯     -                @b 116 G
  *    - `i16`:                  @b 342 G 🤯🤯     -                -
@@ -1676,19 +1697,13 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *    - `bf16`:                 @b 3.6 T         -                -
  *    - `i8`, `u8`:             @b 7.2 T 🤯🤯🤯   -                -
  *
- *  > ¹ The FMA throughput on Intel is insane! For `double` and `float` types,
- *      its @b 30-50x lower than on AMD and Arm?!
- *  > ² AVX-512 has weird `i8` by `u8` multiplication instructions, which don't
- *      seem useful for any 8-bit problems I've encountered, but are handy for
- *      7-bit representations.
- *
  *  On a high-end dual-socket system, comparing `c7i.metal-48xl` to `c7a.metal-48xl`
  *  and `c8g.metal-48xl` 192-core instances on AWS, this scales to:
  *
  *                              Intel Xeon 4     AMD Zen 4        Graviton 4
  *    @b FMA in AVX-512 & NEON:
- *    - `f64`:                  @b 215 G         @b 9.3 T         @b 4.2 T
- *    - `f32`:                  @b 636 T         @b 20.1 T        @b 8.4 T
+ *    - `f64`:                  @b 0.2-8.2 T     @b 9.3 T         @b 4.2 T
+ *    - `f32`:                  @b 0.6-15.1 T    @b 20.1 T        @b 8.4 T
  *    - `bf16`:                 @b 9.8 T         @b 41.8 T        @b 20.1 T
  *    - `f16`:                  @b 35.4 T        -                @b 16.8 T
  *    - `i16`:                  @b 34.3 T        -                -
@@ -1698,32 +1713,47 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *    - `bf16`:                 @b 301 T         -                -
  *    - `i8`, `u8`:             @b 683 T 🤯🤯🤯   -                -
  *
+ *  > ¹ The FMA throughput on Intel can be insanely low for denormal numbers!
+ *  > ² AVX-512 has weird `i8` by `u8` multiplication instructions, which don't
+ *      seem useful for any 8-bit problems I've encountered, but are handy for
+ *      7-bit representations.
+ *
  *  Let's try un-bundling the fused-multiply-add operations and see if things
  *  get better for Intel 🤞
  */
 
 #if defined(__AVX512F__)
 extern "C" std::uint32_t tops_f64_avx512ma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx512ma, tops_f64_avx512ma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx512ma, tops_f64_avx512ma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512ma, tops_f64_avx512ma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512ma, tops_f64_avx512ma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 extern "C" std::uint32_t tops_f32_avx512ma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx512ma, tops_f32_avx512ma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx512ma, tops_f32_avx512ma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512ma, tops_f32_avx512ma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512ma, tops_f32_avx512ma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX512F__)
 
 #if defined(__AVX512FP16__)
 extern "C" std::uint32_t tops_f16_avx512ma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f16_avx512ma, tops_f16_avx512ma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f16_avx512ma, tops_f16_avx512ma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512ma, tops_f16_avx512ma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512ma, tops_f16_avx512ma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX512FP16__)
 
 #if defined(__AVX2__)
 extern "C" std::uint32_t tops_f64_avx2ma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx2ma, tops_f64_avx2ma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx2ma, tops_f64_avx2ma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2ma, tops_f64_avx2ma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2ma, tops_f64_avx2ma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 extern "C" std::uint32_t tops_f32_avx2ma_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx2ma, tops_f32_avx2ma_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx2ma, tops_f32_avx2ma_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2ma, tops_f32_avx2ma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2ma, tops_f32_avx2ma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX2__)
 
 /**
