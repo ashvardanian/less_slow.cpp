@@ -1687,15 +1687,16 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *
  *                              Intel Xeon 4     AMD Zen 4        Graviton 4
  *    @b FMA in AVX-512 & NEON:
- *    - `f64`:                  @b 215 G         @b 9.3 T
- *    - `f32`:                  @b 636 T         @b 20.1 T
- *    - `bf16`:                 @b 9.8 T         @b 41.8 T
- *    - `f16`:                  @b 35.4 T        -
+ *    - `f64`:                  @b 215 G         @b 9.3 T         @b 4.2 T
+ *    - `f32`:                  @b 636 T         @b 20.1 T        @b 8.4 T
+ *    - `bf16`:                 @b 9.8 T         @b 41.8 T        @b 20.1 T
+ *    - `f16`:                  @b 35.4 T        -                @b 16.8 T
  *    - `i16`:                  @b 34.3 T        -                -
- *    - `i7`:                   @b 76 T          @b 81.3 T
+ *    - `i7`:                   @b 76 T          @b 81.3 T        -
+ *    - `i8`, `u8`:             -                -                @b 38.2 T
  *    @b Mat-Mul in AMX & SME:
- *    - `bf16`:                 @b 301 T
- *    - `i8`, `u8`:             @b 683 T 🤯🤯🤯
+ *    - `bf16`:                 @b 301 T         -                -
+ *    - `i8`, `u8`:             @b 683 T 🤯🤯🤯   -                -
  *
  *  Let's try un-bundling the fused-multiply-add operations and see if things
  *  get better for Intel 🤞
@@ -2278,10 +2279,28 @@ BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity
  *
  *  - `f64`           @b 4.1 T (AVX-512 MA)   @b 3.1 T     @b 2.9 T
  *  - `f32`           @b 8.9 T (AVX-512 MA)   @b 6.4 T     @b 7.5 T
- *  - `bf16`          @b 301 T (AMX)          -
- *  - `f16`           @b 35.4 T (AVX-512 FMA) -
+ *  - `bf16`          @b 301 T (AMX)          -            -
+ *  - `f16`           @b 35.4 T (AVX-512 FMA) -            @b 396 G
  *  - `i16`:          @b 34.3 T (AVX-512 FMA) -            @b 255 G
- *  - `i8` & `u8`     @b 683 T (AMX)          -
+ *  - `i8` & `u8`     @b 683 T (AMX)          -            @b 182 G
+ *
+ *  Important to note, for different libraries and data types, the highest
+ *  throughput was achieved with different shapes and the best number is shown.
+ *
+ *  Similarly on the dual-socket Graviton 4 instances on AWS, we can achieve:
+ *
+ *                    Theoretical             OpenBLAS     Eigen
+ *
+ *  - `f64`           @b 4.2 T                @b 1.2 T     @b 1.2 T
+ *  - `f32`           @b 8.4 T                @b 2.3 T     @b 1.3 T
+ *  - `bf16`          @b 20.1 T               -            -
+ *  - `f16`           @b 16.8 T               -            @b 660 G
+ *  - `i16`:          -                       -            @b 6.5 T
+ *  - `i8` & `u8`     @b 38.2 T               -            @b 13.4 T
+ *
+ *  As expected, modern libraries are generally far less optimized for Arm,
+ *  but for some applications dealing with 8-bit integers, Eigen can be good
+ *  enough.
  */
 #pragma endregion // Memory Bound Linear Algebra
 
