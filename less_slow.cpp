@@ -1172,7 +1172,7 @@ static void f32x4x4_matmul(bm::State &state) {
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_kernel(a, b));
 
     std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul);
@@ -1232,7 +1232,7 @@ static void f32x4x4_matmul_unrolled(bm::State &state) {
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_unrolled_kernel(a, b));
 
     std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul_unrolled);
@@ -1330,7 +1330,7 @@ static void f32x4x4_matmul_sse41(bm::State &state) {
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_sse41_kernel(a, b));
 
     std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul_sse41);
@@ -1419,7 +1419,7 @@ static void f32x4x4_matmul_avx512(bm::State &state) {
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_avx512_kernel(a, b));
 
     std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 BENCHMARK(f32x4x4_matmul_avx512);
 
@@ -1471,8 +1471,15 @@ static void theoretic_tops(                        //
     // Each kernel returns the number of TOPS.
     std::size_t tops = 0;
     for (auto _ : state) bm::DoNotOptimize(tops = theoretic_tops_kernel());
-    state.counters["TOPS"] = bm::Counter(tops * state.iterations() * state.threads() * 1.0, bm::Counter::kIsRate);
+    state.counters["TOP"] = bm::Counter(tops * state.iterations() * state.threads() * 1.0, bm::Counter::kIsRate);
 }
+
+#if defined(__AVX512F__) || defined(__AVX2__)
+void configure_x86_denormals(void) {
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);         // Flush results to zero
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON); // Treat denormal inputs as zero
+}
+#endif
 
 /**
  *  Assuming we are not aiming for dynamic dispatch, we can simply check for
@@ -1486,45 +1493,90 @@ static void theoretic_tops(                        //
  *  @see Arm Feature Detection: https://developer.arm.com/documentation/101028/0010/Feature-test-macros
  */
 #if defined(__AVX512F__)
-extern "C" std::uint32_t tops_f64_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
-extern "C" std::uint32_t tops_f32_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_f64_avx512ma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512ma, tops_f64_avx512ma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512ma, tops_f64_avx512ma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+extern "C" std::uint32_t tops_f64_avx512fma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512fma, tops_f64_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512fma, tops_f64_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+
+extern "C" std::uint32_t tops_f32_avx512ma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512ma, tops_f32_avx512ma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512ma, tops_f32_avx512ma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+extern "C" std::uint32_t tops_f32_avx512fma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512fma, tops_f32_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512fma, tops_f32_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX512F__)
 
 #if defined(__AVX512FP16__)
-extern "C" std::uint32_t tops_f16_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_f16_avx512ma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512ma, tops_f16_avx512ma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512ma, tops_f16_avx512ma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+extern "C" std::uint32_t tops_f16_avx512fma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512fma, tops_f16_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512fma, tops_f16_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX512FP16__)
 
 #if defined(__AVX512BF16__)
-extern "C" std::uint32_t tops_bf16_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_bf16_avx512fma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512fma, tops_bf16_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512fma, tops_bf16_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX512BF16__)
 
 #if defined(__AVX512VNNI__)
-extern "C" std::uint32_t tops_i16_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, i16_avx512, tops_i16_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, i16_avx512, tops_i16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
-extern "C" std::uint32_t tops_u8i8_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, u8i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, u8i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_i16_avx512fma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i16_avx512fma, tops_i16_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i16_avx512fma, tops_i16_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+extern "C" std::uint32_t tops_i7_avx512fma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i7_avx512fma, tops_i7_avx512fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i7_avx512fma, tops_i7_avx512fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX512VNNI__)
 
 #if defined(__AVX2__)
-extern "C" std::uint32_t tops_f64_avx2_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
-extern "C" std::uint32_t tops_f32_avx2_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_f64_avx2ma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2ma, tops_f64_avx2ma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2ma, tops_f64_avx2ma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+extern "C" std::uint32_t tops_f64_avx2fma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2fma, tops_f64_avx2fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2fma, tops_f64_avx2fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+extern "C" std::uint32_t tops_f32_avx2ma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2ma, tops_f32_avx2ma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2ma, tops_f32_avx2ma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+extern "C" std::uint32_t tops_f32_avx2fma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2fma, tops_f32_avx2fma_asm_kernel, configure_x86_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2fma, tops_f32_avx2fma_asm_kernel, configure_x86_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__AVX2__)
 
 #if defined(__ARM_NEON)
+extern "C" std::uint32_t tops_f64_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f64_neon, tops_f64_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_neon, tops_f64_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 extern "C" std::uint32_t tops_f32_neon_asm_kernel(void);
 BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10);
 BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
@@ -1646,11 +1698,11 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *
  *                  Scalar Operations       Tensor Operations
  *
- *  - `f64`:        @b 34 Tera-OPS          @b 67 Tera-OPS
- *  - `f32`:        @b 67 Tera-OPS          @b 989 Tera-OPS
- *  - `bf16`:                               @b 1.9 Peta-OPS
- *  - `f16`:                                @b 2.9 Peta-OPS
- *  - `i8`:                                 @b 3.9 Peta-OPS
+ *  - `f64`:        @b 34 T                 @b 67 T
+ *  - `f32`:        @b 67 T                 @b 989 T
+ *  - `bf16`:                               @b 1.9 P
+ *  - `f16`:                                @b 2.9 P
+ *  - `i8`:                                 @b 3.9 P
  *
  *  This requires up to 700 W of power. A typical high-end server CPU uses
  *  under 500 W of power, and has similar number of cores to the GPUs number
@@ -1658,32 +1710,45 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *  frequency, and has a larger cache, which is crucial for many workloads.
  *  On a single CPU core, we can achieve the following FMA throughput:
  *
- *                          Intel Granite Rapids    AMD Zen4
+ *                              Intel Xeon 4     AMD Zen 4        Graviton 4
+ *    @b FMA in AVX-512 & NEON:
+ *    - `f64`:                  @b 1.2-76 G ¹    @b 58 G          @b 31 G
+ *    - `f32`:                  @b 3.1-135 G ¹   @b 117 G         @b 63 G
+ *    - `bf16`:                 @b 121 G         @b 235 G         @b 101 G
+ *    - `f16`:                  @b 286 G 🤯🤯     -                @b 116 G
+ *    - `i16`:                  @b 342 G 🤯🤯     -                -
+ *    - `i7`: ²                 @b 678 G         @b 470 G 🤯🤯     -
+ *    - `i8`, `u8`:             -                -                @b 1.1 T
+ *    @b Mat-Mul in AMX & SME:
+ *    - `bf16`:                 @b 3.6 T         -                -
+ *    - `i8`, `u8`:             @b 7.2 T 🤯🤯🤯   -                -
  *
- *  - AVX-512 `f64`:        @b 1.5 Giga-OPS         @b 58 Giga-OPS
- *  - AVX-512 `f32`:        @b 4.8 Giga-OPS         @b 117 Giga-OPS
+ *  On a high-end dual-socket system, comparing `c7i.metal-48xl` to `c7a.metal-48xl`
+ *  and `c8g.metal-48xl` 192-core instances on AWS, this scales to:
  *
- *  - AVX-512 `bf16`:       @b 123 Giga-OPS         @b 235 Giga-OPS
- *  - AVX-512 `f16`:        @b 357 Giga-OPS 🤯🤯
- *  - AVX-512 `i8 • u8`:    @b 708 Giga-OPS         @b 470 Giga-Ops 🤯🤯
+ *                              Intel Xeon 4     AMD Zen 4        Graviton 4
+ *    @b FMA in AVX-512 & NEON:
+ *    - `f64`:                  @b 0.2-8.2 T ¹   @b 9.3 T         @b 4.2 T
+ *    - `f32`:                  @b 0.6-15.1 T ¹  @b 20.1 T        @b 8.4 T
+ *    - `bf16`:                 @b 9.8 T         @b 41.8 T        @b 20.1 T
+ *    - `f16`:                  @b 35.4 T        -                @b 16.8 T
+ *    - `i16`:                  @b 34.3 T        -                -
+ *    - `i7`:                   @b 76 T          @b 81.3 T        -
+ *    - `i8`, `u8`:             -                -                @b 38.2 T
+ *    @b Mat-Mul in AMX & SME:
+ *    - `bf16`:                 @b 301 T         -                -
+ *    - `i8`, `u8`:             @b 683 T 🤯🤯🤯   -                -
  *
- *  - AMX `bf16`:           @b 3.7 Tera-OPS
- *  - AMX `i8` and `u8`:    @b 7.5 Tera-OPS 🤯🤯🤯
+ *  > ¹ The FMA throughput on Intel can be insanely low for denormal numbers!
+ *  > ² AVX-512 has weird `i8` by `u8` multiplication instructions, which don't
+ *      seem useful for any 8-bit problems I've encountered, but are handy for
+ *      7-bit representations.
  *
- *  On a typical dual-socket system:
- *
- *                          Intel Granite Rapids    AMD Zen4
- *
- *  - AVX-512 `f64`:        @b ___ Tera-OPS         @b 9.3 Tera-OPS
- *  - AVX-512 `f32`:        @b ___ Tera-OPS         @b 20.1 Tera-OPS
- *
- *  - AVX-512 `bf16`:       @b ___ Tera-OPS         @b 41.8 Tera-OPS
- *  - AVX-512 `f16`:        @b ___ Tera-OPS         @b 39.6 Tera-Ops
- *  - AVX-512 `i8 • u8`:    @b ___ Tera-OPS         @b 81.3 Tera-Ops
- *
- *  - AMX `bf16`:           @b __ Tera-OPS
- *  - AMX `i8` and `u8`:    @b __ Tera-OPS
+ *  The Fused-Multiply-Add performance should be higher than separate Multiply
+ *  and Add operations. Moreover, there is no direct support for `bf16` math
+ *  in x86, so for some numeric types FMA is the only option.
  */
+
 #pragma endregion // Compute Bound Linear Algebra
 
 #pragma region // Port Interleaving and Latency Hiding
@@ -1697,9 +1762,9 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
 
 #if defined(__AVX512VNNI__) && defined(__AMX_INT8__)
 
-extern "C" std::uint32_t tops_i8u8_amx_avx512_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, i8u8_amx_avx512, tops_i8u8_amx_avx512_asm_kernel, configure_amx)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, i8u8_amx_avx512, tops_i8u8_amx_avx512_asm_kernel, configure_amx)
+extern "C" std::uint32_t tops_i7_amx_avx512fma_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kernel, configure_amx)
     ->MinTime(10)
     ->Threads(physical_cores());
 
@@ -2142,7 +2207,7 @@ static void cblas_tops(bm::State &state) {
                         /* beta: */ 0, c.data(), ldc);
 
     std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
-    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
     state.SetComplexityN(n);
 }
 
@@ -2179,12 +2244,14 @@ static void eigen_tops(bm::State &state) {
     }
 
     std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
-    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
     state.SetComplexityN(n);
 }
 
-BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
 BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<std::int16_t>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<std::int8_t>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
 
 /**
  *  Arm provides C language extensions for half-precision numbers, like
@@ -2199,14 +2266,47 @@ BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(b
 BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
 #endif
 
-#if defined(__ARM_FEATURE_BF16)
+#if defined(__ARM_FEATURE_BF16) //! May not be defined even if `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC` is!
 #include <arm_bf16.h>
 BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
 #endif
 
+#if defined(__AVX512FP16__)
+#include <immintrin.h>
+BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+#endif
+
 /**
  *  Now we can compare the theoretical limits to the actual performance
- *  of Eigen and BLAS libraries.
+ *  of Eigen and BLAS libraries. On a dual-socket system, 192-core Intel
+ *  Xeon 4 instances on AWS, we can achieve the following FMA throughput:
+ *
+ *                    Theoretical             OpenBLAS     Eigen
+ *
+ *  - `f64`           @b 4.1 T (AVX-512)      @b 3.1 T     @b 2.9 T
+ *  - `f32`           @b 8.9 T (AVX-512)      @b 6.4 T     @b 7.5 T
+ *  - `bf16`          @b 301 T (AMX)          -            -
+ *  - `f16`           @b 35.4 T (AVX-512)     -            @b 396 G
+ *  - `i16`:          @b 34.3 T (AVX-512)     -            @b 255 G
+ *  - `i8` & `u8`     @b 683 T (AMX)          -            @b 182 G
+ *
+ *  Important to note, for different libraries and data types, the highest
+ *  throughput was achieved with different shapes and the best number is shown.
+ *
+ *  Similarly on the dual-socket Graviton 4 instances on AWS, we can achieve:
+ *
+ *                    Theoretical             OpenBLAS     Eigen
+ *
+ *  - `f64`           @b 4.2 T                @b 1.2 T     @b 1.2 T
+ *  - `f32`           @b 8.4 T                @b 2.3 T     @b 1.3 T
+ *  - `bf16`          @b 20.1 T               -            -
+ *  - `f16`           @b 16.8 T               -            @b 660 G
+ *  - `i16`:          -                       -            @b 6.5 T
+ *  - `i8` & `u8`     @b 38.2 T               -            @b 13.4 T
+ *
+ *  As expected, modern libraries are generally far less optimized for Arm,
+ *  but for some applications dealing with 8-bit integers, Eigen can be good
+ *  enough.
  */
 #pragma endregion // Memory Bound Linear Algebra
 
