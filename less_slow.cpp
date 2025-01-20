@@ -1525,6 +1525,9 @@ BENCHMARK_CAPTURE(theoretic_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(1
 #endif // defined(__AVX2__)
 
 #if defined(__ARM_NEON)
+extern "C" std::uint32_t tops_f64_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f64_neon, tops_f64_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_neon, tops_f64_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 extern "C" std::uint32_t tops_f32_neon_asm_kernel(void);
 BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10);
 BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
