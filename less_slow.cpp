@@ -451,9 +451,12 @@ BENCHMARK(sorting_with_openmp)
  *
  *  @see Sorting in Thrust: https://nvidia.github.io/cccl/thrust/api_docs/algorithms/sorting
  */
-
+#include <cuda_runtime.h>         // `cudaError_t`
 #include <thrust/device_vector.h> // `thrust::device_vector`
+#include <thrust/host_vector.h>   // `thrust::host_vector`
 #include <thrust/sort.h>          // `thrust::sort`
+
+using namespace std::string_literals;
 
 static void sorting_with_thrust(benchmark::State &state) {
     const auto count = static_cast<std::size_t>(state.range(0));
@@ -469,7 +472,7 @@ static void sorting_with_thrust(benchmark::State &state) {
         thrust::reverse(device_array.begin(), device_array.end());
         thrust::sort(device_array.begin(), device_array.end());
         cudaError_t error = cudaDeviceSynchronize(); //! Block until the GPU has completed all tasks
-        if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: " + cudaGetErrorString(error));
+        if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: "s + cudaGetErrorString(error));
         benchmark::DoNotOptimize(device_array.data());
     }
 
@@ -499,23 +502,59 @@ BENCHMARK(sorting_with_thrust)
  *  device-side timers for more accurate measurements.
  */
 #include <cub/cub.cuh>
-#include <cuda_runtime.h>
 
 static void sorting_with_cub(bm::State &state) {
     auto count = static_cast<std::size_t>(state.range(0));
     thrust::device_vector<std::uint32_t> device_array(count);
-    thrust::device_vector<std::byte_t> temporary(count);
+    thrust::device_vector<std::byte> temporary;
 
     // One of the interesting design choices of CUB is that you can call
     // the target method with `NULL` arguments to infer the required temporary
-    // memory amount.
-    cub::DeviceRadixSort::SortKeys(...);
+    // memory amount. The Radix Sort generally requires ~ 2N temporary memory.
+    //
+    // Another one is the naming of the operations - `SortKeys` instead of `Sort`.
+    // There is also `SortPairs` and `SortPairsDescending` in for key-value pairs.
+    std::size_t temporary_bytes = 0;
+    cub::DeviceRadixSort::SortKeys(                           //
+        NULL, temporary_bytes,                                // temporary memory and its size
+        device_array.data().get(), device_array.data().get(), // "in" and "out" arrays
+        count                                                 // number of elements and optional parameters
+    );
     temporary.resize(temporary_bytes);
 
+    // To schedule the Thrust and CUB operations on the same CUDA stream,
+    // we need to wrap it into a "policy" object.
+    cudaStream_t sorting_stream;
+    cudaStreamCreate(&sorting_stream);
+    auto policy = thrust::cuda::par.on(sorting_stream);
+
+    // Create CUDA events for timing
+    cudaEvent_t start_event, stop_event;
+    cudaEventCreate(&start_event);
+    cudaEventCreate(&stop_event);
+
     for (auto _ : state) {
-        thrust::reverse(thrust::device.on(), device_array.begin(), device_array.end());
-        cub::DeviceRadixSort::SortKeys(...);
-        ...
+
+        // Record the start event
+        cudaEventRecord(start_event, sorting_stream);
+
+        thrust::reverse(policy, device_array.begin(), device_array.end());
+        cub::DeviceRadixSort::SortKeys(                           //
+            temporary.data().get(), temporary_bytes,              // temporary memory and its size
+            device_array.data().get(), device_array.data().get(), // "in" and "out" arrays pin to same memory
+            count,                                                // number of elements
+            0, sizeof(std::uint32_t) * CHAR_BIT,                  // begin and end bit positions
+            sorting_stream                                        // CUDA stream
+        );
+
+        // Record the stop event
+        cudaEventRecord(stop_event, sorting_stream);
+        cudaError_t error = cudaEventSynchronize(stop_event); //! Block until the GPU has completed all tasks
+        if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: "s + cudaGetErrorString(error));
+
+        float milliseconds = 0.0f;
+        cudaEventElapsedTime(&milliseconds, start_event, stop_event);
+        state.SetIterationTime(milliseconds / 1000.0f);
     }
 
     state.SetComplexityN(count);
@@ -528,7 +567,17 @@ BENCHMARK(sorting_with_cub)
     ->Range(1l << 20, 1l << 28)
     ->MinTime(10)
     ->Complexity(bm::oNLogN)
-    ->UseRealTime();
+    ->UseManualTime();
+
+/**
+ *  Comparing CPU to GPU performance is not straightforward, but we can compare
+ *  Thrust to CUB solutions. On a consumer-grade 4060 Ada Lovelace GPU:
+ *
+ *  - `sorting_with_thrust` takes from ~ @b 1ms to @b 84ms
+ *  - `sorting_with_cub` takes ~ @b 0.16ms to @b 51ms
+ *
+ *  50% performance improvements are typical for CUB.
+ */
 
 #endif // defined(__CUDACC__)
 
@@ -1771,6 +1820,7 @@ static void pipeline_cpp11_std_function(bm::State &state) {
 
 BENCHMARK(pipeline_cpp11_std_function);
 
+#if defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine) && !defined(__NVCC__)
 /**
  *  C++20 introduces @b coroutines in the language, but not in the library,
  *  so we need to provide a minimal implementation of a "generator" class.
@@ -1907,6 +1957,7 @@ BENCHMARK(pipeline_cpp20_coroutine<cppcoro_generator_t>);
 BENCHMARK(pipeline_cpp20_coroutine<cppcoro_recursive_generator_t>);
 
 #pragma endregion // Coroutines and Asynchronous Programming
+#endif            // defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine) && !defined(__NVCC__)
 
 #pragma region Ranges and Iterators
 #if defined(__cpp_lib_ranges)
@@ -1941,14 +1992,14 @@ class prime_factors_view : public std::ranges::view_interface<prime_factors_view
     std::uint64_t number_ = 0;
 
   public:
-    prime_factors_view() noexcept {}
-    explicit prime_factors_view(std::uint64_t n) noexcept : number_(n) {}
+    constexpr prime_factors_view() noexcept {}
+    explicit constexpr prime_factors_view(std::uint64_t n) noexcept : number_(n) {}
 
     class iterator {
         std::uint64_t number_ = 0;
         std::uint64_t factor_ = 0;
 
-        inline void advance() noexcept {
+        constexpr void advance() noexcept {
             // Handle factor 2 separately
             if (factor_ == 2) {
                 // Keep dividing by 2 as long as the number is even
@@ -1979,25 +2030,25 @@ class prime_factors_view : public std::ranges::view_interface<prime_factors_view
         using iterator_category = std::input_iterator_tag;
         using iterator_concept = std::input_iterator_tag;
 
-        iterator() = default;
-        iterator(std::uint64_t n) noexcept : number_(n), factor_(2) { advance(); }
-        std::uint64_t operator*() const noexcept { return factor_; }
-        iterator &operator++() noexcept {
+        constexpr iterator() = default;
+        constexpr iterator(std::uint64_t n) noexcept : number_(n), factor_(2) { advance(); }
+        constexpr std::uint64_t operator*() const noexcept { return factor_; }
+        constexpr iterator &operator++() noexcept {
             advance();
             return *this;
         }
-        iterator operator++(int) noexcept {
+        constexpr iterator operator++(int) noexcept {
             iterator temp = *this;
             ++(*this);
             return temp;
         }
 
-        bool operator==(iterator const &other) const noexcept { return factor_ == other.factor_; }
-        bool operator!=(iterator const &other) const noexcept { return factor_ != other.factor_; }
+        constexpr bool operator==(iterator const &other) const noexcept { return factor_ == other.factor_; }
+        constexpr bool operator!=(iterator const &other) const noexcept { return factor_ != other.factor_; }
     };
 
-    iterator begin() const noexcept { return iterator(number_); }
-    iterator end() const noexcept { return iterator(); }
+    constexpr iterator begin() const noexcept { return iterator(number_); }
+    constexpr iterator end() const noexcept { return iterator(); }
 };
 
 static_assert(std::ranges::view<prime_factors_view>, "The range must model `std::ranges::view`");
@@ -2008,7 +2059,7 @@ static_assert(std::ranges::input_range<prime_factors_view>, "The range must mode
  *          Useful for search predicates.
  */
 template <typename function_type_>
-auto not_fn(function_type_ f) noexcept {
+constexpr auto not_fn(function_type_ f) noexcept {
     return [f](auto &&...args) { return !f(std::forward<decltype(args)>(args)...); };
 }
 
@@ -2464,6 +2515,7 @@ void parse_stl(bm::State &state, std::string_view config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
+#if !defined(__NVCC__)
 /**
  *  The STL's `std::ranges::views::split` won't compile with a predicate lambda,
  *  but Eric Niebler's `ranges-v3` library has a `ranges::view::split_when` that does.
@@ -2508,6 +2560,8 @@ void parse_ranges(bm::State &state, std::string_view config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
+#endif // !defined(__NVCC__)
+
 #include <stringzilla/stringzilla.hpp>
 
 void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
@@ -2542,7 +2596,9 @@ void parse_sz(bm::State &state, std::string_view config_text) {
 }
 
 BENCHMARK_CAPTURE(parse_stl, short_, short_config_text)->MinTime(2);
+#if !defined(__NVCC__)
 BENCHMARK_CAPTURE(parse_ranges, short_, short_config_text)->MinTime(2);
+#endif
 BENCHMARK_CAPTURE(parse_sz, short_, short_config_text)->MinTime(2);
 
 /**
@@ -2590,7 +2646,9 @@ monitoring_dashboard_url_for_production_insights: https://dashboard.company.com/
 )";
 
 BENCHMARK_CAPTURE(parse_stl, long_, long_config_text)->MinTime(2);
+#if !defined(__NVCC__)
 BENCHMARK_CAPTURE(parse_ranges, long_, long_config_text)->MinTime(2);
+#endif
 BENCHMARK_CAPTURE(parse_sz, long_, long_config_text)->MinTime(2);
 
 /**
@@ -3325,6 +3383,12 @@ struct graph_flat_set_t {
         node_id_t from;
         node_id_t to;
         edge_weight_t weight;
+
+        //! NVCC's `std::construct_at` requires those default constructors
+        constexpr edge_t() noexcept = default;
+        constexpr edge_t(edge_t const &) noexcept = default;
+        constexpr edge_t(node_id_t from, node_id_t to, edge_weight_t weight) noexcept
+            : from(from), to(to), weight(weight) {}
     };
     struct equal_t {
         using is_transparent = std::true_type;

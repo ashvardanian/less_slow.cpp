@@ -13,6 +13,7 @@
     "CCCL",
     "clflush",
     "consteval",
+    "constexpr",
     "coro",
     "cppcoro",
     "CTRE",
@@ -23,6 +24,7 @@
     "Fedor",
     "Goodput",
     "grandkids",
+    "GTEST",
     "Hana",
     "Ibireme",
     "JeanHeyd",
@@ -30,6 +32,7 @@
     "Lelbach",
     "Lemire",
     "Lib",
+    "LIBPFM",
     "libunifex",
     "Lohmann",
     "Maclaurin",
@@ -71,6 +74,7 @@
     "Zverovich"
   ],
   "files.associations": {
+    "*.ipp": "cpp",
     "*.tcc": "cpp",
     "__bit_reference": "cpp",
     "__bits": "cpp",
@@ -94,6 +98,7 @@
     "bit": "cpp",
     "bitset": "cpp",
     "cctype": "cpp",
+    "cfenv": "cpp",
     "charconv": "cpp",
     "chrono": "cpp",
     "clocale": "cpp",
@@ -115,11 +120,13 @@
     "deque": "cpp",
     "exception": "cpp",
     "execution": "cpp",
+    "expected": "cpp",
     "format": "cpp",
     "forward_list": "cpp",
     "fstream": "cpp",
     "functional": "cpp",
     "initializer_list": "cpp",
+    "inplace_vector": "cpp",
     "iomanip": "cpp",
     "ios": "cpp",
     "iosfwd": "cpp",
@@ -147,6 +154,7 @@
     "shared_mutex": "cpp",
     "source_location": "cpp",
     "span": "cpp",
+    "sstream": "cpp",
     "stdexcept": "cpp",
     "stop_token": "cpp",
     "streambuf": "cpp",
@@ -163,9 +171,6 @@
     "utility": "cpp",
     "variant": "cpp",
     "vector": "cpp",
-    "sstream": "cpp",
-    "cfenv": "cpp",
-    "expected": "cpp",
-    "*.ipp": "cpp"
+    "version": "cpp"
   }
 }
