@@ -340,14 +340,36 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(physical_cores());
  */
 #include <algorithm> // `std::sort`
 #include <numeric>   // `std::iota`
-#include <vector>    // `std::vector`
+
+/**
+ *  @brief  A minimalistic `std::vector` replacement, wrapping an aligned
+ *          allocation similar to `std::unique_ptr`.
+ *  @see    https://stackoverflow.com/a/79363156/2766161
+ */
+template <typename type_>
+class aligned_array {
+
+    type_ *data_ = nullptr;
+    std::size_t size_ = 0;
+
+  public:
+    aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size) {
+        data_ = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size_));
+        if (!data_) throw std::bad_alloc();
+    }
+    ~aligned_array() noexcept { std::free(data_); }
+    type_ *begin() const noexcept { return data_; }
+    type_ *end() const noexcept { return data_ + size_; }
+    type_ &operator[](std::size_t index) noexcept { return data_[index]; }
+    type_ operator[](std::size_t index) const noexcept { return data_[index]; }
+};
 
 static void sorting(bm::State &state) {
 
     auto length = static_cast<std::size_t>(state.range(0));
     auto include_preprocessing = static_cast<bool>(state.range(1));
 
-    std::vector<std::uint32_t> array(length);
+    aligned_array<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -356,9 +378,7 @@ static void sorting(bm::State &state) {
         // Reverse order is the most classical worst case, but not the only one.
         std::reverse(array.begin(), array.end());
         if (!include_preprocessing) state.ResumeTiming();
-
         std::sort(array.begin(), array.end());
-        bm::DoNotOptimize(array.size());
     }
 
     if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
@@ -393,13 +413,12 @@ static void sorting_with_executors( //
     bm::State &state, execution_policy_ &&policy) {
 
     auto length = static_cast<std::size_t>(state.range(0));
-    std::vector<std::uint32_t> array(length);
+    aligned_array<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
         std::reverse(policy, array.begin(), array.end());
         std::sort(policy, array.begin(), array.end());
-        bm::DoNotOptimize(array.size());
     }
 
     if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
@@ -498,7 +517,7 @@ static void sorting_with_openmp(bm::State &state) {
         return offset < length ? offset : length;
     };
 
-    std::vector<std::uint32_t> array(length);
+    aligned_array<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -528,8 +547,6 @@ static void sorting_with_openmp(bm::State &state) {
                 std::inplace_merge(array.begin() + start, array.begin() + mid, array.begin() + finish);
             }
         }
-
-        bm::DoNotOptimize(array.size());
     }
 
     if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
@@ -621,6 +638,7 @@ struct quick_sort_recurse {
  *  with additional bookkeeping. In our logic we never need to pop from the middle
  *  or from the front, so a `std::vector` is a better choice.
  */
+#include <vector> // `std::vector`
 
 template <typename element_type_>
 struct quick_sort_iterate {
@@ -663,10 +681,10 @@ template <typename sorter_type_, std::size_t length_> //
 static void recursion_cost(bm::State &state) {
     using element_t = typename sorter_type_::element_t;
     sorter_type_ sorter;
-    std::vector<element_t> array(length_);
+    aligned_array<element_t> array(length_);
     for (auto _ : state) {
         for (std::size_t i = 0; i != length_; ++i) array[i] = length_ - i;
-        sorter(array.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
+        sorter(array.begin(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
     }
 
     if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
@@ -720,8 +738,8 @@ BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 4096);
  */
 static void branch_cost(bm::State &state) {
     auto count = static_cast<std::size_t>(state.range(0));
-    std::vector<std::int32_t> random_values(count);
-    std::generate_n(random_values.begin(), random_values.size(), &std::rand);
+    aligned_array<std::int32_t> random_values(count);
+    std::generate_n(random_values.begin(), count, &std::rand);
     std::int32_t variable = 0;
     std::size_t iteration = 0;
 
@@ -764,16 +782,16 @@ static void cache_misses_cost(bm::State &state) {
     auto count = static_cast<std::uint32_t>(state.range(0));
 
     // Populate with arbitrary data
-    std::vector<std::int32_t> data(count);
+    aligned_array<std::int32_t> data(count);
     std::iota(data.begin(), data.end(), 0);
 
     // Initialize different access orders
-    std::vector<std::uint32_t> indices(count);
+    aligned_array<std::uint32_t> indices(count);
     if constexpr (access_order_ == access_order_t::random) {
         std::random_device random_device;
         std::mt19937 generator(random_device());
         std::uniform_int_distribution<std::uint32_t> uniform_distribution(0, count - 1);
-        std::generate_n(indices.begin(), indices.size(), [&] { return uniform_distribution(generator); });
+        std::generate(indices.begin(), indices.end(), [&] { return uniform_distribution(generator); });
     }
     else { std::iota(indices.begin(), indices.end(), 0u); }
 
@@ -1928,13 +1946,6 @@ class strided_ptr {
     // clang-format on
 };
 
-template <typename type_>
-std::unique_ptr<type_[], decltype(&std::free)> make_aligned_array(std::size_t size, std::size_t alignment) {
-    type_ *raw_ptr = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size));
-    if (!raw_ptr) throw std::bad_alloc();
-    return std::unique_ptr<type_[], decltype(&std::free)>(raw_ptr, &std::free);
-}
-
 #if defined(__aarch64__)
 /**
  *  @brief  Helper derived from `__aarch64_sync_cache_range` in `libgcc`, used to
@@ -1959,8 +1970,8 @@ static void memory_access(bm::State &state) {
     // memory accesses may suffer from the same issues. For split-loads, pad our
     // buffer with an extra `cache_line_width` bytes of space.
     std::size_t const buffer_size = typical_l2_size + cache_line_width;
-    auto const buffer = make_aligned_array<std::byte>(buffer_size, cache_line_width);
-    std::byte *const buffer_ptr = buffer.get();
+    aligned_array<std::byte> buffer(buffer_size, cache_line_width);
+    std::byte *const buffer_ptr = buffer.begin();
 
     // Let's initialize a strided range using out `strided_ptr` template, but
     // for `alignment_mode_t::unaligned_k` make sure that the scalar-of-interest in each
@@ -2050,16 +2061,16 @@ template <typename kernel_type_>
 static void spread_memory(bm::State &state, kernel_type_ kernel, std::size_t align = sizeof(spread_data_t)) {
 
     std::size_t const size = static_cast<std::size_t>(state.range(0));
-    auto indices = make_aligned_array<spread_index_t>(size, align);
-    auto first = make_aligned_array<spread_data_t>(size, align);
-    auto second = make_aligned_array<spread_data_t>(size, align);
+    aligned_array<spread_index_t> indices(size, align);
+    aligned_array<spread_data_t> first(size, align);
+    aligned_array<spread_data_t> second(size, align);
 
-    std::iota(indices.get(), indices.get() + size, 0);
+    std::iota(indices.begin(), indices.begin() + size, 0);
     std::random_device random_device;
     std::mt19937 generator(random_device());
-    std::shuffle(indices.get(), indices.get() + size, generator);
+    std::shuffle(indices.begin(), indices.begin() + size, generator);
 
-    for (auto _ : state) kernel(first.get(), indices.get(), second.get(), size);
+    for (auto _ : state) kernel(first.begin(), indices.begin(), second.begin(), size);
 }
 
 BENCHMARK_CAPTURE(spread_memory, gather_scalar, spread_gather_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
@@ -2191,7 +2202,7 @@ static void cblas_tops(bm::State &state) {
     int const lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
 
     // Allocate and initialize data
-    std::vector<scalar_type_> a(n * n), b(n * n), c(n * n, 0);
+    aligned_array<scalar_type_> a(n * n), b(n * n), c(n * n, 0);
     std::iota(a.begin(), a.end(), 0);
     std::iota(b.begin(), b.end(), 0);
 
@@ -2199,12 +2210,12 @@ static void cblas_tops(bm::State &state) {
     for (auto _ : state)
         if constexpr (std::is_same_v<scalar_type_, float>)
             cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n, n, n, //
-                        /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
-                        /* beta: */ 0, c.data(), ldc);
+                        /* alpha: */ 1, a.begin(), lda, b.begin(), ldb,     //
+                        /* beta: */ 0, c.begin(), ldc);
         else
             cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n, n, n, //
-                        /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
-                        /* beta: */ 0, c.data(), ldc);
+                        /* alpha: */ 1, a.begin(), lda, b.begin(), ldb,     //
+                        /* beta: */ 0, c.begin(), ldc);
 
     std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
     state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
