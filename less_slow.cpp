@@ -2259,7 +2259,7 @@ BENCHMARK(eigen_tops<std::int8_t>)->RangeMultiplier(2)->Range(8, 65536)->Complex
 BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
 #endif
 
-#if defined(__ARM_FEATURE_BF16)
+#if defined(__ARM_FEATURE_BF16) //! May not be defined even if `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC` is!
 #include <arm_bf16.h>
 BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
 #endif
