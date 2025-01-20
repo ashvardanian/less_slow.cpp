@@ -26,6 +26,7 @@ Some of the highlights include:
 - __How to handle JSON avoiding memory allocations?__ Is it easier with C or C++ libraries?
 - __How to properly use associative containers__ with custom keys and transparent comparators?
 - __How to beat a hand-written parser__ with `consteval` RegEx engines?
+- __Is the pointer size really 64 bits__ and how to exploit [pointer-tagging](https://en.wikipedia.org/wiki/Tagged_pointer)?
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
 Follow the instructions below to run the code in your environment and compare it to the comments as you read through the source.
