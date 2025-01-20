@@ -1,5 +1,5 @@
 /**
- *  @brief  Low-level microbenchmarks for building a performance-first mindset.
+ *  @brief  Low-level micro-benchmarks for building a performance-first mindset.
  *  @file   less_slow.cpp
  *  @author Ash Vardanian
  *
@@ -72,6 +72,108 @@ BENCHMARK(i32_addition);
  *  settings, discarding the @b `-O3` flag for "Release build" optimizations,
  *  we may see a non-zero value, but it won't represent real-world performance.
  *
+ *  One way to avoid, is just implementing the kernel in @b inline-assembly,
+ *  interleaving it with the higher-level C++ code:
+ */
+
+#if defined(__GNUC__) && !defined(__clang__) //! GCC and Clang support inline assembly, MSVC doesn't!
+
+#if defined(__x86_64__) || defined(__i386__) //? Works for both 64-bit and 32-bit x86 architectures
+
+static void i32_addition_inline_asm(bm::State &state) {
+    // In inline assembly for x86 we are not explicitly naming the registers,
+    // so in the 32-bit and 64-bit modes different registers will be used:
+    // - For 32-bit (`__i386__`): Registers like `eax` and `ebx` will be used,
+    //   and pointers will be 4 bytes wide.
+    // - For 64-bit targets (`__x86_64__`): Registers like `eax`, `r8d` will
+    //   be used for 32-bit values, while pointers will be 8 bytes wide.
+    std::int32_t a = 0, b = 0, c = 0;
+    for (auto _ : state) {
+        asm volatile(                  //
+            "addl %[b], %[a]\n\t"      // Sum `a + b` into `a`; `l` means 32-bit operation.
+            "movl %[a], %[c]\n\t"      // Move result to `c`, again using the `l` suffix.
+            : [c] "=r"(c), [a] "+r"(a) // Outputs: `c` and `a` (read-write)
+            : [b] "r"(b)               // Input: `b`
+            : "cc"                     // Clobbered: condition codes
+        );
+    }
+    (void)c; // Silence "variable `c` set but not used" warning
+}
+
+BENCHMARK(i32_addition_inline_asm);
+
+#elif defined(__aarch64__) //? The following kernel is just for the 64-bit Arm
+
+static void i32_addition_inline_asm(bm::State &state) {
+    std::int32_t a = 0, b = 0, c = 0;
+    for (auto _ : state) {
+        asm volatile(                     //
+            "add %w[a], %w[b], %w[a]\n\t" // Sum `a + b` into `a`
+            "mov %w[c], %w[a]\n\t"        // Move result to `c`
+            : [c] "=r"(c), [a] "+r"(a)    // Outputs: `c` and `a` (read-write)
+            : [b] "r"(b)                  // Input: `b`
+            : "cc"                        // Clobbered: condition codes
+        );
+    }
+    (void)c; // Silence "variable `c` set but not used" warning
+}
+BENCHMARK(i32_addition_inline_asm);
+
+#endif // defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
+
+#endif // defined(__GNUC__) && !defined(__clang__)
+
+/**
+ *  We can also put the assembly kernels into separate `.S` files and link them
+ *  to our C++ target. Each approach has its technical tradeoffs:
+ *
+ *  - Inline Assembly:
+ *    Requires direct interaction with registers, which must be carefully managed
+ *    using constraints and clobbers to ensure the compiler knows which registers
+ *    are modified.  While inline assembly enables tight coupling with C++ logic
+ *    and access to local variables, it is less portable due to compiler-specific
+ *    syntax and optimization variability. Debugging inline assembly can also be
+ *    challenging as it is embedded in higher-level code.
+ *
+ *  - Separate Assembly Files:
+ *    Abstracts away register management through adherence to the platform's
+ *    Application Binary Interface @b (ABI). This makes the assembly routines
+ *    easier to debug, test, and reuse across projects. However, separate files
+ *    require more boilerplate for function calls, stack management, and
+ *    parameter passing. They are preferred for large or standalone routines
+ *    that benefit from modularity and clear separation from C++ code.
+ *
+ *  In this project, we provide assembly kernels for two platforms:
+ *
+ *  - @b less_slow_aarch64.S - for the 64-bit ARM architecture.
+ *  - @b less_slow_amd64.S - for the x86_64 architecture, with 64-bit extensions,
+ *    originally introduced by AMD.
+ */
+#if defined(__x86_64__) || defined(__aarch64__)
+
+extern "C" std::int32_t i32_add_asm_kernel(std::int32_t a, std::int32_t b);
+
+static void i32_addition_asm(bm::State &state) {
+    std::int32_t a = 0, b = 0, c = 0;
+    for (auto _ : state) c = i32_add_asm_kernel(a, b);
+    (void)c; // Silence "variable `c` set but not used" warning
+}
+
+BENCHMARK(i32_addition_asm);
+
+#endif // defined(__x86_64__) || defined(__aarch64__)
+
+/**
+ *  So far the results may be:
+ *
+ *  - `i32_addition` - @b 0ns, as the compiler optimized the code away.
+ *  - `i32_addition_inline_asm` - @b 0.2ns, a single instruction was inlined.
+ *  - `i32_addition_asm` - @b 0.9ns, a new stack frame was created!
+ *
+ *  Keep this in mind! Even with Link-Time Optimization @b (LTO) enabled,
+ *  most of the time, compilers won't be able to inline your Assembly kernels.
+ *
+ *  Don't want to switch to Assembly to fool the compilers? No problem!
  *  Another thing we can try - is generating random inputs on the fly with
  *  @b `std::rand()`, one of the most controversial operations in the
  *  C standard library.
@@ -242,10 +344,10 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(physical_cores());
 
 static void sorting(bm::State &state) {
 
-    auto count = static_cast<std::size_t>(state.range(0));
+    auto length = static_cast<std::size_t>(state.range(0));
     auto include_preprocessing = static_cast<bool>(state.range(1));
 
-    std::vector<std::uint32_t> array(count);
+    std::vector<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -258,6 +360,8 @@ static void sorting(bm::State &state) {
         std::sort(array.begin(), array.end());
         bm::DoNotOptimize(array.size());
     }
+
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
 }
 
 BENCHMARK(sorting)->Args({3, false})->Args({3, true});
@@ -288,8 +392,8 @@ template <typename execution_policy_>
 static void sorting_with_executors( //
     bm::State &state, execution_policy_ &&policy) {
 
-    auto count = static_cast<std::size_t>(state.range(0));
-    std::vector<std::uint32_t> array(count);
+    auto length = static_cast<std::size_t>(state.range(0));
+    std::vector<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -298,9 +402,8 @@ static void sorting_with_executors( //
         bm::DoNotOptimize(array.size());
     }
 
-    state.SetComplexityN(count);
-    state.SetItemsProcessed(count * state.iterations());
-    state.SetBytesProcessed(count * state.iterations() * sizeof(std::uint32_t));
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
+    state.SetComplexityN(length);
 
     // Want to report something else? Sure, go ahead:
     //
@@ -429,9 +532,8 @@ static void sorting_with_openmp(bm::State &state) {
         bm::DoNotOptimize(array.size());
     }
 
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
     state.SetComplexityN(length);
-    state.SetItemsProcessed(length * state.iterations());
-    state.SetBytesProcessed(length * state.iterations() * sizeof(std::uint32_t));
 }
 
 BENCHMARK(sorting_with_openmp)
@@ -561,11 +663,14 @@ template <typename sorter_type_, std::size_t length_> //
 static void recursion_cost(bm::State &state) {
     using element_t = typename sorter_type_::element_t;
     sorter_type_ sorter;
-    std::vector<element_t> arr(length_);
+    std::vector<element_t> array(length_);
     for (auto _ : state) {
-        for (std::size_t i = 0; i != length_; ++i) arr[i] = length_ - i;
-        sorter(arr.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
+        for (std::size_t i = 0; i != length_; ++i) array[i] = length_ - i;
+        sorter(array.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
     }
+
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
+    state.SetComplexityN(length_);
 }
 
 using recursive_sort_i32s = quick_sort_recurse<std::int32_t>;
@@ -751,7 +856,8 @@ BENCHMARK(rvo_impossible);
 
 static void f64_sin(bm::State &state) {
     double argument = std::rand(), result = 0;
-    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 1.0));
+    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 0.001));
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin);
@@ -775,10 +881,11 @@ BENCHMARK(f64_sin);
 static void f64_sin_maclaurin(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = argument - std::pow(argument, 3) / 6 + std::pow(argument, 5) / 120;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin);
@@ -806,11 +913,12 @@ BENCHMARK(f64_sin_maclaurin);
 static void f64_sin_maclaurin_powless(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin_powless);
@@ -850,11 +958,12 @@ BENCHMARK(f64_sin_maclaurin_powless);
 FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin_with_fast_math);
@@ -1015,7 +1124,7 @@ BENCHMARK(bits_population_count_native);
 
 #pragma endregion // Expensive Integer Operations
 
-#pragma region Compute vs Memory Bounds with Matrix Multiplications
+#pragma region Compute Bound Linear Algebra
 
 /**
  *  Understanding common algorithmic design patterns across various computational
@@ -1062,8 +1171,8 @@ static void f32x4x4_matmul(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul);
@@ -1122,8 +1231,8 @@ static void f32x4x4_matmul_unrolled(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_unrolled_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul_unrolled);
@@ -1220,8 +1329,8 @@ static void f32x4x4_matmul_sse41(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_sse41_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul_sse41);
@@ -1309,8 +1418,8 @@ static void f32x4x4_matmul_avx512(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_avx512_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 BENCHMARK(f32x4x4_matmul_avx512);
 
@@ -1333,9 +1442,292 @@ BENCHMARK(f32x4x4_matmul_avx512);
  *  means the performance will still degrade—@b around 5ns in practice.
  *
  *  Benchmark everything! Don't assume less work translates to faster execution.
+ *  Read the specs of your hardware to understand it's theoretical upper limits,
+ *  and double-check them with stress-tests. Pure @b Assembly is perfect for this!
+ *
+ *  Let's implement a few simple Assembly kernels for Fused-Multiply-Add @b (FMA)
+ *  operations, assuming the data is already in our registers and aligned and
+ *  represents a small slice of a very large matrix. That way we can infer the
+ *  theoretical upper bounds for matrix multiplication throughput on our CPU.
  */
 
-#pragma endregion // Compute vs Memory Bounds with Matrix Multiplications
+typedef std::uint32_t (*theoretic_tops_kernel_t)(void);
+typedef void (*theoretic_tops_prepare_t)(void);
+
+static void theoretic_tops(                        //
+    bm::State &state,                              //
+    theoretic_tops_kernel_t theoretic_tops_kernel, //
+    theoretic_tops_prepare_t prepare = nullptr) {
+
+    // If there is some preparation to be done, do it.
+    if (prepare) try {
+            prepare();
+        }
+        catch (std::exception const &e) {
+            state.SkipWithError(e.what());
+            return;
+        }
+
+    // Each kernel returns the number of TOPS.
+    std::size_t tops = 0;
+    for (auto _ : state) bm::DoNotOptimize(tops = theoretic_tops_kernel());
+    state.counters["TOPS"] = bm::Counter(tops * state.iterations() * state.threads() * 1.0, bm::Counter::kIsRate);
+}
+
+/**
+ *  Assuming we are not aiming for dynamic dispatch, we can simply check for
+ *  the available features at compile time with more preprocessing directives:
+ *
+ *  To list all available macros for x86, take a recent compiler, like GCC, and run:
+ *       gcc -march=sapphirerapids -dM -E - < /dev/null | egrep "SSE|AVX" | sort
+ *  On Arm machines you may want to check for other flags:
+ *       gcc -march=native -dM -E - < /dev/null | egrep "NEON|SVE|FP16|FMA" | sort
+ *
+ *  @see Arm Feature Detection: https://developer.arm.com/documentation/101028/0010/Feature-test-macros
+ */
+#if defined(__AVX512F__)
+extern "C" std::uint32_t tops_f64_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_f32_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512F__)
+
+#if defined(__AVX512FP16__)
+extern "C" std::uint32_t tops_f16_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512FP16__)
+
+#if defined(__AVX512BF16__)
+extern "C" std::uint32_t tops_bf16_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512BF16__)
+
+#if defined(__AVX512VNNI__)
+extern "C" std::uint32_t tops_i16_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i16_avx512, tops_i16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i16_avx512, tops_i16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_u8i8_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, u8i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, u8i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512VNNI__)
+
+#if defined(__AVX2__)
+extern "C" std::uint32_t tops_f64_avx2_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_f32_avx2_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX2__)
+
+#if defined(__ARM_NEON)
+extern "C" std::uint32_t tops_f32_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_NEON)
+
+#if defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+extern "C" std::uint32_t tops_f16_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f16_neon, tops_f16_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_neon, tops_f16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+
+#if defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
+extern "C" std::uint32_t tops_bf16_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
+
+#if defined(__ARM_FEATURE_DOTPROD)
+extern "C" std::uint32_t tops_i8_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i8_neon, tops_i8_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8_neon, tops_i8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_u8_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_FEATURE_DOTPROD)
+
+#if defined(__AMX_TILE__)
+/**
+ *  Most modern chip vendors introduce specialized instructions for matrix
+ *  multiplications! On Intel (unlike AMD), they are called Advanced Matrix
+ *  Extensions @b (AMX).
+ *
+ *  There are 8 specialized @b TMM registers, most compilers don't even have
+ *  working intrinsics for them, but even writing Assembly is not enough to
+ *  use them - you need to instruct the Linux kernel to enable them.
+ */
+
+bool enable_amx() {
+    constexpr int _SYS_arch_prctl = 158;
+    constexpr int ARCH_REQ_XCOMP_PERM = 0x1023;
+    constexpr int ARCH_GET_XCOMP_PERM = 0x1022;
+    constexpr int XFEATURE_XTILEDATA = 18;
+    constexpr int XFEATURE_XTILECFG = 17;
+    constexpr unsigned long XFEATURE_MASK_XTILE = (1UL << XFEATURE_XTILECFG) | (1UL << XFEATURE_XTILEDATA);
+    unsigned long bitmask = 0;
+
+    // Request `XTILEDATA` permission
+    if (syscall(_SYS_arch_prctl, ARCH_REQ_XCOMP_PERM, XFEATURE_XTILEDATA) != 0) return false;
+    // Validate `XTILEDATA` and `XTILECFG` permissions
+    if (syscall(_SYS_arch_prctl, ARCH_GET_XCOMP_PERM, &bitmask) != 0) return false;
+    return (bitmask & XFEATURE_MASK_XTILE) != 0;
+}
+
+void configure_amx() {
+    if (!enable_amx()) throw std::runtime_error("AMX not enabled!");
+
+    // Using Intel AMX instructions we can perform 16x32x16 brain-float
+    // multiplication using specialized matrix-multiplication hardware,
+    // accumulating the results in a 16x16 single-precision matrix.
+    // Alternatively we can perform 16x64x16 `int8` multiplications.
+    alignas(64) char tiles_config[64];
+
+    // Memset in one cycle, like a boss :)
+    // As opposed to: `std::memset(tiles_config, 0, sizeof(tiles_config))`.
+    _mm512_storeu_si512((__m512i *)tiles_config, _mm512_setzero_si512());
+
+    // Only one palette is currently supported:
+    std::uint8_t *palette_id_ptr = (std::uint8_t *)(&tiles_config[0]);
+    *palette_id_ptr = 1;
+
+    // The geniuses behind AMX decided to use different precisions for
+    // the rows and columns. Wasted 2 hours of my life not noticing this!
+    std::uint16_t *tiles_colsb_ptr = (std::uint16_t *)(&tiles_config[16]);
+    std::uint8_t *tiles_rows_ptr = (std::uint8_t *)(&tiles_config[48]);
+
+    // Important to note, AMX doesn't care about the real shape of our matrix,
+    // it only cares about it's own tile shape. Keep it simple, otherwise
+    // the next person reading this will be painting the walls with their brains :)
+    tiles_rows_ptr[0] = tiles_rows_ptr[1] = tiles_rows_ptr[2] = tiles_rows_ptr[3] = 16;
+    tiles_colsb_ptr[0] = tiles_colsb_ptr[1] = tiles_colsb_ptr[2] = tiles_colsb_ptr[3] = 64;
+    // If you forget to set any one of those, you'll see an "Illegal Instruction"!
+    tiles_rows_ptr[4] = tiles_rows_ptr[5] = tiles_rows_ptr[6] = tiles_rows_ptr[7] = 16;
+    tiles_colsb_ptr[4] = tiles_colsb_ptr[5] = tiles_colsb_ptr[6] = tiles_colsb_ptr[7] = 64;
+
+    // We will use 4 registers for inputs, and 4 registers for outputs
+    _tile_loadconfig(&tiles_config);
+    _tile_zero(4);
+    _tile_zero(5);
+    _tile_zero(6);
+    _tile_zero(7);
+}
+
+#if defined(__AMX_BF16__)
+extern "C" std::uint32_t tops_bf16_amx_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_amx, tops_bf16_amx_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_amx, tops_bf16_amx_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+#endif // defined(__AMX_BF16__)
+
+#if defined(__AMX_INT8__)
+extern "C" std::uint32_t tops_u8_amx_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, u8_amx, tops_u8_amx_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, u8_amx, tops_u8_amx_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+extern "C" std::uint32_t tops_i8_amx_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+#endif // defined(__AMX_INT8__)
+
+#endif // defined(__AMX_TILE__)
+
+/**
+ *  For starters, Nvidia H100, the most common GPU in current HPC workloads,
+ *  claims the following numbers for its scalar operations and tensor cores:
+ *
+ *                  Scalar Operations       Tensor Operations
+ *
+ *  - `f64`:        @b 34 Tera-OPS          @b 67 Tera-OPS
+ *  - `f32`:        @b 67 Tera-OPS          @b 989 Tera-OPS
+ *  - `bf16`:                               @b 1.9 Peta-OPS
+ *  - `f16`:                                @b 2.9 Peta-OPS
+ *  - `i8`:                                 @b 3.9 Peta-OPS
+ *
+ *  This requires up to 700 W of power. A typical high-end server CPU uses
+ *  under 500 W of power, and has similar number of cores to the GPUs number
+ *  of Streaming Multiprocessors @b (SMs). The CPU can also run at a higher
+ *  frequency, and has a larger cache, which is crucial for many workloads.
+ *  On a single CPU core, we can achieve the following FMA throughput:
+ *
+ *                          Intel Granite Rapids    AMD Zen4
+ *
+ *  - AVX-512 `f64`:        @b 1.5 Giga-OPS         @b 58 Giga-OPS
+ *  - AVX-512 `f32`:        @b 4.8 Giga-OPS         @b 117 Giga-OPS
+ *
+ *  - AVX-512 `bf16`:       @b 123 Giga-OPS         @b 235 Giga-OPS
+ *  - AVX-512 `f16`:        @b 357 Giga-OPS 🤯🤯
+ *  - AVX-512 `i8 • u8`:    @b 708 Giga-OPS         @b 470 Giga-Ops 🤯🤯
+ *
+ *  - AMX `bf16`:           @b 3.7 Tera-OPS
+ *  - AMX `i8` and `u8`:    @b 7.5 Tera-OPS 🤯🤯🤯
+ *
+ *  On a typical dual-socket system:
+ *
+ *                          Intel Granite Rapids    AMD Zen4
+ *
+ *  - AVX-512 `f64`:        @b ___ Tera-OPS         @b 9.3 Tera-OPS
+ *  - AVX-512 `f32`:        @b ___ Tera-OPS         @b 20.1 Tera-OPS
+ *
+ *  - AVX-512 `bf16`:       @b ___ Tera-OPS         @b 41.8 Tera-OPS
+ *  - AVX-512 `f16`:        @b ___ Tera-OPS         @b 39.6 Tera-Ops
+ *  - AVX-512 `i8 • u8`:    @b ___ Tera-OPS         @b 81.3 Tera-Ops
+ *
+ *  - AMX `bf16`:           @b __ Tera-OPS
+ *  - AMX `i8` and `u8`:    @b __ Tera-OPS
+ */
+#pragma endregion // Compute Bound Linear Algebra
+
+#pragma region // Port Interleaving and Latency Hiding
+
+/**
+ *  You may have noticed, that we sometimes have multiple pieces of silicon
+ *  with same functionality. If we know that different instructions are
+ *  executed on different ports (or execution units), we can interleave them
+ *  saturating the CPU even further!
+ */
+
+#if defined(__AVX512VNNI__) && defined(__AMX_INT8__)
+
+extern "C" std::uint32_t tops_i8u8_amx_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i8u8_amx_avx512, tops_i8u8_amx_avx512_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8u8_amx_avx512, tops_i8u8_amx_avx512_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+
+#endif // defined(__AVX512VNNI__) && defined(__AMX_INT8__)
+
+/**
+ *  Combining "AMX_INT8" and "AVX512_VNNI" instructions, we can grow
+ *  from 7.5 Tera-OPS and 708 Giga-OPS to @b 7.8 Tera-OPS. Granted, its not
+ *  a life-altering improvement, but in other applications it could be!
+ *
+ *  A great can be CRC32 hashing, combining dedicated `CRC32` and `VPCLMULQDQ`
+ *  instructions to achieve 31 GB/s throughput, hiding the latency of some
+ *  instructions while others execute on a different port.
+ *
+ *  - `CRC32 (R64, R64)`: 3 cycle latency on port 1 on Intel Ice Lake.
+ *  - `VPCLMULQDQ (ZMM, ZMM, ZMM, I8)`: 8 cycle latency, which starts execution
+ *    on ports 0 or 5 and retires from port 5 on the same CPU.
+ *
+ *  @see "Faster CRC32-C on x86" by Peter Cawley:
+ *       https://www.corsix.org/content/fast-crc32c-4k
+ *       https://github.com/corsix/fast-crc32
+ */
+
+#pragma endregion // Port Interleaving and Latency Hiding
+
+#pragma endregion // - Numerics
+
+#pragma region - Memory
 
 #pragma region Alignment of Memory Accesses
 
@@ -1363,7 +1755,7 @@ BENCHMARK(f32x4x4_matmul_avx512);
 #include <cassert>  // `assert`
 #include <fstream>  // `std::ifstream`
 #include <iterator> // `std::random_access_iterator_tag`
-#include <memory>   // `std::assume_aligned`
+#include <memory>   // `std::assume_aligned`, `std::unique_ptr`
 #include <string>   // `std::string`, `std::stoull`
 
 /**
@@ -1471,6 +1863,13 @@ class strided_ptr {
     // clang-format on
 };
 
+template <typename type_>
+std::unique_ptr<type_[], decltype(&std::free)> make_aligned_array(std::size_t size, std::size_t alignment) {
+    type_ *raw_ptr = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size));
+    if (!raw_ptr) throw std::bad_alloc();
+    return std::unique_ptr<type_[], decltype(&std::free)>(raw_ptr, &std::free);
+}
+
 #if defined(__aarch64__)
 /**
  *  @brief  Helper derived from `__aarch64_sync_cache_range` in `libgcc`, used to
@@ -1495,9 +1894,7 @@ static void memory_access(bm::State &state) {
     // memory accesses may suffer from the same issues. For split-loads, pad our
     // buffer with an extra `cache_line_width` bytes of space.
     std::size_t const buffer_size = typical_l2_size + cache_line_width;
-    std::unique_ptr<std::byte, decltype(&std::free)> const buffer(                        //
-        reinterpret_cast<std::byte *>(std::aligned_alloc(cache_line_width, buffer_size)), //
-        &std::free);
+    auto const buffer = make_aligned_array<std::byte>(buffer_size, cache_line_width);
     std::byte *const buffer_ptr = buffer.get();
 
     // Let's initialize a strided range using out `strided_ptr` template, but
@@ -1540,6 +1937,168 @@ BENCHMARK(memory_access_aligned)->MinTime(10);
 
 #pragma endregion // Alignment of Memory Accesses
 
+#pragma region Gather & Scatter Operations for Spread Data
+
+/**
+ *  Sometimes, the variables of interest are scattered across memory, and we
+ *  need to gather them into a contiguous buffer for processing. This is already
+ *  common in sparse matrix operations, where only a few elements are non-zero,
+ *  but can apply to any irregular data structure...
+ *
+ *  The only question is: is there some smart way to gather these elements?
+ *
+ *  Our benchmarks is following - generate 32-bit unsigned integers from 0 to N,
+ *  random-shuffle and use them as gathering indices. For scatter operations,
+ *  we will use the same indicies to overwrite information in a separate buffer.
+ *
+ *  We will be looking at the ideal simplest case when the offset type and the
+ *  data have identical size.
+ */
+using spread_index_t = std::uint32_t;
+using spread_data_t = float;
+
+/**
+ * @brief Perform a scalar gather operation.
+ * @param data The data buffer to gather from.
+ * @param indices The indices used to gather data.
+ * @param result The buffer where gathered data will be stored.
+ * @param size The number of elements to process.
+ */
+void spread_gather_scalar( //
+    spread_data_t const *data, spread_index_t const *indices, spread_data_t *result, std::size_t size) noexcept {
+    for (std::size_t i = 0; i < size; ++i) result[i] = data[indices[i]];
+}
+
+/**
+ * @brief Perform a scalar scatter operation.
+ * @param data The buffer to scatter data into.
+ * @param indices The indices used to scatter data.
+ * @param source The buffer containing data to scatter.
+ * @param size The number of elements to process.
+ */
+void spread_scatter_scalar( //
+    spread_data_t *data, spread_index_t const *indices, spread_data_t const *source, std::size_t size) noexcept {
+    for (std::size_t i = 0; i < size; ++i) data[indices[i]] = source[i];
+}
+
+template <typename kernel_type_>
+static void spread_memory(bm::State &state, kernel_type_ kernel, std::size_t align = sizeof(spread_data_t)) {
+
+    std::size_t const size = static_cast<std::size_t>(state.range(0));
+    auto indices = make_aligned_array<spread_index_t>(size, align);
+    auto first = make_aligned_array<spread_data_t>(size, align);
+    auto second = make_aligned_array<spread_data_t>(size, align);
+
+    std::iota(indices.get(), indices.get() + size, 0);
+    std::random_device random_device;
+    std::mt19937 generator(random_device());
+    std::shuffle(indices.get(), indices.get() + size, generator);
+
+    for (auto _ : state) kernel(first.get(), indices.get(), second.get(), size);
+}
+
+BENCHMARK_CAPTURE(spread_memory, gather_scalar, spread_gather_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, scatter_scalar, spread_scatter_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
+
+#if defined(__AVX512F__)
+void spread_gather_avx512( //
+    spread_data_t const *data, spread_index_t const *indices, spread_data_t *result, std::size_t size) {
+    constexpr std::size_t simd_width_k = sizeof(__m512i) / sizeof(spread_data_t);
+    static_assert( //
+        sizeof(spread_data_t) == sizeof(spread_index_t), "Data and index types must have the same size");
+    std::size_t i = 0;
+    for (; i + simd_width_k <= size; i += simd_width_k)
+        _mm512_storeu_si512(&result[i], _mm512_i32gather_epi32(_mm512_loadu_si512(&indices[i]), data, 4));
+    for (; i < size; ++i) result[i] = data[indices[i]];
+}
+
+void spread_scatter_avx512( //
+    spread_data_t *data, spread_index_t const *indices, spread_data_t const *source, std::size_t size) {
+    constexpr std::size_t simd_width_k = sizeof(__m512i) / sizeof(spread_data_t);
+    static_assert( //
+        sizeof(spread_data_t) == sizeof(spread_index_t), "Data and index types must have the same size");
+    std::size_t i = 0;
+    for (; i + simd_width_k <= size; i += simd_width_k)
+        _mm512_i32scatter_epi32(data, _mm512_loadu_si512(&indices[i]), _mm512_loadu_si512(&source[i]), 4);
+    for (; i < size; ++i) data[indices[i]] = source[i];
+}
+
+BENCHMARK_CAPTURE(spread_memory, gather_avx512, spread_gather_avx512, 64)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, scatter_avx512, spread_scatter_avx512, 64)->Range(1 << 10, 1 << 20)->MinTime(5);
+
+/**
+ *  For consistent timing, for AVX-512 we align allocations to the ZMM register
+ *  size, which also coincides with the cache line width on x86 CPUs: @b 64!
+ *
+ *  For short arrays under 4K elements, gathers can get up to 50% faster,
+ *  dropping from @b 270ns to @b 136ns. On larger sizes gather can @b lose
+ *  to serial code. Like on arrays of 65K entries it can be 50% slower!
+ *  Scatters are even more questionable!
+ */
+#endif
+
+#if defined(__ARM_FEATURE_SVE) // Arm NEON has no gather/scatter instructions, but SVE does 🥳
+
+/**
+ *  Arm Scalable Vector Extension @b (SVE) is one of the weirdest current SIMD
+ *  extensions. Unlike AVX2, AVX-512, or even RVV on RISC-V, it doesn't preset
+ *  the register width at the ISA level! It's up to the physical implementation
+ *  to choose any power of two between 128 and @b 2048 bits.
+ *
+ *  In practice, Fugaku supercomputer likely has the largest SVE implementation
+ *  at 512-bits length. The Arm Neoverse N2 core has 256-bit SVE. It also
+ *  handles masking differently from AVX-512! Definitely worth reading about!
+ *
+ *  @see "ARM's Scalable Vector Extensions: A Critical Look at SVE2 For Integer
+ *       Workloads" by @ zingaburga:
+ *       https://gist.github.com/zingaburga/805669eb891c820bd220418ee3f0d6bd
+ *
+ */
+#include <arm_sve.h>
+
+constexpr std::size_t max_sve_size_k = 2048 / CHAR_BIT;
+
+void spread_gather_sve( //
+    spread_data_t const *data, spread_index_t const *indices, spread_data_t *result, std::size_t size) {
+    for (std::size_t i = 0; i < size; i += svcntw()) {
+        svbool_t pg = svwhilelt_b32(i, size);
+        svuint32_t sv_indices = svld1(pg, &indices[i]);
+        svfloat32_t sv_data = svld1_gather_offset(pg, data, sv_indices);
+        svst1(pg, &result[i], sv_data);
+    }
+}
+
+void spread_scatter_sve( //
+    spread_data_t *data, spread_index_t const *indices, spread_data_t const *source, std::size_t size) {
+    for (std::size_t i = 0; i < size; i += svcntw()) {
+        svbool_t pg = svwhilelt_b32(i, size);
+        svuint32_t sv_indices = svld1(pg, &indices[i]);
+        svfloat32_t sv_data = svld1(pg, &source[i]);
+        svst1_scatter_offset(pg, data, sv_indices, sv_data);
+    }
+}
+
+BENCHMARK_CAPTURE(spread_memory, gather_sve, spread_gather_sve, max_sve_size_k)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, scatter_sve, spread_scatter_sve, max_sve_size_k)->Range(1 << 10, 1 << 20)->MinTime(5);
+
+/**
+ *  @b Finally! This may just be the first place where SVE supersedes NEON
+ *  in functionality and may have a bigger improvement over scalar code than
+ *  AVX-512 on a similar-level x86 platform!
+ *
+ *  If you are very lucky with your input sizes, on small arrays under 65K
+ *  on AWS Graviton, gathers can be up to 4x faster compared to serial code!
+ *  On larger sizes, they again start losing to serial code. This makes
+ *  their applicability very limited 😡
+ *
+ *  Vectorized scatters are universally slower than serial code on Graviton
+ *  for small inputs, but on larger ones over 1MB start winning up to 50%!
+ *  Great way to get everyone confused 🤬
+ */
+#endif
+
+#pragma endregion // Gather & Scatter Operations for Spread Data
+
 #pragma region Non Uniform Memory Access
 
 /**
@@ -1557,7 +2116,101 @@ std::size_t parse_size_string(std::string const &str) {
 
 #pragma endregion // Non Uniform Memory Access
 
-#pragma endregion // - Numerics
+#pragma region Memory Bound Linear Algebra
+#include <cblas.h>
+
+template <typename scalar_type_>
+static void cblas_tops(bm::State &state) {
+    // BLAS expects leading dimensions: `lda` = `ldb` = `ldc` = `n` for square inputs.
+    std::size_t n = static_cast<std::size_t>(state.range(0));
+    int const lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
+
+    // Allocate and initialize data
+    std::vector<scalar_type_> a(n * n), b(n * n), c(n * n, 0);
+    std::iota(a.begin(), a.end(), 0);
+    std::iota(b.begin(), b.end(), 0);
+
+    // BLAS defines GEMM routines as: alpha * a * b + beta * c
+    for (auto _ : state)
+        if constexpr (std::is_same_v<scalar_type_, float>)
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n, n, n, //
+                        /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
+                        /* beta: */ 0, c.data(), ldc);
+        else
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n, n, n, //
+                        /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
+                        /* beta: */ 0, c.data(), ldc);
+
+    std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.SetComplexityN(n);
+}
+
+BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+
+/**
+ *  Eigen is a high-level C++ library for linear algebra that provides a
+ *  convenient templated API for matrix operations.
+ *
+ *  @see Supported Preprocessor Directives:
+ *       https://eigen.tuxfamily.org/dox/TopicPreprocessorDirectives.html
+ */
+#define EIGEN_FAST_MATH 1             // Affects mostly trigonometry, less relevant for GEMM
+#define EIGEN_NO_IO 1                 // Faster compilation
+#define EIGEN_NO_AUTOMATIC_RESIZING 1 // Cleaner logic
+#include <Eigen/Dense>
+
+template <typename scalar_type_>
+static void eigen_tops(bm::State &state) {
+    // Matrix dimension
+    std::size_t n = static_cast<std::size_t>(state.range(0));
+
+    // Allocate Eigen matrices
+    Eigen::Matrix<scalar_type_, Eigen::Dynamic, Eigen::Dynamic> a(n, n);
+    Eigen::Matrix<scalar_type_, Eigen::Dynamic, Eigen::Dynamic> b(n, n);
+    Eigen::Matrix<scalar_type_, Eigen::Dynamic, Eigen::Dynamic> c(n, n);
+    std::iota(a.data(), a.data() + (n * n), scalar_type_(0));
+    std::iota(b.data(), b.data() + (n * n), scalar_type_(0));
+
+    for (auto _ : state) {
+        c.noalias() = a * b;         // `noalias()` avoids temporary accumulation overhead
+        bm::DoNotOptimize(c.data()); // prevent compiler from optimizing out
+    }
+
+    std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.SetComplexityN(n);
+}
+
+BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+
+/**
+ *  Arm provides C language extensions for half-precision numbers, like
+ *  the @b `__fp16` and @b `__bf16` types. When `__ARM_BF16_FORMAT_ALTERNATIVE`
+ *  is defined to 1 the only scalar instructions available are conversion
+ *  intrinsics between `bfloat16_t` and `float32_t`.
+ *
+ *  @see Arm C extensions: https://developer.arm.com/documentation/101028/0010/C-language-extensions?lang=en
+ */
+#if defined(__ARM_FEATURE_FP16_FML) && defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC)
+#include <arm_fp16.h>
+BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+#endif
+
+#if defined(__ARM_FEATURE_BF16)
+#include <arm_bf16.h>
+BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+#endif
+
+/**
+ *  Now we can compare the theoretical limits to the actual performance
+ *  of Eigen and BLAS libraries.
+ */
+#pragma endregion // Memory Bound Linear Algebra
+
+#pragma endregion // - Memory
 
 #pragma region - Pipelines and Abstractions
 
@@ -2277,16 +2930,17 @@ BENCHMARK(packaging_stl_any)->MinTime(2);
  *       https://github.com/ashvardanian/stringzilla?tab=readme-ov-file#memory-ownership-and-small-string-optimization
  */
 
-static void small_string(bm::State &state) {
+static void construct_string(bm::State &state) {
     std::size_t length = static_cast<std::size_t>(state.range(0));
     for (auto _ : state) bm::DoNotOptimize(std::string(length, 'x'));
 }
 
 // clang-format off
-BENCHMARK(small_string)
+BENCHMARK(construct_string)
     ->Arg(7)->Arg(8)->Arg(15)->Arg(16)
     ->Arg(22)->Arg(23)->Arg(24)->Arg(25)
-    ->Arg(31)->Arg(32)->Arg(33);
+    ->Arg(31)->Arg(32)->Arg(33)
+    ->Name("construct_string/length=");
 // clang-format on
 
 /**
@@ -2710,24 +3364,30 @@ static constexpr std::string_view malicious_json = R"({
 
 static constexpr std::string_view packets_json[3] = {valid_json, invalid_json, malicious_json};
 
-struct fixed_buffer_arena_t {
-    static constexpr std::size_t capacity = 4096;
-    alignas(64) std::byte buffer[capacity];
+struct arena_t {
+    static constexpr std::size_t capacity_k = 4096;
+    alignas(64) std::byte buffer[capacity_k];
 
     /// The offset (in bytes) of the next free location
     std::size_t total_allocated = 0;
     /// The total bytes "freed" so far
     std::size_t total_reclaimed = 0;
+    /// The total number of unique allocations before a reset
+    std::size_t unique_allocs = 0;
+    // The maximum number of bytes allocated at once
+    std::size_t max_alloc_size = 0;
 };
 
 /**
  *  @brief  Allocates a new chunk of `size` bytes from the arena.
  *  @return The new pointer or `nullptr` if OOM.
  */
-inline std::byte *allocate_from_arena(fixed_buffer_arena_t &arena, std::size_t size) noexcept {
-    if (arena.total_allocated + size > fixed_buffer_arena_t::capacity) return nullptr; // Not enough space
+inline std::byte *allocate_from_arena(arena_t &arena, std::size_t size) noexcept {
+    if (arena.total_allocated + size > arena_t::capacity_k) return nullptr; // Not enough space
     std::byte *ptr = arena.buffer + arena.total_allocated;
     arena.total_allocated += size;
+    arena.unique_allocs++;
+    arena.max_alloc_size = std::max(arena.max_alloc_size, size);
     return ptr;
 }
 
@@ -2735,14 +3395,15 @@ inline std::byte *allocate_from_arena(fixed_buffer_arena_t &arena, std::size_t s
  *  @brief  Deallocates a chunk of memory previously allocated from the arena.
  *          This implementation does not "reuse" partial free space unless everything is freed.
  */
-inline void deallocate_from_arena(fixed_buffer_arena_t &arena, std::byte *ptr, std::size_t size) noexcept {
+inline void deallocate_from_arena(arena_t &arena, std::byte *ptr, std::size_t size) noexcept {
     // Check if ptr is within the arena
     std::byte *start = arena.buffer;
-    std::byte *end = arena.buffer + fixed_buffer_arena_t::capacity;
+    std::byte *end = arena.buffer + arena_t::capacity_k;
     if (ptr < start || ptr >= end) return; // Invalid pointer => no-op
     arena.total_reclaimed += size;
     // Reset completely if fully reclaimed
-    if (arena.total_allocated == arena.total_reclaimed) arena.total_allocated = 0, arena.total_reclaimed = 0;
+    if (arena.total_allocated == arena.total_reclaimed)
+        arena.total_allocated = 0, arena.total_reclaimed = 0, arena.unique_allocs = 0, arena.max_alloc_size = 0;
 }
 
 /**
@@ -2752,7 +3413,7 @@ inline void deallocate_from_arena(fixed_buffer_arena_t &arena, std::byte *ptr, s
  *  @return The new pointer or `nullptr` if OOM.
  */
 inline std::byte *reallocate_from_arena( //
-    fixed_buffer_arena_t &arena, std::byte *ptr, std::size_t old_size, std::size_t new_size) noexcept {
+    arena_t &arena, std::byte *ptr, std::size_t old_size, std::size_t new_size) noexcept {
     if (!ptr) return allocate_from_arena(arena, new_size); //  A fresh allocation
 
     // This is effectively a `free` operation
@@ -2769,14 +3430,14 @@ inline std::byte *reallocate_from_arena( //
         // Expand in-place if there's enough room
         std::size_t offset = static_cast<std::size_t>(ptr - arena.buffer);
         std::size_t required_space = offset + new_size;
-        if (required_space <= fixed_buffer_arena_t::capacity) {
+        if (required_space <= arena_t::capacity_k) {
             // We can grow (or shrink) in place
             arena.total_allocated = required_space;
             return ptr;
         }
     }
 
-    // If we can’t grow in place, do: allocate new + copy + free old
+    // If we can't grow in place, do: allocate new + copy + free old
     std::byte *new_ptr = allocate_from_arena(arena, new_size);
     if (!new_ptr) return nullptr; // Out of memory
 
@@ -2831,16 +3492,7 @@ bool contains_xss_in_yyjson(yyjson_val *node) noexcept {
  *
  *  @see YYJSON allocators: https://ibireme.github.io/yyjson/doc/doxygen/html/structyyjson__alc.html
  */
-template <bool use_arena>
-static void json_yyjson(bm::State &state) {
-
-    // Wrap our custom arena into a `yyjson_alc` structure, alternatively we could use:
-    //
-    //    char yyjson_buffer[4096];
-    //    yyjson_alc_pool_init(&alc, yyjson_buffer, sizeof(yyjson_buffer));
-    //
-    using arena_t = fixed_buffer_arena_t;
-    arena_t arena;
+yyjson_alc yyjson_wrap_arena_prepend(arena_t &arena) noexcept {
     yyjson_alc alc;
     alc.ctx = &arena;
 
@@ -2850,7 +3502,7 @@ static void json_yyjson(bm::State &state) {
     using alc_size_t = std::uint16_t;
     alc.malloc = +[](void *ctx, size_t size_native) noexcept -> void * {
         alc_size_t size = static_cast<alc_size_t>(size_native);
-        std::byte *result = allocate_from_arena(*static_cast<fixed_buffer_arena_t *>(ctx), size + sizeof(alc_size_t));
+        std::byte *result = allocate_from_arena(*static_cast<arena_t *>(ctx), size + sizeof(alc_size_t));
         if (!result) return nullptr;
         std::memcpy(result, &size, sizeof(alc_size_t));
         return (void *)(result + sizeof(alc_size_t));
@@ -2873,10 +3525,153 @@ static void json_yyjson(bm::State &state) {
         std::memcpy(&size, start, sizeof(alc_size_t));
         deallocate_from_arena(*static_cast<arena_t *>(ctx), start, size + sizeof(alc_size_t));
     };
+    return alc;
+}
+
+/**
+ *  There is also an even cooler way to allocate memory! @b Pointer-tagging! 🏷️
+ *  64-bit address space is a lie! Many systems only use 48 bits for addresses,
+ *  some even less. So, we can use the remaining bits to store metadata about
+ *  the allocated block, like its size, or the arena it came from.
+ *
+ *  On x86, for example, calling @b `lscpu` will show:
+ *
+ *      Architecture:             x86_64
+ *          CPU op-mode(s):         32-bit, 64-bit
+ *          Address sizes:          46 bits physical, 48 bits virtual
+ *          Byte Order:             Little Endian
+ *
+ *  48-bit virtual addressing allows mapping up to @b 256-TiB of virtual space,
+ *  leaving 16 bits for metadata. But there is a catch! On every OS and CPU vendor,
+ *  the mechanic is different. On Intel-based Linux systems, for example, the
+ *  feature is called "Linear Address Masking" or @b LAM for short. It has 2 modes:
+ *
+ *  - LAM_U57: 57-bit addresses with a 5-level TLB, 7 bits for metadata in @b [57:62]
+ *  - LAM_U48: 48-bit addresses with a 4-level TLB, 15 bits for metadata in @b [48:62]
+ *
+ *  The Linux kernel itself has to be compiled with LAM support, and the feature must
+ *  also be enabled for the current running process. The bit #63 can't be touched!
+ *  Nightmare, and it doesn't get better 😱
+ *
+ *  On AMD, a similar feature is called "Upper Address Ignore" @b (UAI) and exposes
+ *  7 bits for metadata @b [57:62].
+ *
+ *  On Armv8-A there is a Top Byte Ignore @b (TBI) mode, that frees 8 bits for such
+ *  metadata, and on Armv8.5-A there is a Memory Tagging Extension @b (MTE) that
+ *  allows software to access a 4-bit allocation tag in bits @b [56:59], the lower
+ *  nibble of the top byte of the address.
+ *
+ *  @see "Support for Intel's Linear Address Masking" on Linux Weekly News:
+ *       https://lwn.net/Articles/902094/
+ *  @see "AMD Posts New Linux Code For Zen 4's UAI Feature" on Phoronix:
+ *       https://www.phoronix.com/news/AMD-Linux-UAI-Zen-4-Tagging
+ *  @see "Memory Tagging Extension (MTE) in AArch64 Linux" in the Kernel docs:
+ *       https://docs.kernel.org/6.5/arch/arm64/memory-tagging-extension.html
+ */
+
+#if defined(__x86_64__) && defined(__linux__)
+#include <asm/prctl.h>   // `ARCH_ENABLE_TAGGED_ADDR`
+#include <sys/syscall.h> // `SYS_arch_prctl`
+static bool enable_pointer_tagging(unsigned long bits = 1) noexcept {
+    // The argument is required number of tag bits.
+    // It is rounded up to the nearest LAM mode that can provide it.
+    // For now only LAM_U57 is supported, with 6 tag bits.
+    return syscall(SYS_arch_prctl, ARCH_ENABLE_TAGGED_ADDR, bits) == 0;
+}
+#else
+static bool enable_pointer_tagging(unsigned long = 0) noexcept { return false; }
+#endif
+
+template <int start_bit_ = 48, int end_bit_ = 62>
+inline void *pointer_tag(void *ptr, std::uint16_t tag) noexcept {
+    static_assert(start_bit_ <= end_bit_);
+    // Number of bits available for the tag:
+    constexpr int bits_count = end_bit_ - start_bit_ + 1;
+    static_assert(bits_count <= 16, "We only store up to 16 bits in that range (std::uint16_t).");
+    // Convert pointer to a 64-bit integer:
+    std::uint64_t val = reinterpret_cast<std::uint64_t>(ptr);
+    // Create a mask that clears the bits in [start_bit_ .. end_bit_].
+    std::uint64_t const clear_mask = ~(((1ULL << bits_count) - 1ULL) << start_bit_);
+    val &= clear_mask;
+    // Insert our tag into those bits:
+    std::uint64_t const tag_val = (static_cast<std::uint64_t>(tag) & ((1ULL << bits_count) - 1ULL)) << start_bit_;
+    val |= tag_val;
+    return reinterpret_cast<void *>(val);
+}
+
+template <int start_bit_ = 48, int end_bit_ = 62>
+inline std::pair<void *, std::uint16_t> pointer_untag(void *ptr) noexcept {
+    static_assert(start_bit_ <= end_bit_);
+    constexpr int bits_count = end_bit_ - start_bit_ + 1;
+    std::uint64_t val = reinterpret_cast<std::uint64_t>(ptr);
+    std::uint64_t extracted_tag = (val >> start_bit_) & ((1ULL << bits_count) - 1ULL);
+    std::uint64_t const clear_mask = ~(((1ULL << bits_count) - 1ULL) << start_bit_);
+    val &= clear_mask;
+    return {reinterpret_cast<void *>(val), static_cast<std::uint16_t>(extracted_tag)};
+}
+
+yyjson_alc yyjson_wrap_arena_tag(arena_t &arena) noexcept {
+    yyjson_alc alc;
+    alc.ctx = &arena;
+
+    //? There is a neat trick that allows us to use a lambda as a
+    //? C-style function pointer by using the unary `+` operator.
+    //? Assuming our buffer is only 4 KB, a 16-bit unsigned integer is enough...
+    using alc_size_t = std::uint16_t;
+    alc.malloc = +[](void *ctx, size_t size_native) noexcept -> void * {
+        alc_size_t size = static_cast<alc_size_t>(size_native);
+        std::byte *result = allocate_from_arena(*static_cast<arena_t *>(ctx), size);
+        if (!result) return nullptr;
+        return pointer_tag(result, size);
+    };
+
+    alc.realloc = +[](void *ctx, void *ptr, size_t old_size_native, size_t size_native) noexcept -> void * {
+        alc_size_t size = static_cast<alc_size_t>(size_native);
+        auto [real_ptr, old_size_from_ptr] = pointer_untag(ptr);
+        assert(old_size_native == old_size_from_ptr);
+        std::byte *new_ptr = reallocate_from_arena(                           //
+            *static_cast<arena_t *>(ctx), static_cast<std::byte *>(real_ptr), //
+            old_size_from_ptr, size_native);
+        if (!new_ptr) return nullptr;
+        return pointer_tag(new_ptr, size);
+    };
+
+    alc.free = +[](void *ctx, void *ptr) noexcept -> void {
+        auto [real_ptr, size] = pointer_untag(ptr);
+        deallocate_from_arena(*static_cast<arena_t *>(ctx), static_cast<std::byte *>(real_ptr), size);
+    };
+    return alc;
+}
+
+yyjson_alc yyjson_wrap_malloc(arena_t &) noexcept {
+    yyjson_alc alc;
+    alc.ctx = NULL;
+    alc.malloc = +[](void *, size_t size) noexcept -> void * { return malloc(size); };
+    alc.realloc = +[](void *, void *ptr, size_t, size_t size) noexcept -> void * { return realloc(ptr, size); };
+    alc.free = +[](void *, void *ptr) noexcept -> void { free(ptr); };
+    return alc;
+}
+
+typedef yyjson_alc (*yyjson_alc_wrapper)(arena_t &);
+
+static void json_yyjson(bm::State &state, yyjson_alc_wrapper alc_wrapper = yyjson_wrap_malloc) {
+
+    if (alc_wrapper == &yyjson_wrap_arena_tag)
+        if (!enable_pointer_tagging()) state.SkipWithError("Pointer tagging not supported");
+
+    // Wrap our custom arena into a `yyjson_alc` structure, alternatively we could use:
+    //
+    //    char yyjson_buffer[4096];
+    //    yyjson_alc_pool_init(&alc, yyjson_buffer, sizeof(yyjson_buffer));
+    //
+    using arena_t = arena_t;
+    arena_t arena;
 
     // Repeat the checks many times
     std::size_t bytes_processed = 0;
-    std::size_t peak_memory_usage = 0;
+    std::size_t peak_usage = 0;
+    std::size_t count_calls = 0;
+    std::size_t max_alloc = 0;
     std::size_t iteration = 0;
     for (auto _ : state) {
 
@@ -2886,21 +3681,46 @@ static void json_yyjson(bm::State &state) {
         yyjson_read_err error;
         std::memset(&error, 0, sizeof(error));
 
+        yyjson_alc alc = alc_wrapper(arena);
         yyjson_doc *doc = yyjson_read_opts(                 //
             (char *)packet_json.data(), packet_json.size(), //
-            YYJSON_READ_NOFLAG, use_arena ? &alc : NULL, &error);
+            YYJSON_READ_NOFLAG, &alc, &error);
         if (!error.code) bm::DoNotOptimize(contains_xss_in_yyjson(yyjson_doc_get_root(doc)));
-        peak_memory_usage = std::max(peak_memory_usage, arena.total_allocated);
+        peak_usage = std::max(peak_usage, arena.total_allocated);
+        count_calls = std::max(count_calls, arena.unique_allocs);
+        max_alloc = std::max(max_alloc, arena.max_alloc_size);
         yyjson_doc_free(doc);
     }
     state.SetBytesProcessed(bytes_processed);
-    state.counters["peak_memory_usage"] = bm::Counter(peak_memory_usage, bm::Counter::kAvgThreads);
+
+    if (peak_usage) {
+        state.counters["peak_usage"] = bm::Counter(peak_usage, bm::Counter::kAvgThreads);
+        state.counters["mean_alloc"] = bm::Counter(peak_usage * 1.0 / count_calls, bm::Counter::kAvgThreads);
+        state.counters["max_alloc"] = bm::Counter(max_alloc, bm::Counter::kAvgThreads);
+    }
 }
 
-BENCHMARK(json_yyjson<false>)->MinTime(10)->Name("json_yyjson<malloc>");
-BENCHMARK(json_yyjson<true>)->MinTime(10)->Name("json_yyjson<fixed_buffer>");
-BENCHMARK(json_yyjson<false>)->MinTime(10)->Name("json_yyjson<malloc>")->Threads(physical_cores());
-BENCHMARK(json_yyjson<true>)->MinTime(10)->Name("json_yyjson<fixed_buffer>")->Threads(physical_cores());
+BENCHMARK_CAPTURE(json_yyjson, malloc, yyjson_wrap_malloc)->MinTime(10)->Name("json_yyjson<malloc>");
+BENCHMARK_CAPTURE(json_yyjson, malloc, yyjson_wrap_malloc)
+    ->MinTime(10)
+    ->Name("json_yyjson<malloc>")
+    ->Threads(physical_cores());
+
+BENCHMARK_CAPTURE(json_yyjson, prepend, yyjson_wrap_arena_prepend)->MinTime(10)->Name("json_yyjson<arena, prepend>");
+BENCHMARK_CAPTURE(json_yyjson, prepend, yyjson_wrap_arena_prepend)
+    ->MinTime(10)
+    ->Name("json_yyjson<arena, prepend>")
+    ->Threads(physical_cores());
+
+#if defined(__x86_64__) || defined(__i386__) // On Arm checking for support is much more complex
+#if !defined(__LA57__)                       // On x86-64, the Linux kernel can disable the 5-level paging
+BENCHMARK_CAPTURE(json_yyjson, tag, yyjson_wrap_arena_tag)->MinTime(10)->Name("json_yyjson<arena, tag>");
+BENCHMARK_CAPTURE(json_yyjson, tag, yyjson_wrap_arena_tag)
+    ->MinTime(10)
+    ->Name("json_yyjson<arena, tag>")
+    ->Threads(physical_cores());
+#endif // !defined(__LA57__)
+#endif // defined(__x86_64__) || defined(__i386__)
 
 /**
  *  The `nlohmann::json` library is designed to be simple and easy to use, but it's
@@ -2942,7 +3762,7 @@ using json_with_alloc = nlohmann::basic_json<               //
 
 /**
  *  The `allocate_from_arena` and `deallocate_from_arena` are fairly elegant and simple.
- *  But we have no way of supplying our `fixed_buffer_arena_t` instance to the `nlohmann::json`
+ *  But we have no way of supplying our `arena_t` instance to the `nlohmann::json`
  *  library and it has no mechanism internally to propagate the allocator state to the nested
  *  containers:
  *
@@ -2960,35 +3780,35 @@ using json_with_alloc = nlohmann::basic_json<               //
  *  which is an immediate @b code-smell, while with `yyjson` we can pass a context object down!
  */
 
-thread_local fixed_buffer_arena_t local_arena;
+thread_local arena_t thread_local_arena;
 
 template <typename value_type_>
-struct fixed_buffer_allocator {
+struct arena_allocator {
     using value_type = value_type_;
 
-    fixed_buffer_allocator() noexcept = default;
+    arena_allocator() noexcept = default;
 
     template <typename other_type_>
-    fixed_buffer_allocator(fixed_buffer_allocator<other_type_> const &) noexcept {}
+    arena_allocator(arena_allocator<other_type_> const &) noexcept {}
 
     value_type *allocate(std::size_t n) noexcept(false) {
-        if (auto ptr = allocate_from_arena(local_arena, n * sizeof(value_type)); ptr)
+        if (auto ptr = allocate_from_arena(thread_local_arena, n * sizeof(value_type)); ptr)
             return reinterpret_cast<value_type *>(ptr);
         else
             throw std::bad_alloc();
     }
 
     void deallocate(value_type *ptr, std::size_t n) noexcept {
-        deallocate_from_arena(local_arena, reinterpret_cast<std::byte *>(ptr), n * sizeof(value_type));
+        deallocate_from_arena(thread_local_arena, reinterpret_cast<std::byte *>(ptr), n * sizeof(value_type));
     }
 
     // Rebind mechanism and comparators are for compatibility with STL containers
     template <typename other_type_>
     struct rebind {
-        using other = fixed_buffer_allocator<other_type_>;
+        using other = arena_allocator<other_type_>;
     };
-    bool operator==(fixed_buffer_allocator const &) const noexcept { return true; }
-    bool operator!=(fixed_buffer_allocator const &) const noexcept { return false; }
+    bool operator==(arena_allocator const &) const noexcept { return true; }
+    bool operator!=(arena_allocator const &) const noexcept { return false; }
 };
 
 template <typename json_type_>
@@ -3012,14 +3832,16 @@ bool contains_xss_nlohmann(json_type_ const &j) noexcept {
 }
 
 using default_json = json_with_alloc<std::allocator>;
-using fixed_buffer_json = json_with_alloc<fixed_buffer_allocator>;
+using arena_json = json_with_alloc<arena_allocator>;
 
 enum class exception_handling_t { throw_k, noexcept_k };
 
 template <typename json_type_, exception_handling_t exception_handling_>
 static void json_nlohmann(bm::State &state) {
     std::size_t bytes_processed = 0;
-    std::size_t peak_memory_usage = 0;
+    std::size_t peak_usage = 0;
+    std::size_t count_calls = 0;
+    std::size_t max_alloc = 0;
     std::size_t iteration = 0;
     for (auto _ : state) {
 
@@ -3046,40 +3868,48 @@ static void json_nlohmann(bm::State &state) {
             json = json_type_::parse(packet_json, nullptr, false);
             if (!json.is_discarded()) bm::DoNotOptimize(contains_xss_nlohmann(json));
         }
-        if constexpr (!std::is_same_v<json_type_, default_json>)
-            peak_memory_usage = std::max(peak_memory_usage, local_arena.total_allocated);
+        if constexpr (!std::is_same_v<json_type_, default_json>) {
+            peak_usage = std::max(peak_usage, thread_local_arena.total_allocated);
+            count_calls = std::max(count_calls, thread_local_arena.unique_allocs);
+            max_alloc = std::max(max_alloc, thread_local_arena.max_alloc_size);
+        }
     }
     state.SetBytesProcessed(bytes_processed);
-    state.counters["peak_memory_usage"] = bm::Counter(peak_memory_usage, bm::Counter::kAvgThreads);
+
+    if (peak_usage) {
+        state.counters["peak_usage"] = bm::Counter(peak_usage, bm::Counter::kAvgThreads);
+        state.counters["mean_alloc"] = bm::Counter(peak_usage * 1.0 / count_calls, bm::Counter::kAvgThreads);
+        state.counters["max_alloc"] = bm::Counter(max_alloc, bm::Counter::kAvgThreads);
+    }
 }
 
 BENCHMARK(json_nlohmann<default_json, exception_handling_t::throw_k>)
     ->MinTime(10)
     ->Name("json_nlohmann<std::allocator, throw>");
-BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::throw_k>)
+BENCHMARK(json_nlohmann<arena_json, exception_handling_t::throw_k>)
     ->MinTime(10)
-    ->Name("json_nlohmann<fixed_buffer, throw>");
+    ->Name("json_nlohmann<arena_allocator, throw>");
 BENCHMARK(json_nlohmann<default_json, exception_handling_t::noexcept_k>)
     ->MinTime(10)
     ->Name("json_nlohmann<std::allocator, noexcept>");
-BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::noexcept_k>)
+BENCHMARK(json_nlohmann<arena_json, exception_handling_t::noexcept_k>)
     ->MinTime(10)
-    ->Name("json_nlohmann<fixed_buffer, noexcept>");
+    ->Name("json_nlohmann<arena_allocator, noexcept>");
 BENCHMARK(json_nlohmann<default_json, exception_handling_t::throw_k>)
     ->MinTime(10)
     ->Name("json_nlohmann<std::allocator, throw>")
     ->Threads(physical_cores());
-BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::throw_k>)
+BENCHMARK(json_nlohmann<arena_json, exception_handling_t::throw_k>)
     ->MinTime(10)
-    ->Name("json_nlohmann<fixed_buffer, throw>")
+    ->Name("json_nlohmann<arena_allocator, throw>")
     ->Threads(physical_cores());
 BENCHMARK(json_nlohmann<default_json, exception_handling_t::noexcept_k>)
     ->MinTime(10)
     ->Name("json_nlohmann<std::allocator, noexcept>")
     ->Threads(physical_cores());
-BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::noexcept_k>)
+BENCHMARK(json_nlohmann<arena_json, exception_handling_t::noexcept_k>)
     ->MinTime(10)
-    ->Name("json_nlohmann<fixed_buffer, noexcept>")
+    ->Name("json_nlohmann<arena_allocator, noexcept>")
     ->Threads(physical_cores());
 
 /**
@@ -3088,11 +3918,11 @@ BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::noexcept_k>)
  *  cores, are as follows:
  *
  *  - `json_yyjson<malloc>`:                       @b 359 ns       @b 369 ns
- *  - `json_yyjson<fixed_buffer>`:                 @b 326 ns       @b 326 ns
+ *  - `json_yyjson<arena>`:                        @b 326 ns       @b 326 ns
  *  - `json_nlohmann<std::allocator, throw>`:      @b 6'440 ns     @b 11'821 ns
- *  - `json_nlohmann<fixed_buffer, throw>`:        @b 6'041 ns     @b 11'601 ns
+ *  - `json_nlohmann<arena_allocator, throw>`:     @b 6'041 ns     @b 11'601 ns
  *  - `json_nlohmann<std::allocator, noexcept>`:   @b 4'741 ns     @b 11'512 ns
- *  - `json_nlohmann<fixed_buffer, noexcept>`:     @b 4'316 ns     @b 12'209 ns
+ *  - `json_nlohmann<arena_allocator, noexcept>`:  @b 4'316 ns     @b 12'209 ns
  *
  *  The reason, why `yyjson` numbers are less affected by the allocator change,
  *  is because it doesn't need many dynamic allocations. It manages a linked list
@@ -3143,76 +3973,245 @@ BENCHMARK(json_nlohmann<fixed_buffer_json, exception_handling_t::noexcept_k>)
  *  passed down to the data-structure, and how it can be used to optimize the memory
  *  management of the graph.
  *
+ *  We will define the following APIs:
+ *
+ *  - `upsert_edge(from, to, weight)`: Inserts or updates an existing edge between two vertices.
+ *  - `get_edge(from, to)`: Retrieves the `std::optional` weight of the edge between two vertices.
+ *  - `remove_edge(from, to)`: Removes the edge between two vertices, if present.
+ *  - `for_edges(from, visitor)`: Applies a callback to all edges starting from a vertex.
+ *  - `size()`: Returns the number of vertices and edges in the graph.
+ *  - `reserve(capacity)`: Reserves memory for the given number of vertices.
+ *  - `compact()`: Compacts the memory layout of the graph, preparing for read-intensive workloads.
+ *
+ *  None of the interfaces raise exceptions directly, but will propagate the exceptions
+ *  of the underlying associative container for now.
+ *
  *  @see "Designing a Fast, Efficient, Cache-friendly Hash Table, Step by Step"
  *       by Matt Kulukundis at CppCon 2017: https://youtu.be/ncHmEUmJZf4
  */
-#include <map>           // `std::map`
-#include <unordered_map> // `std::unordered_map`
+#include <map> // `std::map`
 
-using node_id_t = std::uint16_t; // 65'536 node IDs should be enough for everyone :)
-using edge_weight_t = float;     // Weights are typically floating-point numbers
-struct node_ids_t {
-    node_id_t from, to;
+using vertex_id_t = std::uint16_t; // 65'536 vertex IDs should be enough for everyone :)
+using edge_weight_t = float;       // Weights are typically floating-point numbers
+
+struct graph_size_t {
+    std::size_t vertices = 0;
+    std::size_t edges = 0;
 };
 
-struct graph_unordered_maps_t {
-    std::unordered_map<node_id_t, std::unordered_map<node_id_t, edge_weight_t>> nodes_;
+/**
+ *  The most common way to define a sparse graph in C++ applications is to use
+ *  a two-level nested associative container (like `std::unordered_map` or `std::map`).
+ *
+ *     struct basic_graph_unordered_maps {
+ *         std::unordered_map<vertex_id_t, std::unordered_map<vertex_id_t, edge_weight_t>> vertices_;
+ *     };
+ *
+ *  That's not great, assuming the memory allocations happen independently for each
+ *  vertex, and the memory layout is not contiguous. Let's generalize it to arbitrary
+ *  memory allocators and propagate the parent allocator state to the child containers.
+ *
+ *  Assuming the `unordered_map` will store the state of the allocator internally, we
+ *  don't need to add a separate member field in the `basic_graph_unordered_maps` structure...
+ *  But if we were to add one - there is a @b `[[no_unique_address]]` attribute in C++20,
+ *  which can be used in such cases to save space!
+ *
+ *  @see No-Unique-Address attribute: https://en.cppreference.com/w/cpp/language/attributes/no_unique_address
+ */
+template <typename allocator_type_ = std::allocator<std::byte>>
+struct basic_graph_unordered_maps {
 
-    void reserve(std::size_t nodes, [[maybe_unused]] std::size_t edges) { nodes_.reserve(nodes); }
-    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
-        if (from == to) return;                               // Skip self-loop
-        nodes_[from][to] = weight, nodes_[to][from] = weight; // Insert edge in both directions
+    using allocator_type = allocator_type_;
+    using equal_t = std::equal_to<vertex_id_t>; // Equality check for vertex IDs
+    using hash_t = std::hash<vertex_id_t>;      // Hash function for vertex IDs
+
+    using inner_allocator_type = typename std::allocator_traits<allocator_type_>::template rebind_alloc<
+        std::pair<vertex_id_t const, edge_weight_t>>;
+    using inner_map_type = std::unordered_map<vertex_id_t, edge_weight_t, hash_t, equal_t, inner_allocator_type>;
+    using outer_allocator_type = typename std::allocator_traits<allocator_type_>::template rebind_alloc<
+        std::pair<vertex_id_t const, inner_map_type>>;
+    using outer_map_type = std::unordered_map<vertex_id_t, inner_map_type, hash_t, equal_t, outer_allocator_type>;
+
+    outer_map_type vertices_;
+
+    explicit basic_graph_unordered_maps(allocator_type const &alloc = allocator_type()) noexcept(false)
+        : vertices_(0, hash_t {}, equal_t {}, alloc) {}
+
+    void reserve(graph_size_t capacity) noexcept(false) { vertices_.reserve(capacity.vertices); }
+
+    graph_size_t size() const noexcept {
+        graph_size_t size;
+        size.vertices = vertices_.size();
+        for (auto const &[_, inner] : vertices_) size.edges += inner.size();
+        return size;
     }
-    std::optional<edge_weight_t> get_edge(node_id_t from, node_id_t to) const noexcept {
-        if (auto it = nodes_.find(from); it != nodes_.end())
+
+    void upsert_edge(vertex_id_t from, vertex_id_t to, edge_weight_t weight) noexcept(false) {
+        if (from == to) return; // Skip self-loop
+
+        // Now inserting a new edge should be trivial, right? Maybe something like this:
+        //
+        //      vertices_[from][to] = weight, vertices_[to][from] = weight;
+        //
+        // That, however, hides the inner map allocation logic, and we can't propagate
+        // the allocator state down to the inner map. So we have to do it manually:
+        auto it = vertices_.find(from);
+        if (it == vertices_.end())
+            it = vertices_
+                     .emplace( //
+                         std::piecewise_construct, std::forward_as_tuple(from),
+                         std::forward_as_tuple(         //
+                             1,                         // At least one bucket for the new entry
+                             vertices_.hash_function(), // The parent's hash function
+                             vertices_.key_eq(),        // The parent's equality check
+                             vertices_.get_allocator()  // The parent's run-time allocator:
+                             ))
+                     .first;
+        it->second[to] = weight;
+
+        // Repeat in the opposite direction:
+        it = vertices_.find(to);
+        if (it == vertices_.end())
+            it = vertices_
+                     .emplace( //
+                         std::piecewise_construct, std::forward_as_tuple(to),
+                         std::forward_as_tuple(         //
+                             1,                         // At least one bucket for the new entry
+                             vertices_.hash_function(), // The parent's hash function
+                             vertices_.key_eq(),        // The parent's equality check
+                             vertices_.get_allocator()  // The parent's run-time allocator:
+                             ))
+                     .first;
+        it->second[from] = weight;
+    }
+
+    std::optional<edge_weight_t> get_edge(vertex_id_t from, vertex_id_t to) const noexcept {
+        if (auto it = vertices_.find(from); it != vertices_.end())
             if (auto jt = it->second.find(to); jt != it->second.end()) return jt->second;
         return std::nullopt;
     }
-    void remove_edge(node_id_t from, node_id_t to) noexcept {
+
+    void remove_edge(vertex_id_t from, vertex_id_t to) noexcept {
         // It's unlikely that we are removing a non-existent edge
-        if (auto it = nodes_.find(from); it != nodes_.end()) [[likely]]
+        if (auto it = vertices_.find(from); it != vertices_.end()) [[likely]]
             it->second.erase(to);
-        if (auto it = nodes_.find(to); it != nodes_.end()) [[likely]]
+        if (auto it = vertices_.find(to); it != vertices_.end()) [[likely]]
             it->second.erase(from);
     }
+
+    void compact() noexcept(false) {
+        // The `std::unordered_map::rehash(0)` may be used to force an unconditional rehash,
+        // such as after suspension of automatic rehashing by temporarily increasing `max_load_factor()`.
+        vertices_.rehash(0);
+        for (auto &[_, inner] : vertices_) inner.rehash(0);
+    }
+
     template <typename visitor_type_>
-    void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
-        if (auto it = nodes_.find(from); it != nodes_.end())
+    void for_edges(vertex_id_t from, visitor_type_ visitor) const noexcept {
+        if (auto it = vertices_.find(from); it != vertices_.end())
             for (auto const &[to, weight] : it->second) visitor(from, to, weight);
     }
 };
 
-struct graph_map_t {
-    struct compare_t {
-        using is_transparent = std::true_type;
-        bool operator()(node_ids_t const &lhs, node_ids_t const &rhs) const noexcept {
-            return lhs.from < rhs.from || (lhs.from == rhs.from && lhs.to < rhs.to);
-        }
-        bool operator()(node_id_t lhs, node_ids_t const &rhs) const noexcept { return lhs < rhs.from; }
-        bool operator()(node_ids_t const &lhs, node_id_t rhs) const noexcept { return lhs.from < rhs; }
-    };
+/**
+ *  Assuming the graph is sparse, the size of the inner containers will differ greatly.
+ *  We can balance the situation by flattening our 2-level construction into a single
+ *  associative container, with a custom @b `less_t` comparison function.
+ *
+ *      struct basic_graph_map {
+ *          struct less_t {
+ *              using is_transparent = std::true_type;
+ *              bool operator()(vertex_ids_t const &, vertex_ids_t const &) const noexcept { ... }
+ *              bool operator()(vertex_id_t, vertex_ids_t const &) const noexcept { ... }
+ *              bool operator()(vertex_ids_t const &, vertex_id_t) const noexcept { ... }
+ *          }
+ *          std::map<vertex_ids_t, edge_weight_t, less_t> edges_;
+ *      };
+ *
+ *  The comparison function object must define @b `is_transparent` and support not only
+ *  a comparison between two keys (`vertex_ids_t` in this case), but also between a key
+ *  and an arbitrary "search key" that will be used for lookups (like `vertex_id_t`).
+ *
+ *  Assuming `std::map` is a strictly ordered Binary Search Tree @b (BST), usually
+ *  a Red-Black Tree, we can order it in the lexigraphical order of the `(from, to)` pairs,
+ *  and use @b `std::map::equal_range` to iterate over all edges starting from a given vertex.
+ *
+ *  ? Even though our data-structure contains "edges" as opposed to "vertices + their edges",
+ *  ? the fact that all edges are flattened and ordered by the source vertex ID, allows us
+ *  ? to reuse this structure in both "vertex-centric" and "edge-centric" algorithms.
+ *
+ *  We can use C++20 three-way comparison operator @b `<=>` to define the comparison
+ *  functions just once per "other type", and the default `std::less` will automatically
+ *  work. Comparing with another `vertex_ids_t` is straightforward, and will result in a
+ *  @b `std::strong_ordering`, while comparing with a `vertex_id_t` will result in a less
+ *  strict @b `std::weak_ordering`.
+ */
+#include <compare>       // `std::weak_ordering`
+#include <tuple>         // `std::tie`
+#include <unordered_map> // `std::unordered_map`
 
-    std::map<node_ids_t, edge_weight_t, compare_t> links_;
+struct vertex_ids_t {
+    vertex_id_t from, to;
 
-    void reserve([[maybe_unused]] std::size_t nodes, [[maybe_unused]] std::size_t edges) {
+    std::strong_ordering operator<=>(vertex_ids_t other) const noexcept {
+        return std::tie(from, to) <=> std::tie(other.from, other.to);
+    }
+    std::weak_ordering operator<=>(vertex_id_t other) const noexcept { return from <=> other; }
+};
+
+template <typename allocator_type_ = std::allocator<std::byte>>
+struct basic_graph_map {
+
+    using allocator_type = allocator_type_;
+    using compare_t = std::less<>;
+    using map_allocator_type = typename std::allocator_traits<allocator_type_>::template rebind_alloc<
+        std::pair<vertex_ids_t const, edge_weight_t>>;
+    using map_type = std::map<vertex_ids_t, edge_weight_t, compare_t, map_allocator_type>;
+
+    map_type edges_;
+
+    void reserve([[maybe_unused]] graph_size_t) noexcept {
         //! The `std::map` doesn't support `reserve` 🤕
     }
-    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
-        if (from == to) return; // Skip self-loop
-        links_.emplace(node_ids_t(from, to), weight);
-        links_.emplace(node_ids_t(to, from), weight);
+
+    graph_size_t size() const noexcept {
+        if (edges_.empty()) return {};
+        graph_size_t size;
+        // The number of edges is half the container size, as we store each edge twice.
+        size.edges = edges_.size() / 2;
+        // Assuming all the edges are ordered by their source vertex ID,
+        // we can iterate through tuples and check, how many unique vertices we have.
+        size.vertices = 1;
+        auto it = edges_.begin();
+        auto last_id = it->first.from;
+        while (++it != edges_.end())
+            if (it->first.from != last_id) ++size.vertices, last_id = it->first.from;
+        return size;
     }
-    std::optional<edge_weight_t> get_edge(node_id_t from, node_id_t to) const noexcept {
-        if (auto it = links_.find(node_ids_t(from, to)); it != links_.end()) return it->second;
+
+    void upsert_edge(vertex_id_t from, vertex_id_t to, edge_weight_t weight) noexcept(false) {
+        if (from == to) return; // Skip self-loop
+        edges_.emplace(vertex_ids_t(from, to), weight);
+        edges_.emplace(vertex_ids_t(to, from), weight);
+    }
+
+    std::optional<edge_weight_t> get_edge(vertex_id_t from, vertex_id_t to) const noexcept {
+        if (auto it = edges_.find(vertex_ids_t(from, to)); it != edges_.end()) return it->second;
         return std::nullopt;
     }
-    void remove_edge(node_id_t from, node_id_t to) noexcept {
-        links_.erase(node_ids_t(from, to));
-        links_.erase(node_ids_t(to, from));
+
+    void remove_edge(vertex_id_t from, vertex_id_t to) noexcept {
+        edges_.erase(vertex_ids_t(from, to));
+        edges_.erase(vertex_ids_t(to, from));
     }
+
+    void compact() noexcept {
+        // The `std::map` is already a balanced BST, so no need to do anything here.
+    }
+
     template <typename visitor_type_>
-    void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
-        auto [begin, end] = links_.equal_range(from);
+    void for_edges(vertex_id_t from, visitor_type_ visitor) const noexcept {
+        auto [begin, end] = edges_.equal_range(from);
         for (auto it = begin; it != end; ++it) visitor(from, it->first.to, it->second);
     }
 };
@@ -3220,70 +4219,128 @@ struct graph_map_t {
 /**
  *  During construction, we need fast lookups and insertions - so a single-level hash-map
  *  would be the best choice. But during processing, we need to iterate over all edges
- *  starting from a given node, and with non-flat hash-map and a typical hash function,
+ *  starting from a given vertex, and with non-flat hash-map and a typical hash function,
  *  the iteration would be slow.
  *
- *  Instead, we can override the hash function to only look at source node ID, but use
+ *  Instead, we can override the hash function to only look at source vertex ID, but use
  *  both identifiers for equality comparison. Assuming that hash function is highly
  *  unbalanced for a sparse graph, we need to pre-allocate more memory.
+ *
+ *  ! Sadly, the `absl::flat_hash_set` doesn't yet support the three-way comparison operator,
+ *  ! so we are manually defining the `equal_t` for every possible pair of arguments.
  */
 
 #include <absl/container/flat_hash_set.h> // `absl::flat_hash_set`
 #include <absl/hash/hash.h>               // `absl::Hash`
 
-struct graph_flat_set_t {
-    struct edge_t {
-        node_id_t from;
-        node_id_t to;
-        edge_weight_t weight;
-    };
+struct edge_t {
+    vertex_id_t from;
+    vertex_id_t to;
+    edge_weight_t weight;
+};
+
+static_assert( //
+    sizeof(edge_t) == sizeof(vertex_id_t) + sizeof(vertex_id_t) + sizeof(edge_weight_t),
+    "With a single-level flat structure we can guarantee structure packing");
+
+template <typename allocator_type_ = std::allocator<std::byte>>
+struct basic_graph_flat_set {
+
     struct equal_t {
         using is_transparent = std::true_type;
         bool operator()(edge_t const &lhs, edge_t const &rhs) const noexcept {
             return lhs.from == rhs.from && lhs.to == rhs.to;
         }
-        bool operator()(node_id_t lhs, edge_t const &rhs) const noexcept { return lhs == rhs.from; }
-        bool operator()(edge_t const &lhs, node_id_t rhs) const noexcept { return lhs.from == rhs; }
-        bool operator()(edge_t const &lhs, node_ids_t const &rhs) const noexcept {
+        bool operator()(vertex_id_t lhs, edge_t const &rhs) const noexcept { return lhs == rhs.from; }
+        bool operator()(edge_t const &lhs, vertex_id_t rhs) const noexcept { return lhs.from == rhs; }
+        bool operator()(edge_t const &lhs, vertex_ids_t const &rhs) const noexcept {
             return lhs.from == rhs.from && lhs.to == rhs.to;
         }
-        bool operator()(node_ids_t const &lhs, edge_t const &rhs) const noexcept {
+        bool operator()(vertex_ids_t const &lhs, edge_t const &rhs) const noexcept {
             return lhs.from == rhs.from && lhs.to == rhs.to;
         }
     };
+
     struct hash_t {
         using is_transparent = std::true_type;
-        std::size_t operator()(node_id_t from) const noexcept { return absl::Hash<node_id_t> {}(from); }
-        std::size_t operator()(edge_t const &edge) const noexcept { return absl::Hash<node_id_t> {}(edge.from); }
-        std::size_t operator()(node_ids_t const &pair) const noexcept { return absl::Hash<node_id_t> {}(pair.from); }
+        std::size_t operator()(vertex_id_t from) const noexcept { return absl::Hash<vertex_id_t> {}(from); }
+        std::size_t operator()(edge_t const &edge) const noexcept { return absl::Hash<vertex_id_t> {}(edge.from); }
+        std::size_t operator()(vertex_ids_t const &pair) const noexcept {
+            return absl::Hash<vertex_id_t> {}(pair.from);
+        }
     };
 
-    static_assert( //
-        sizeof(edge_t) == sizeof(node_id_t) + sizeof(node_id_t) + sizeof(edge_weight_t),
-        "With a single-level flat structure we can guarantee structure packing");
+    using allocator_type = allocator_type_;
+    using set_allocator_type = typename std::allocator_traits<allocator_type>::template rebind_alloc<allocator_type>;
+    using flat_set_type = absl::flat_hash_set<edge_t, hash_t, equal_t, set_allocator_type>;
 
-    absl::flat_hash_set<edge_t, hash_t, equal_t> links_;
+    flat_set_type edges_;
 
-    void reserve([[maybe_unused]] std::size_t nodes, std::size_t edges) { links_.reserve(edges); }
-    void upsert_edge(node_id_t from, node_id_t to, edge_weight_t weight) noexcept(false) {
-        if (from == to) return; // Skip self-loop
-        links_.emplace(from, to, weight);
-        links_.emplace(to, from, weight);
+    explicit basic_graph_flat_set(allocator_type const &alloc = allocator_type()) noexcept(false)
+        : edges_(0 /* bucket_count */, hash_t {}, equal_t {}, alloc) {}
+
+    void reserve(graph_size_t capacity) noexcept(false) {
+        // Assuming the irregular structure of our graph, it's a great idea to "over-provision"
+        // memory by changing the `max_load_factor` to a lower value, like 0.5, to reduce the
+        // number of unsuccessful probes.
+        //
+        // That operation, however, is a no-op in Abseil and is only provided for compatibility
+        // with the STL, so we resort to a much more blunt approach - reserving a large number
+        // of slots 🤦‍♂️
+        edges_.reserve(capacity.edges * 2);
     }
-    std::optional<edge_weight_t> get_edge(node_id_t from, node_id_t to) const noexcept {
-        if (auto it = links_.find(edge_t {from, to, 0.0f}); it != links_.end()) return it->weight;
+
+    graph_size_t size() const noexcept {
+        graph_size_t size;
+        size.edges = edges_.size();
+        size.vertices = 0;
+        for (auto const &edge : edges_) size.vertices = std::max(size.vertices, edge.from);
+        return size;
+    }
+
+    void upsert_edge(vertex_id_t from, vertex_id_t to, edge_weight_t weight) noexcept(false) {
+        if (from == to) return; // Skip self-loop
+        edges_.emplace(from, to, weight);
+        edges_.emplace(to, from, weight);
+    }
+
+    std::optional<edge_weight_t> get_edge(vertex_id_t from, vertex_id_t to) const noexcept {
+        if (auto it = edges_.find(edge_t {from, to, 0.0f}); it != edges_.end()) return it->weight;
         return std::nullopt;
     }
-    void remove_edge(node_id_t from, node_id_t to) noexcept {
-        links_.erase(node_ids_t(from, to));
-        links_.erase(node_ids_t(to, from));
+
+    void remove_edge(vertex_id_t from, vertex_id_t to) noexcept {
+        edges_.erase(vertex_ids_t(from, to));
+        edges_.erase(vertex_ids_t(to, from));
     }
+
+    void compact() noexcept(false) {
+        // Erasing does not trigger a rehash, so we do it manually:
+        edges_.rehash(0);
+    }
+
     template <typename visitor_type_>
-    void for_edges(node_id_t from, visitor_type_ visitor) const noexcept {
-        auto [begin, end] = links_.equal_range(from);
+    void for_edges(vertex_id_t from, visitor_type_ visitor) const noexcept {
+        auto [begin, end] = edges_.equal_range(from);
         for (auto it = begin; it != end; ++it) visitor(it->from, it->to, it->weight);
     }
 };
+
+/**
+ *  Now we have 3 fairly generic implementations that will behave differently based on
+ *  the underlying associative container, memory allocator used, the shape of the graph,
+ *  and countless other parameters!
+ *
+ *  Let's consider a Small World graph of a community of 2'500 people, a typical upper
+ *  bound for what is considered a "village", with roughly 200 connections per person,
+ *  the Dunbar's number.
+ */
+constexpr std::size_t graph_vertices_count_k = 2'500;
+constexpr std::size_t graph_vertices_degree_k = 200;
+
+enum class graph_allocation_mode_t { global_k, arena_k };
+enum class graph_compaction_mode_t { disabled_k, enabled_k };
+enum class execution_mode_t { serial_k, parallel_k };
 
 #include <cassert> // `assert`
 #include <random>  // `std::mt19937_64`
@@ -3291,21 +4348,21 @@ struct graph_flat_set_t {
 
 /**
  *  @brief  Generates a Watts-Strogatz small-world graph forming a ring lattice
- *          with `k` neighbors per node and rewiring probability `p`.
+ *          with `k` neighbors per vertex and rewiring probability `p`.
  *
  *  @param[out] graph The graph to be generated.
  *  @param[inout] generator Random number generator to be used.
- *  @param[in] nodes Node IDs to be used in the graph.
- *  @param[in] k Number of neighbors per node.
- *  @param[in] p Rewiring probability to modify the initial ring lattice.
+ *  @param[in] vertices Node IDs to be used in the graph.
+ *  @param[in] k Number of neighbors per vertex.
+ *  @param[in] p Rewiring probability to modify the initial ring lattice, default 0.1.
  */
 template <typename graph_type_>
 void watts_strogatz(                                //
-    graph_type_ &graph, std::mt19937_64 &generator, //
-    std::span<node_id_t const> nodes,               //
-    std::size_t const k, float const p) {
+    graph_type_ &graph, std::mt19937_64 &generator, // Mutable in/out parameters
+    std::span<vertex_id_t const> vertices,          // Immutable input parameters
+    std::size_t const k, float const p = 0.1f) {    // Configuration parameters
 
-    auto const n = nodes.size();
+    auto const n = vertices.size();
     assert(k < n && "k should be smaller than n");
     assert(k % 2 == 0 && "k should be even for symmetrical neighbors");
 
@@ -3313,11 +4370,11 @@ void watts_strogatz(                                //
     // reusing it for different distributions.
     std::uniform_real_distribution<float> distribution_probability(0.0f, 1.0f);
     std::uniform_real_distribution<edge_weight_t> distribution_weight(0.0f, 1.0f);
-    std::uniform_int_distribution<node_id_t> distribution_node(0, static_cast<node_id_t>(n - 1));
+    std::uniform_int_distribution<vertex_id_t> distribution_vertices(0, static_cast<vertex_id_t>(n - 1));
 
     // The ring lattice has `n * (k / 2)` edges if we only add `j>i`.
     // Then each edge is stored twice in adjacency for undirected.
-    graph.reserve(n, n * k);
+    graph.reserve({n, n * k});
 
     // Build the initial ring lattice:
     for (std::size_t i = 0; i < n; ++i) {
@@ -3326,7 +4383,7 @@ void watts_strogatz(                                //
             std::size_t j = (i + offset) % n;
             if (j <= i) continue; // If j < i, it will come up in its own iteration
             edge_weight_t w = distribution_weight(generator);
-            graph.upsert_edge(nodes[i], nodes[j], w);
+            graph.upsert_edge(vertices[i], vertices[j], w);
         }
     }
 
@@ -3338,100 +4395,161 @@ void watts_strogatz(                                //
             // With probability `p`, remove `(i, j)` and add some new `(i, m)`
             if (distribution_probability(generator) >= p) continue;
             // Remove the old edge `(i, j)`
-            graph.remove_edge(nodes[i], nodes[j]);
-            node_id_t m;
-            do { m = distribution_node(generator); } while (graph.get_edge(nodes[i], nodes[m]));
+            graph.remove_edge(vertices[i], vertices[j]);
+            vertex_id_t m;
+            do { m = distribution_vertices(generator); } while (graph.get_edge(vertices[i], vertices[m]));
             edge_weight_t w = distribution_weight(generator);
-            graph.upsert_edge(nodes[i], nodes[m], w);
+            graph.upsert_edge(vertices[i], vertices[m], w);
         }
     }
 }
 
 /**
- *  @brief  Produces a non-repeating sorted sequence of node IDs.
- *  @param[in] size The number of unique node IDs to generate.
+ *  @brief  Produces a non-repeating sorted (monotonically increasing) sequence of vertex IDs.
+ *  @param[in] size The number of unique vertex IDs to generate.
  */
-std::vector<node_id_t> make_node_ids(std::mt19937_64 &generator, std::size_t size) noexcept(false) {
-    std::set<node_id_t> ids;
-    std::uniform_int_distribution<node_id_t> distribution(0, std::numeric_limits<node_id_t>::max());
+std::vector<vertex_id_t> make_vertex_ids(std::mt19937_64 &generator, std::size_t size) noexcept(false) {
+    std::set<vertex_id_t> ids;
+    std::uniform_int_distribution<vertex_id_t> distribution(0, std::numeric_limits<vertex_id_t>::max());
     while (ids.size() < size) ids.insert(distribution(generator));
     return {ids.begin(), ids.end()};
 }
 
-template <typename graph_type_>
-void page_rank(                                                    //
-    graph_type_ const &graph, std::span<node_id_t const> node_ids, //
-    std::span<float> old_scores, std::span<float> new_scores,      //
-    std::size_t iterations, float damping) {
+template <                       //
+    execution_mode_t execution_, //
+    typename graph_type_>        // This parameter can be inferred, so put it last ;)
 
-    while (iterations--) {
+void page_rank(                                                        //
+    graph_type_ const &graph, std::span<vertex_id_t const> vertex_ids, //
+    std::span<float> old_scores, std::span<float> new_scores,          //
+    std::size_t const iterations, float const damping = 0.85f) {
+
+    std::size_t iterations_left = iterations;
+    while (iterations_left--) {
         float total_score = 0.0f;
-        for (std::size_t i = 0; i < node_ids.size(); ++i) {
-            node_id_t node_id = node_ids[i];
+        for (std::size_t i = 0; i < vertex_ids.size(); ++i) {
+            vertex_id_t vertex_id = vertex_ids[i];
             float &old_score = old_scores[i];
             float &new_score = new_scores[i];
             float replacing_score = 0.0f;
-            graph.for_edges(node_id, [&](node_id_t from, node_id_t to, edge_weight_t weight) {
-                std::size_t j = std::lower_bound(node_ids.begin(), node_ids.end(), to) - node_ids.begin();
+            graph.for_edges(vertex_id, [&](vertex_id_t from, vertex_id_t to, edge_weight_t weight) {
+                std::size_t j = std::lower_bound(vertex_ids.begin(), vertex_ids.end(), to) - vertex_ids.begin();
                 replacing_score += old_scores[j] * weight;
             });
             new_score = replacing_score;
             total_score += replacing_score;
         }
         // Normalize the scores and apply damping
-        for (std::size_t i = 0; i < node_ids.size(); ++i)
+        for (std::size_t i = 0; i < vertex_ids.size(); ++i)
             new_scores[i] = (1.0f - damping) + damping * new_scores[i] / total_score;
         std::swap(old_scores, new_scores);
     }
 }
 
-template <typename graph_type_, std::size_t count_nodes_, std::size_t average_degree_>
+/**
+ *  @brief  Benchmarks building a Watts-Strogatz small-world graph.
+ *
+ *  @tparam allocation_mode_ Do we allocate from the default global allocator or an arena?
+ *  @tparam compaction_mode_ Do we compact the graph after construction or not?
+ *
+ *  @param[out] graph The graph to be generated.
+ *  @param[inout] generator Random number generator to be used.
+ *  @param[in] vertices Node IDs to be used in the graph.
+ *  @param[in] k Number of neighbors per vertex.
+ *  @param[in] p Rewiring probability to modify the initial ring lattice.
+ */
+template <                                                                    //
+    typename graph_type_,                                                     //
+    graph_allocation_mode_t allocation_ = graph_allocation_mode_t::global_k,  //
+    graph_compaction_mode_t compaction_ = graph_compaction_mode_t::disabled_k //
+    >
+
 static void graph_make(bm::State &state) {
 
     // Seed all graph types identically
     std::mt19937_64 generator(42);
-    std::vector<node_id_t> node_ids = make_node_ids(generator, count_nodes_);
-    std::vector<float> old_scores(count_nodes_, 1.0f);
-    std::vector<float> new_scores(count_nodes_, 0.0f);
+    std::vector<vertex_id_t> vertex_ids = make_vertex_ids(generator, graph_vertices_count_k);
+    std::vector<float> old_scores(graph_vertices_count_k, 1.0f);
+    std::vector<float> new_scores(graph_vertices_count_k, 0.0f);
 
     for (auto _ : state) {
         graph_type_ graph;
-        graph.reserve(count_nodes_, count_nodes_ * average_degree_);
-        watts_strogatz(graph, generator, node_ids, average_degree_, 0.1f);
+        graph.reserve({graph_vertices_count_k, graph_vertices_count_k * graph_vertices_degree_k});
+        watts_strogatz(graph, generator, vertex_ids, graph_vertices_degree_k, 0.1f);
     }
 }
+
+using graph_unordered_maps = basic_graph_unordered_maps<>;
+using graph_map = basic_graph_map<>;
+using graph_flat_set = basic_graph_flat_set<>;
 
 /**
  *  Let's imagine a Small World graph of a community of 2'500 people, a typical upper
  *  bound for what is considered a village, with roughly 200 connections per person,
  *  the Dunbar's number.
  */
-BENCHMARK(graph_make<graph_unordered_maps_t, 2'500, 150>)->MinTime(10)->Name("graph_make<unordered_maps_t>(village)");
-BENCHMARK(graph_make<graph_map_t, 2'500, 150>)->MinTime(10)->Name("graph_make<map_t>(village)");
-BENCHMARK(graph_make<graph_flat_set_t, 2'500, 150>)->MinTime(10)->Name("graph_make<flat_set_t>(village)");
+BENCHMARK(graph_make<graph_unordered_maps>)
+    ->MinTime(10)
+    ->Name("graph_make<std::unordered_maps>")
+    ->Unit(bm::kMicrosecond);
+BENCHMARK(graph_make<graph_map>)->MinTime(10)->Name("graph_make<std::map>")->Unit(bm::kMicrosecond);
+BENCHMARK(graph_make<graph_flat_set>)->MinTime(10)->Name("graph_make<absl::flat_set>")->Unit(bm::kMicrosecond);
 
-template <typename graph_type_, std::size_t count_nodes_, std::size_t average_degree_>
+template <                                                                     //
+    typename graph_type_,                                                      //
+    graph_allocation_mode_t allocation_ = graph_allocation_mode_t::global_k,   //
+    graph_compaction_mode_t compaction_ = graph_compaction_mode_t::disabled_k, //
+    execution_mode_t execution_ = execution_mode_t::serial_k                   //
+    >
+
 static void graph_rank(bm::State &state) {
 
     // Seed all graph types identically
     std::mt19937_64 generator(42);
-    std::vector<node_id_t> node_ids = make_node_ids(generator, count_nodes_);
-    std::vector<float> old_scores(count_nodes_, 1.0f);
-    std::vector<float> new_scores(count_nodes_, 0.0f);
+    std::vector<vertex_id_t> vertex_ids = make_vertex_ids(generator, graph_vertices_count_k);
+    std::vector<float> old_scores(graph_vertices_count_k, 1.0f);
+    std::vector<float> new_scores(graph_vertices_count_k, 0.0f);
 
+    // Build once
     graph_type_ graph;
-    graph.reserve(count_nodes_, count_nodes_ * average_degree_);
-    watts_strogatz(graph, generator, node_ids, average_degree_, 0.1f);
+    graph.reserve({graph_vertices_count_k, graph_vertices_count_k * graph_vertices_degree_k});
+    watts_strogatz(graph, generator, vertex_ids, graph_vertices_degree_k, 0.1f);
 
-    for (auto _ : state) { page_rank(graph, node_ids, old_scores, new_scores, 2, 0.85f); }
+    // Rank many times, with an even number of iterations per cycle to account for score swaps
+    for (auto _ : state) { page_rank<execution_>(graph, vertex_ids, old_scores, new_scores, 2); }
 }
 
 /**
- *  Now let's rank those 2'500 people in the village, using the PageRank-like algorithm.
+ *  Now let's rank those villagers, using the PageRank-like algorithm.
  */
-BENCHMARK(graph_rank<graph_unordered_maps_t, 2'500, 150>)->MinTime(10)->Name("graph_rank<unordered_maps_t>(village)");
-BENCHMARK(graph_rank<graph_map_t, 2'500, 150>)->MinTime(10)->Name("graph_rank<map_t>(village)");
-BENCHMARK(graph_rank<graph_flat_set_t, 2'500, 150>)->MinTime(10)->Name("graph_rank<flat_set_t>(village)");
+BENCHMARK(graph_rank<graph_unordered_maps>)
+    ->MinTime(10)
+    ->Name("graph_rank<std::unordered_maps>")
+    ->Unit(bm::kMicrosecond);
+BENCHMARK(graph_rank<graph_map>)->MinTime(10)->Name("graph_rank<std::map>")->Unit(bm::kMicrosecond);
+BENCHMARK(graph_rank<graph_flat_set>)->MinTime(10)->Name("graph_rank<absl::flat_set>")->Unit(bm::kMicrosecond);
+
+/**
+ *  After benchmarking on both x86 and ARM architectures, we can draw several
+ *  interesting conclusions about our three graph implementations:
+ *
+ *  1. For graph construction (`graph_make`):
+ *     - `std::unordered_map` consistently outperforms other containers, being ~2x faster
+ *       than `std::map` on both architectures. This aligns with its O(1) insertion time.
+ *     - `absl::flat_hash_set` falls between the two, being ~40% slower than `std::unordered_map`.
+ *
+ *  2. For the Page-Rank algorithm (`graph_rank`):
+ *     - `absl::flat_hash_set` absolutely dominates, being ~150x faster than `std::unordered_map`
+ *       on x86 and ~320x faster on ARM! This validates our custom hash function strategy.
+ *     - `std::map` shrinks its gap with `std::unordered_map` during ranking,
+ *       likely due to its cache-friendly tree traversal patterns.
+ *
+ *  What we've learned:
+ *
+ *  - For read-heavy workloads using flat memory layouts, `absl::flat_hash_set` is king.
+ *  - Custom hash functions combined with transparent comparators are key to building efficient
+ *    large-scale systems, like databases and recommendation engines.
+ */
 
 #pragma endregion // Trees, Graphs, and Data Layouts
 

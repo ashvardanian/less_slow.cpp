@@ -5,8 +5,8 @@ cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 # Project Setup
 # ------------------------------------------------------------------------------
 project(less_slow
-  VERSION 0.1.0
-  LANGUAGES C CXX
+  VERSION 0.4.1
+  LANGUAGES C CXX ASM
   DESCRIPTION "Learning how to write Less Slow code, from numerical micro-kernels and SIMD to coroutines, ranges, and polymorphic state machines"
   HOMEPAGE_URL "https://github.com/ashvardanian/less_slow.cpp")
 
@@ -32,6 +32,13 @@ endif()
 # ------------------------------------------------------------------------------
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED)
+find_package(BLAS REQUIRED)
+
+if(BLAS_FOUND)
+  message(STATUS "BLAS found: ${BLAS_LIBRARIES}")
+else()
+  message(FATAL_ERROR "BLAS not found")
+endif()
 
 set(FETCHCONTENT_QUIET OFF)
 include(FetchContent) # For CMake-friendly dependencies
@@ -200,11 +207,28 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   endif()
 endif()
 
+# Eigen is one of the few libraries not using GitHub
+FetchContent_Declare(
+  LibEigenEigen
+  GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+  GIT_TAG master
+)
+FetchContent_MakeAvailable(LibEigenEigen)
+
 # ------------------------------------------------------------------------------
 # Main Executable
 # ------------------------------------------------------------------------------
 add_executable(less_slow less_slow.cpp)
 set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Conditionally add the assembly file(s)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+  set_source_files_properties(less_slow_amd64.S PROPERTIES LANGUAGE ASM)
+  target_sources(less_slow PRIVATE less_slow_amd64.S)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+  set_source_files_properties(less_slow_aarch64.S PROPERTIES LANGUAGE ASM)
+  target_sources(less_slow PRIVATE less_slow_aarch64.S)
+endif()
 
 # ------------------------------------------------------------------------------
 # Compiler Flags / Options
@@ -252,7 +276,6 @@ target_link_libraries(less_slow
   range-v3
   cppcoro
   unifex
-  asio
   stringzilla
   yyjson
   ctre
@@ -261,6 +284,8 @@ target_link_libraries(less_slow
   # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
   absl::flat_hash_map
   nlohmann_json::nlohmann_json
+  Eigen3::Eigen
+  ${BLAS_LIBRARIES}
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
