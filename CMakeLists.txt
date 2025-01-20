@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 # Project Setup
 # ------------------------------------------------------------------------------
 project(less_slow
-  VERSION 0.3.0
+  VERSION 0.4.0
   LANGUAGES C CXX ASM
   DESCRIPTION "Learning how to write Less Slow code, from numerical micro-kernels and SIMD to coroutines, ranges, and polymorphic state machines"
   HOMEPAGE_URL "https://github.com/ashvardanian/less_slow.cpp")
