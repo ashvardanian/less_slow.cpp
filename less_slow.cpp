@@ -1,5 +1,5 @@
 /**
- *  @brief  Low-level microbenchmarks for building a performance-first mindset.
+ *  @brief  Low-level micro-benchmarks for building a performance-first mindset.
  *  @file   less_slow.cpp
  *  @author Ash Vardanian
  *
@@ -72,6 +72,108 @@ BENCHMARK(i32_addition);
  *  settings, discarding the @b `-O3` flag for "Release build" optimizations,
  *  we may see a non-zero value, but it won't represent real-world performance.
  *
+ *  One way to avoid, is just implementing the kernel in @b inline-assembly,
+ *  interleaving it with the higher-level C++ code:
+ */
+
+#if defined(__GNUC__) && !defined(__clang__) //! GCC and Clang support inline assembly, MSVC doesn't!
+
+#if defined(__x86_64__) || defined(__i386__) //? Works for both 64-bit and 32-bit x86 architectures
+
+static void i32_addition_inline_asm(bm::State &state) {
+    // In inline assembly for x86 we are not explicitly naming the registers,
+    // so in the 32-bit and 64-bit modes different registers will be used:
+    // - For 32-bit (`__i386__`): Registers like `eax` and `ebx` will be used,
+    //   and pointers will be 4 bytes wide.
+    // - For 64-bit targets (`__x86_64__`): Registers like `eax`, `r8d` will
+    //   be used for 32-bit values, while pointers will be 8 bytes wide.
+    std::int32_t a = 0, b = 0, c = 0;
+    for (auto _ : state) {
+        asm volatile(                  //
+            "addl %[b], %[a]\n\t"      // Sum `a + b` into `a`; `l` means 32-bit operation.
+            "movl %[a], %[c]\n\t"      // Move result to `c`, again using the `l` suffix.
+            : [c] "=r"(c), [a] "+r"(a) // Outputs: `c` and `a` (read-write)
+            : [b] "r"(b)               // Input: `b`
+            : "cc"                     // Clobbered: condition codes
+        );
+    }
+    (void)c; // Silence "variable `c` set but not used" warning
+}
+
+BENCHMARK(i32_addition_inline_asm);
+
+#elif defined(__aarch64__) //? The following kernel is just for the 64-bit Arm
+
+static void i32_addition_inline_asm(bm::State &state) {
+    std::int32_t a = 0, b = 0, c = 0;
+    for (auto _ : state) {
+        asm volatile(                     //
+            "add %w[a], %w[b], %w[a]\n\t" // Sum `a + b` into `a`
+            "mov %w[c], %w[a]\n\t"        // Move result to `c`
+            : [c] "=r"(c), [a] "+r"(a)    // Outputs: `c` and `a` (read-write)
+            : [b] "r"(b)                  // Input: `b`
+            : "cc"                        // Clobbered: condition codes
+        );
+    }
+    (void)c; // Silence "variable `c` set but not used" warning
+}
+BENCHMARK(i32_addition_inline_asm);
+
+#endif // defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
+
+#endif // defined(__GNUC__) && !defined(__clang__)
+
+/**
+ *  We can also put the assembly kernels into separate `.S` files and link them
+ *  to our C++ target. Each approach has its technical tradeoffs:
+ *
+ *  - Inline Assembly:
+ *    Requires direct interaction with registers, which must be carefully managed
+ *    using constraints and clobbers to ensure the compiler knows which registers
+ *    are modified.  While inline assembly enables tight coupling with C++ logic
+ *    and access to local variables, it is less portable due to compiler-specific
+ *    syntax and optimization variability. Debugging inline assembly can also be
+ *    challenging as it is embedded in higher-level code.
+ *
+ *  - Separate Assembly Files:
+ *    Abstracts away register management through adherence to the platform's
+ *    Application Binary Interface @b (ABI). This makes the assembly routines
+ *    easier to debug, test, and reuse across projects. However, separate files
+ *    require more boilerplate for function calls, stack management, and
+ *    parameter passing. They are preferred for large or standalone routines
+ *    that benefit from modularity and clear separation from C++ code.
+ *
+ *  In this project, we provide assembly kernels for two platforms:
+ *
+ *  - @b less_slow_aarch64.S - for the 64-bit ARM architecture.
+ *  - @b less_slow_amd64.S - for the x86_64 architecture, with 64-bit extensions,
+ *    originally introduced by AMD.
+ */
+#if defined(__x86_64__) || defined(__aarch64__)
+
+extern "C" std::int32_t i32_add_asm_kernel(std::int32_t a, std::int32_t b);
+
+static void i32_addition_asm(bm::State &state) {
+    std::int32_t a = 0, b = 0, c = 0;
+    for (auto _ : state) c = i32_add_asm_kernel(a, b);
+    (void)c; // Silence "variable `c` set but not used" warning
+}
+
+BENCHMARK(i32_addition_asm);
+
+#endif // defined(__x86_64__) || defined(__aarch64__)
+
+/**
+ *  So far the results may be:
+ *
+ *  - `i32_addition` - @b 0ns, as the compiler optimized the code away.
+ *  - `i32_addition_inline_asm` - @b 0.2ns, a single instruction was inlined.
+ *  - `i32_addition_asm` - @b 0.9ns, a new stack frame was created!
+ *
+ *  Keep this in mind! Even with Link-Time Optimization @b (LTO) enabled,
+ *  most of the time, compilers won't be able to inline your Assembly kernels.
+ *
+ *  Don't want to switch to Assembly to fool the compilers? No problem!
  *  Another thing we can try - is generating random inputs on the fly with
  *  @b `std::rand()`, one of the most controversial operations in the
  *  C standard library.
@@ -242,10 +344,10 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(physical_cores());
 
 static void sorting(bm::State &state) {
 
-    auto count = static_cast<std::size_t>(state.range(0));
+    auto length = static_cast<std::size_t>(state.range(0));
     auto include_preprocessing = static_cast<bool>(state.range(1));
 
-    std::vector<std::uint32_t> array(count);
+    std::vector<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -258,6 +360,8 @@ static void sorting(bm::State &state) {
         std::sort(array.begin(), array.end());
         bm::DoNotOptimize(array.size());
     }
+
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
 }
 
 BENCHMARK(sorting)->Args({3, false})->Args({3, true});
@@ -288,8 +392,8 @@ template <typename execution_policy_>
 static void sorting_with_executors( //
     bm::State &state, execution_policy_ &&policy) {
 
-    auto count = static_cast<std::size_t>(state.range(0));
-    std::vector<std::uint32_t> array(count);
+    auto length = static_cast<std::size_t>(state.range(0));
+    std::vector<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -298,9 +402,8 @@ static void sorting_with_executors( //
         bm::DoNotOptimize(array.size());
     }
 
-    state.SetComplexityN(count);
-    state.SetItemsProcessed(count * state.iterations());
-    state.SetBytesProcessed(count * state.iterations() * sizeof(std::uint32_t));
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
+    state.SetComplexityN(length);
 
     // Want to report something else? Sure, go ahead:
     //
@@ -429,9 +532,8 @@ static void sorting_with_openmp(bm::State &state) {
         bm::DoNotOptimize(array.size());
     }
 
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
     state.SetComplexityN(length);
-    state.SetItemsProcessed(length * state.iterations());
-    state.SetBytesProcessed(length * state.iterations() * sizeof(std::uint32_t));
 }
 
 BENCHMARK(sorting_with_openmp)
@@ -561,11 +663,14 @@ template <typename sorter_type_, std::size_t length_> //
 static void recursion_cost(bm::State &state) {
     using element_t = typename sorter_type_::element_t;
     sorter_type_ sorter;
-    std::vector<element_t> arr(length_);
+    std::vector<element_t> array(length_);
     for (auto _ : state) {
-        for (std::size_t i = 0; i != length_; ++i) arr[i] = length_ - i;
-        sorter(arr.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
+        for (std::size_t i = 0; i != length_; ++i) array[i] = length_ - i;
+        sorter(array.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
     }
+
+    if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
+    state.SetComplexityN(length_);
 }
 
 using recursive_sort_i32s = quick_sort_recurse<std::int32_t>;
@@ -751,7 +856,8 @@ BENCHMARK(rvo_impossible);
 
 static void f64_sin(bm::State &state) {
     double argument = std::rand(), result = 0;
-    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 1.0));
+    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 0.001));
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin);
@@ -775,10 +881,11 @@ BENCHMARK(f64_sin);
 static void f64_sin_maclaurin(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = argument - std::pow(argument, 3) / 6 + std::pow(argument, 5) / 120;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin);
@@ -806,11 +913,12 @@ BENCHMARK(f64_sin_maclaurin);
 static void f64_sin_maclaurin_powless(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin_powless);
@@ -850,11 +958,12 @@ BENCHMARK(f64_sin_maclaurin_powless);
 FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
     double argument = std::rand(), result = 0;
     for (auto _ : state) {
-        argument += 1.0;
+        argument += 0.001;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
     }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
 BENCHMARK(f64_sin_maclaurin_with_fast_math);
@@ -1015,7 +1124,7 @@ BENCHMARK(bits_population_count_native);
 
 #pragma endregion // Expensive Integer Operations
 
-#pragma region Compute vs Memory Bounds with Matrix Multiplications
+#pragma region Compute Bound Linear Algebra
 
 /**
  *  Understanding common algorithmic design patterns across various computational
@@ -1062,8 +1171,8 @@ static void f32x4x4_matmul(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul);
@@ -1122,8 +1231,8 @@ static void f32x4x4_matmul_unrolled(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_unrolled_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul_unrolled);
@@ -1220,8 +1329,8 @@ static void f32x4x4_matmul_sse41(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_sse41_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 
 BENCHMARK(f32x4x4_matmul_sse41);
@@ -1309,8 +1418,8 @@ static void f32x4x4_matmul_avx512(bm::State &state) {
 
     for (auto _ : state) bm::DoNotOptimize(c = f32x4x4_matmul_avx512_kernel(a, b));
 
-    std::size_t flops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
-    state.SetItemsProcessed(flops_per_cycle * state.iterations());
+    std::size_t tops_per_cycle = 4 * 4 * (4 /* multiplications */ + 3 /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
 }
 BENCHMARK(f32x4x4_matmul_avx512);
 
@@ -1333,9 +1442,292 @@ BENCHMARK(f32x4x4_matmul_avx512);
  *  means the performance will still degrade—@b around 5ns in practice.
  *
  *  Benchmark everything! Don't assume less work translates to faster execution.
+ *  Read the specs of your hardware to understand it's theoretical upper limits,
+ *  and double-check them with stress-tests. Pure @b Assembly is perfect for this!
+ *
+ *  Let's implement a few simple Assembly kernels for Fused-Multiply-Add @b (FMA)
+ *  operations, assuming the data is already in our registers and aligned and
+ *  represents a small slice of a very large matrix. That way we can infer the
+ *  theoretical upper bounds for matrix multiplication throughput on our CPU.
  */
 
-#pragma endregion // Compute vs Memory Bounds with Matrix Multiplications
+typedef std::uint32_t (*theoretic_tops_kernel_t)(void);
+typedef void (*theoretic_tops_prepare_t)(void);
+
+static void theoretic_tops(                        //
+    bm::State &state,                              //
+    theoretic_tops_kernel_t theoretic_tops_kernel, //
+    theoretic_tops_prepare_t prepare = nullptr) {
+
+    // If there is some preparation to be done, do it.
+    if (prepare) try {
+            prepare();
+        }
+        catch (std::exception const &e) {
+            state.SkipWithError(e.what());
+            return;
+        }
+
+    // Each kernel returns the number of TOPS.
+    std::size_t tops = 0;
+    for (auto _ : state) bm::DoNotOptimize(tops = theoretic_tops_kernel());
+    state.counters["TOPS"] = bm::Counter(tops * state.iterations() * state.threads() * 1.0, bm::Counter::kIsRate);
+}
+
+/**
+ *  Assuming we are not aiming for dynamic dispatch, we can simply check for
+ *  the available features at compile time with more preprocessing directives:
+ *
+ *  To list all available macros for x86, take a recent compiler, like GCC, and run:
+ *       gcc -march=sapphirerapids -dM -E - < /dev/null | egrep "SSE|AVX" | sort
+ *  On Arm machines you may want to check for other flags:
+ *       gcc -march=native -dM -E - < /dev/null | egrep "NEON|SVE|FP16|FMA" | sort
+ *
+ *  @see Arm Feature Detection: https://developer.arm.com/documentation/101028/0010/Feature-test-macros
+ */
+#if defined(__AVX512F__)
+extern "C" std::uint32_t tops_f64_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx512, tops_f64_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_f32_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx512, tops_f32_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512F__)
+
+#if defined(__AVX512FP16__)
+extern "C" std::uint32_t tops_f16_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_avx512, tops_f16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512FP16__)
+
+#if defined(__AVX512BF16__)
+extern "C" std::uint32_t tops_bf16_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_avx512, tops_bf16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512BF16__)
+
+#if defined(__AVX512VNNI__)
+extern "C" std::uint32_t tops_i16_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i16_avx512, tops_i16_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i16_avx512, tops_i16_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_u8i8_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, u8i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, u8i8_avx512, tops_u8i8_avx512_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX512VNNI__)
+
+#if defined(__AVX2__)
+extern "C" std::uint32_t tops_f64_avx2_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_avx2, tops_f64_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_f32_avx2_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_avx2, tops_f32_avx2_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__AVX2__)
+
+#if defined(__ARM_NEON)
+extern "C" std::uint32_t tops_f32_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_NEON)
+
+#if defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+extern "C" std::uint32_t tops_f16_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, f16_neon, tops_f16_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_neon, tops_f16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+
+#if defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
+extern "C" std::uint32_t tops_bf16_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
+
+#if defined(__ARM_FEATURE_DOTPROD)
+extern "C" std::uint32_t tops_i8_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i8_neon, tops_i8_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8_neon, tops_i8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+extern "C" std::uint32_t tops_u8_neon_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+#endif // defined(__ARM_FEATURE_DOTPROD)
+
+#if defined(__AMX_TILE__)
+/**
+ *  Most modern chip vendors introduce specialized instructions for matrix
+ *  multiplications! On Intel (unlike AMD), they are called Advanced Matrix
+ *  Extensions @b (AMX).
+ *
+ *  There are 8 specialized @b TMM registers, most compilers don't even have
+ *  working intrinsics for them, but even writing Assembly is not enough to
+ *  use them - you need to instruct the Linux kernel to enable them.
+ */
+
+bool enable_amx() {
+    constexpr int _SYS_arch_prctl = 158;
+    constexpr int ARCH_REQ_XCOMP_PERM = 0x1023;
+    constexpr int ARCH_GET_XCOMP_PERM = 0x1022;
+    constexpr int XFEATURE_XTILEDATA = 18;
+    constexpr int XFEATURE_XTILECFG = 17;
+    constexpr unsigned long XFEATURE_MASK_XTILE = (1UL << XFEATURE_XTILECFG) | (1UL << XFEATURE_XTILEDATA);
+    unsigned long bitmask = 0;
+
+    // Request `XTILEDATA` permission
+    if (syscall(_SYS_arch_prctl, ARCH_REQ_XCOMP_PERM, XFEATURE_XTILEDATA) != 0) return false;
+    // Validate `XTILEDATA` and `XTILECFG` permissions
+    if (syscall(_SYS_arch_prctl, ARCH_GET_XCOMP_PERM, &bitmask) != 0) return false;
+    return (bitmask & XFEATURE_MASK_XTILE) != 0;
+}
+
+void configure_amx() {
+    if (!enable_amx()) throw std::runtime_error("AMX not enabled!");
+
+    // Using Intel AMX instructions we can perform 16x32x16 brain-float
+    // multiplication using specialized matrix-multiplication hardware,
+    // accumulating the results in a 16x16 single-precision matrix.
+    // Alternatively we can perform 16x64x16 `int8` multiplications.
+    alignas(64) char tiles_config[64];
+
+    // Memset in one cycle, like a boss :)
+    // As opposed to: `std::memset(tiles_config, 0, sizeof(tiles_config))`.
+    _mm512_storeu_si512((__m512i *)tiles_config, _mm512_setzero_si512());
+
+    // Only one palette is currently supported:
+    std::uint8_t *palette_id_ptr = (std::uint8_t *)(&tiles_config[0]);
+    *palette_id_ptr = 1;
+
+    // The geniuses behind AMX decided to use different precisions for
+    // the rows and columns. Wasted 2 hours of my life not noticing this!
+    std::uint16_t *tiles_colsb_ptr = (std::uint16_t *)(&tiles_config[16]);
+    std::uint8_t *tiles_rows_ptr = (std::uint8_t *)(&tiles_config[48]);
+
+    // Important to note, AMX doesn't care about the real shape of our matrix,
+    // it only cares about it's own tile shape. Keep it simple, otherwise
+    // the next person reading this will be painting the walls with their brains :)
+    tiles_rows_ptr[0] = tiles_rows_ptr[1] = tiles_rows_ptr[2] = tiles_rows_ptr[3] = 16;
+    tiles_colsb_ptr[0] = tiles_colsb_ptr[1] = tiles_colsb_ptr[2] = tiles_colsb_ptr[3] = 64;
+    // If you forget to set any one of those, you'll see an "Illegal Instruction"!
+    tiles_rows_ptr[4] = tiles_rows_ptr[5] = tiles_rows_ptr[6] = tiles_rows_ptr[7] = 16;
+    tiles_colsb_ptr[4] = tiles_colsb_ptr[5] = tiles_colsb_ptr[6] = tiles_colsb_ptr[7] = 64;
+
+    // We will use 4 registers for inputs, and 4 registers for outputs
+    _tile_loadconfig(&tiles_config);
+    _tile_zero(4);
+    _tile_zero(5);
+    _tile_zero(6);
+    _tile_zero(7);
+}
+
+#if defined(__AMX_BF16__)
+extern "C" std::uint32_t tops_bf16_amx_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_amx, tops_bf16_amx_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_amx, tops_bf16_amx_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+#endif // defined(__AMX_BF16__)
+
+#if defined(__AMX_INT8__)
+extern "C" std::uint32_t tops_u8_amx_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, u8_amx, tops_u8_amx_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, u8_amx, tops_u8_amx_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+extern "C" std::uint32_t tops_i8_amx_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+#endif // defined(__AMX_INT8__)
+
+#endif // defined(__AMX_TILE__)
+
+/**
+ *  For starters, Nvidia H100, the most common GPU in current HPC workloads,
+ *  claims the following numbers for its scalar operations and tensor cores:
+ *
+ *                  Scalar Operations       Tensor Operations
+ *
+ *  - `f64`:        @b 34 Tera-OPS          @b 67 Tera-OPS
+ *  - `f32`:        @b 67 Tera-OPS          @b 989 Tera-OPS
+ *  - `bf16`:                               @b 1.9 Peta-OPS
+ *  - `f16`:                                @b 2.9 Peta-OPS
+ *  - `i8`:                                 @b 3.9 Peta-OPS
+ *
+ *  This requires up to 700 W of power. A typical high-end server CPU uses
+ *  under 500 W of power, and has similar number of cores to the GPUs number
+ *  of Streaming Multiprocessors @b (SMs). The CPU can also run at a higher
+ *  frequency, and has a larger cache, which is crucial for many workloads.
+ *  On a single CPU core, we can achieve the following FMA throughput:
+ *
+ *                          Intel Granite Rapids    AMD Zen4
+ *
+ *  - AVX-512 `f64`:        @b 1.5 Giga-OPS         @b 58 Giga-OPS
+ *  - AVX-512 `f32`:        @b 4.8 Giga-OPS         @b 117 Giga-OPS
+ *
+ *  - AVX-512 `bf16`:       @b 123 Giga-OPS         @b 235 Giga-OPS
+ *  - AVX-512 `f16`:        @b 357 Giga-OPS 🤯🤯
+ *  - AVX-512 `i8 • u8`:    @b 708 Giga-OPS         @b 470 Giga-Ops 🤯🤯
+ *
+ *  - AMX `bf16`:           @b 3.7 Tera-OPS
+ *  - AMX `i8` and `u8`:    @b 7.5 Tera-OPS 🤯🤯🤯
+ *
+ *  On a typical dual-socket system:
+ *
+ *                          Intel Granite Rapids    AMD Zen4
+ *
+ *  - AVX-512 `f64`:        @b ___ Tera-OPS         @b 9.3 Tera-OPS
+ *  - AVX-512 `f32`:        @b ___ Tera-OPS         @b 20.1 Tera-OPS
+ *
+ *  - AVX-512 `bf16`:       @b ___ Tera-OPS         @b 41.8 Tera-OPS
+ *  - AVX-512 `f16`:        @b ___ Tera-OPS         @b 39.6 Tera-Ops
+ *  - AVX-512 `i8 • u8`:    @b ___ Tera-OPS         @b 81.3 Tera-Ops
+ *
+ *  - AMX `bf16`:           @b __ Tera-OPS
+ *  - AMX `i8` and `u8`:    @b __ Tera-OPS
+ */
+#pragma endregion // Compute Bound Linear Algebra
+
+#pragma region // Port Interleaving and Latency Hiding
+
+/**
+ *  You may have noticed, that we sometimes have multiple pieces of silicon
+ *  with same functionality. If we know that different instructions are
+ *  executed on different ports (or execution units), we can interleave them
+ *  saturating the CPU even further!
+ */
+
+#if defined(__AVX512VNNI__) && defined(__AMX_INT8__)
+
+extern "C" std::uint32_t tops_i8u8_amx_avx512_asm_kernel(void);
+BENCHMARK_CAPTURE(theoretic_tops, i8u8_amx_avx512, tops_i8u8_amx_avx512_asm_kernel, configure_amx)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8u8_amx_avx512, tops_i8u8_amx_avx512_asm_kernel, configure_amx)
+    ->MinTime(10)
+    ->Threads(physical_cores());
+
+#endif // defined(__AVX512VNNI__) && defined(__AMX_INT8__)
+
+/**
+ *  Combining "AMX_INT8" and "AVX512_VNNI" instructions, we can grow
+ *  from 7.5 Tera-OPS and 708 Giga-OPS to @b 7.8 Tera-OPS. Granted, its not
+ *  a life-altering improvement, but in other applications it could be!
+ *
+ *  A great can be CRC32 hashing, combining dedicated `CRC32` and `VPCLMULQDQ`
+ *  instructions to achieve 31 GB/s throughput, hiding the latency of some
+ *  instructions while others execute on a different port.
+ *
+ *  - `CRC32 (R64, R64)`: 3 cycle latency on port 1 on Intel Ice Lake.
+ *  - `VPCLMULQDQ (ZMM, ZMM, ZMM, I8)`: 8 cycle latency, which starts execution
+ *    on ports 0 or 5 and retires from port 5 on the same CPU.
+ *
+ *  @see "Faster CRC32-C on x86" by Peter Cawley:
+ *       https://www.corsix.org/content/fast-crc32c-4k
+ *       https://github.com/corsix/fast-crc32
+ */
+
+#pragma endregion // Port Interleaving and Latency Hiding
+
+#pragma endregion // - Numerics
+
+#pragma region - Memory
 
 #pragma region Alignment of Memory Accesses
 
@@ -1724,7 +2116,101 @@ std::size_t parse_size_string(std::string const &str) {
 
 #pragma endregion // Non Uniform Memory Access
 
-#pragma endregion // - Numerics
+#pragma region Memory Bound Linear Algebra
+#include <cblas.h>
+
+template <typename scalar_type_>
+static void cblas_tops(bm::State &state) {
+    // BLAS expects leading dimensions: `lda` = `ldb` = `ldc` = `n` for square inputs.
+    std::size_t n = static_cast<std::size_t>(state.range(0));
+    int const lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
+
+    // Allocate and initialize data
+    std::vector<scalar_type_> a(n * n), b(n * n), c(n * n, 0);
+    std::iota(a.begin(), a.end(), 0);
+    std::iota(b.begin(), b.end(), 0);
+
+    // BLAS defines GEMM routines as: alpha * a * b + beta * c
+    for (auto _ : state)
+        if constexpr (std::is_same_v<scalar_type_, float>)
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n, n, n, //
+                        /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
+                        /* beta: */ 0, c.data(), ldc);
+        else
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n, n, n, //
+                        /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
+                        /* beta: */ 0, c.data(), ldc);
+
+    std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.SetComplexityN(n);
+}
+
+BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+
+/**
+ *  Eigen is a high-level C++ library for linear algebra that provides a
+ *  convenient templated API for matrix operations.
+ *
+ *  @see Supported Preprocessor Directives:
+ *       https://eigen.tuxfamily.org/dox/TopicPreprocessorDirectives.html
+ */
+#define EIGEN_FAST_MATH 1             // Affects mostly trigonometry, less relevant for GEMM
+#define EIGEN_NO_IO 1                 // Faster compilation
+#define EIGEN_NO_AUTOMATIC_RESIZING 1 // Cleaner logic
+#include <Eigen/Dense>
+
+template <typename scalar_type_>
+static void eigen_tops(bm::State &state) {
+    // Matrix dimension
+    std::size_t n = static_cast<std::size_t>(state.range(0));
+
+    // Allocate Eigen matrices
+    Eigen::Matrix<scalar_type_, Eigen::Dynamic, Eigen::Dynamic> a(n, n);
+    Eigen::Matrix<scalar_type_, Eigen::Dynamic, Eigen::Dynamic> b(n, n);
+    Eigen::Matrix<scalar_type_, Eigen::Dynamic, Eigen::Dynamic> c(n, n);
+    std::iota(a.data(), a.data() + (n * n), scalar_type_(0));
+    std::iota(b.data(), b.data() + (n * n), scalar_type_(0));
+
+    for (auto _ : state) {
+        c.noalias() = a * b;         // `noalias()` avoids temporary accumulation overhead
+        bm::DoNotOptimize(c.data()); // prevent compiler from optimizing out
+    }
+
+    std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.counters["TOPS"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.SetComplexityN(n);
+}
+
+BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+
+/**
+ *  Arm provides C language extensions for half-precision numbers, like
+ *  the @b `__fp16` and @b `__bf16` types. When `__ARM_BF16_FORMAT_ALTERNATIVE`
+ *  is defined to 1 the only scalar instructions available are conversion
+ *  intrinsics between `bfloat16_t` and `float32_t`.
+ *
+ *  @see Arm C extensions: https://developer.arm.com/documentation/101028/0010/C-language-extensions?lang=en
+ */
+#if defined(__ARM_FEATURE_FP16_FML) && defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC)
+#include <arm_fp16.h>
+BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+#endif
+
+#if defined(__ARM_FEATURE_BF16)
+#include <arm_bf16.h>
+BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+#endif
+
+/**
+ *  Now we can compare the theoretical limits to the actual performance
+ *  of Eigen and BLAS libraries.
+ */
+#pragma endregion // Memory Bound Linear Algebra
+
+#pragma endregion // - Memory
 
 #pragma region - Pipelines and Abstractions
 
@@ -2444,16 +2930,17 @@ BENCHMARK(packaging_stl_any)->MinTime(2);
  *       https://github.com/ashvardanian/stringzilla?tab=readme-ov-file#memory-ownership-and-small-string-optimization
  */
 
-static void small_string(bm::State &state) {
+static void construct_string(bm::State &state) {
     std::size_t length = static_cast<std::size_t>(state.range(0));
     for (auto _ : state) bm::DoNotOptimize(std::string(length, 'x'));
 }
 
 // clang-format off
-BENCHMARK(small_string)
+BENCHMARK(construct_string)
     ->Arg(7)->Arg(8)->Arg(15)->Arg(16)
     ->Arg(22)->Arg(23)->Arg(24)->Arg(25)
-    ->Arg(31)->Arg(32)->Arg(33);
+    ->Arg(31)->Arg(32)->Arg(33)
+    ->Name("construct_string/length=");
 // clang-format on
 
 /**
