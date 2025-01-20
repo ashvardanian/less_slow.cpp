@@ -16,17 +16,22 @@ Some of the highlights include:
 
 - __100x cheaper random inputs?!__ Discover how input generation sometimes costs more than the algorithm.
 - __40x faster trigonometry:__ Speed-up standard library functions like [`std::sin`](https://en.cppreference.com/w/cpp/numeric/math/sin) in just 3 lines of code.
-- __4x faster logic with [`std::ranges`](https://en.cppreference.com/w/cpp/ranges):__ Reduce stack usage and reuse registers more efficiently.
+- __4x faster lazy-logic__ with custom [`std::ranges`](https://en.cppreference.com/w/cpp/ranges) and iterators!
 - __Compiler optimizations beyond `-O3`:__ Learn about less obvious flags and techniques for another 2x speedup.
 - __Multiplying matrices?__ Check how a 3x3x3 GEMM can be 70% slower than 4x4x4, despite 60% fewer ops.
+- __Scaling AI?__ Measure the gap between theoretical [ALU](https://en.wikipedia.org/wiki/Arithmetic_logic_unit) throughput and your [BLAS](https://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms).
 - __How many if conditions are too many?__ Test your CPU's branch predictor with just 10 lines of code.
-- __Prefer recursion to iteration?__ Measure the depth at which your algorithm with `SEGFAULT`.
-- __How not to build state machines:__ Compare `std::variant`, `virtual` functions, and C++20 coroutines.
-- __Scaling to many cores?__ Learn how to use OpenMP, Intel's oneTBB, or your custom thread pool.
-- __How to handle JSON avoiding memory allocations?__ Is it easier with C or C++ libraries?
-- __How to properly use associative containers__ with custom keys and transparent comparators?
-- __How to beat a hand-written parser__ with `consteval` RegEx engines?
+- __Prefer recursion to iteration?__ Measure the depth at which your algorithm with [`SEGFAULT`](https://en.wikipedia.org/wiki/Segmentation_fault).
+- __Why avoid exceptions?__ Take `std::error_code` or [`std::variant`](https://en.cppreference.com/w/cpp/utility/variant)-like wrappers?
+- __Scaling to many cores?__ Learn how to use [OpenMP](https://en.wikipedia.org/wiki/OpenMP), Intel's oneTBB, or your custom thread pool.
+- __How to handle [JSON](https://www.json.org/json-en.html) avoiding memory allocations?__ Is it easier with C++ 20 or old-school C 99 tools?
+- __How to properly use STL's associative containers__ with custom keys and transparent comparators?
+- __How to beat a hand-written parser__ with [`consteval`](https://en.cppreference.com/w/cpp/language/consteval) RegEx engines?
 - __Is the pointer size really 64 bits__ and how to exploit [pointer-tagging](https://en.wikipedia.org/wiki/Tagged_pointer)?
+- __How many packets is [UDP](https://www.cloudflare.com/learning/ddos/glossary/user-datagram-protocol-udp/) dropping__ and how to serve web requests in [`io_uring`](https://en.wikipedia.org/wiki/Io_uring) from user-space?
+- __Scatter and Gather__ for 50% faster vectorized disjoint memory operations.
+- __How to choose between intrinsics, inline Assembly, and separate `.S` files__ for your performance-critical code?
+- __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
 Follow the instructions below to run the code in your environment and compare it to the comments as you read through the source.
