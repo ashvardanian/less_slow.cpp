@@ -4698,17 +4698,17 @@ BENCHMARK(graph_rank<graph_flat_set>)->MinTime(10)->Name("graph_rank<absl::flat_
 #include <charconv>  // `std::from_chars`, `std::to_chars`
 #include <stdexcept> // `std::runtime_error`, `std::out_of_range`
 
-constexpr std::size_t fail_period_read_integer = 6;
-constexpr std::size_t fail_period_convert_to_integer = 11;
-constexpr std::size_t fail_period_next_string = 17;
-constexpr std::size_t fail_period_write_back = 23;
+constexpr std::size_t fail_period_read_integer_k = 6;
+constexpr std::size_t fail_period_convert_to_integer_k = 11;
+constexpr std::size_t fail_period_next_string_k = 17;
+constexpr std::size_t fail_period_write_back_k = 23;
 
 double get_max_value(std::vector<double> const &v) noexcept { return *(std::max_element(std::begin(v), std::end(v))); }
 
 static std::string read_integer_from_file_or_throw( //
     [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept(false) {
-    if (iteration_index % fail_period_read_integer == 0) throw std::runtime_error("File read failed");
-    if (iteration_index % fail_period_convert_to_integer == 0) return "abc";
+    if (iteration_index % fail_period_read_integer_k == 0) throw std::runtime_error("File read failed");
+    if (iteration_index % fail_period_convert_to_integer_k == 0) return "abc";
     // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
     // but given the Small String Optimization, it shouldn't happen in practice.
     return "1";
@@ -4728,7 +4728,7 @@ static std::size_t string_to_integer_or_throw( //
 }
 
 static std::string integer_to_next_string_or_throw(std::size_t value, std::size_t iteration_index) noexcept(false) {
-    if (iteration_index % fail_period_next_string == 0) throw std::runtime_error("Increment failed");
+    if (iteration_index % fail_period_next_string_k == 0) throw std::runtime_error("Increment failed");
     value++;
     constexpr std::size_t buffer_size = 10;
     char buffer[buffer_size] {};
@@ -4740,7 +4740,7 @@ static std::string integer_to_next_string_or_throw(std::size_t value, std::size_
 static void write_to_file_or_throw( //
     [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
     std::size_t iteration_index) noexcept(false) {
-    if (iteration_index % fail_period_write_back == 0) throw std::runtime_error("File write failed");
+    if (iteration_index % fail_period_write_back_k == 0) throw std::runtime_error("File write failed");
 }
 
 static void errors_throw(bm::State &state) {
@@ -4791,8 +4791,8 @@ class expected {
 
 static expected<std::string> read_integer_from_file_or_variants( //
     [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_read_integer == 0) return std::error_code {EIO, std::generic_category()};
-    if (iteration_index % fail_period_convert_to_integer == 0) return "abc"s;
+    if (iteration_index % fail_period_read_integer_k == 0) return std::error_code {EIO, std::generic_category()};
+    if (iteration_index % fail_period_convert_to_integer_k == 0) return "abc"s;
     // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
     // but given the Small String Optimization, it shouldn't happen in practice.
     return "1"s;
@@ -4808,7 +4808,7 @@ static expected<std::size_t> string_to_integer_or_variants( //
 
 static expected<std::string> integer_to_next_string_or_variants(std::size_t value,
                                                                 std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_next_string == 0) return std::error_code {EIO, std::generic_category()};
+    if (iteration_index % fail_period_next_string_k == 0) return std::error_code {EIO, std::generic_category()};
     value++;
     constexpr std::size_t buffer_size = 10;
     char buffer[buffer_size] {};
@@ -4820,7 +4820,7 @@ static expected<std::string> integer_to_next_string_or_variants(std::size_t valu
 static std::error_code write_to_file_or_variants( //
     [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
     std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_write_back == 0) return std::error_code {EIO, std::generic_category()};
+    if (iteration_index % fail_period_write_back_k == 0) return std::error_code {EIO, std::generic_category()};
     return std::error_code {};
 }
 
@@ -4869,8 +4869,8 @@ struct result {
 
 static result<std::string> read_integer_from_file_with_status( //
     [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_read_integer == 0) return {{}, status::read_failed};
-    if (iteration_index % fail_period_convert_to_integer == 0) return {"abc"s, status::success};
+    if (iteration_index % fail_period_read_integer_k == 0) return {{}, status::read_failed};
+    if (iteration_index % fail_period_convert_to_integer_k == 0) return {"abc"s, status::success};
     // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
     // but given the Small String Optimization, it shouldn't happen in practice.
     return {"1"s, status::success};
@@ -4885,7 +4885,7 @@ static result<std::size_t> string_to_integer_with_status( //
 }
 
 static result<std::string> integer_to_next_string_with_status(std::size_t value, std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_next_string == 0) return {{}, status::increment_failed};
+    if (iteration_index % fail_period_next_string_k == 0) return {{}, status::increment_failed};
     value++;
     constexpr std::size_t buffer_size = 10;
     char buffer[buffer_size] {};
@@ -4897,7 +4897,7 @@ static result<std::string> integer_to_next_string_with_status(std::size_t value,
 static status write_to_file_with_status( //
     [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
     std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_write_back == 0) return status::write_failed;
+    if (iteration_index % fail_period_write_back_k == 0) return status::write_failed;
     return status::success;
 }
 
