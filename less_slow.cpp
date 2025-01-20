@@ -1755,7 +1755,7 @@ BENCHMARK_CAPTURE(theoretic_tops, i8u8_amx_avx512, tops_i8u8_amx_avx512_asm_kern
 #include <cassert>  // `assert`
 #include <fstream>  // `std::ifstream`
 #include <iterator> // `std::random_access_iterator_tag`
-#include <memory>   // `std::assume_aligned`
+#include <memory>   // `std::assume_aligned`, `std::unique_ptr`
 #include <string>   // `std::string`, `std::stoull`
 
 /**
@@ -1863,6 +1863,13 @@ class strided_ptr {
     // clang-format on
 };
 
+template <typename type_>
+std::unique_ptr<type_[], decltype(&std::free)> make_aligned_array(std::size_t size, std::size_t alignment) {
+    type_ *raw_ptr = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size));
+    if (!raw_ptr) throw std::bad_alloc();
+    return std::unique_ptr<type_[], decltype(&std::free)>(raw_ptr, &std::free);
+}
+
 #if defined(__aarch64__)
 /**
  *  @brief  Helper derived from `__aarch64_sync_cache_range` in `libgcc`, used to
@@ -1887,9 +1894,7 @@ static void memory_access(bm::State &state) {
     // memory accesses may suffer from the same issues. For split-loads, pad our
     // buffer with an extra `cache_line_width` bytes of space.
     std::size_t const buffer_size = typical_l2_size + cache_line_width;
-    std::unique_ptr<std::byte, decltype(&std::free)> const buffer(                        //
-        reinterpret_cast<std::byte *>(std::aligned_alloc(cache_line_width, buffer_size)), //
-        &std::free);
+    auto const buffer = make_aligned_array<std::byte>(buffer_size, cache_line_width);
     std::byte *const buffer_ptr = buffer.get();
 
     // Let's initialize a strided range using out `strided_ptr` template, but
@@ -1931,6 +1936,168 @@ BENCHMARK(memory_access_aligned)->MinTime(10);
  */
 
 #pragma endregion // Alignment of Memory Accesses
+
+#pragma region Gather & Scatter Operations for Spread Data
+
+/**
+ *  Sometimes, the variables of interest are scattered across memory, and we
+ *  need to gather them into a contiguous buffer for processing. This is already
+ *  common in sparse matrix operations, where only a few elements are non-zero,
+ *  but can apply to any irregular data structure...
+ *
+ *  The only question is: is there some smart way to gather these elements?
+ *
+ *  Our benchmarks is following - generate 32-bit unsigned integers from 0 to N,
+ *  random-shuffle and use them as gathering indices. For scatter operations,
+ *  we will use the same indicies to overwrite information in a separate buffer.
+ *
+ *  We will be looking at the ideal simplest case when the offset type and the
+ *  data have identical size.
+ */
+using spread_index_t = std::uint32_t;
+using spread_data_t = float;
+
+/**
+ * @brief Perform a scalar gather operation.
+ * @param data The data buffer to gather from.
+ * @param indices The indices used to gather data.
+ * @param result The buffer where gathered data will be stored.
+ * @param size The number of elements to process.
+ */
+void spread_gather_scalar( //
+    spread_data_t const *data, spread_index_t const *indices, spread_data_t *result, std::size_t size) noexcept {
+    for (std::size_t i = 0; i < size; ++i) result[i] = data[indices[i]];
+}
+
+/**
+ * @brief Perform a scalar scatter operation.
+ * @param data The buffer to scatter data into.
+ * @param indices The indices used to scatter data.
+ * @param source The buffer containing data to scatter.
+ * @param size The number of elements to process.
+ */
+void spread_scatter_scalar( //
+    spread_data_t *data, spread_index_t const *indices, spread_data_t const *source, std::size_t size) noexcept {
+    for (std::size_t i = 0; i < size; ++i) data[indices[i]] = source[i];
+}
+
+template <typename kernel_type_>
+static void spread_memory(bm::State &state, kernel_type_ kernel, std::size_t align = sizeof(spread_data_t)) {
+
+    std::size_t const size = static_cast<std::size_t>(state.range(0));
+    auto indices = make_aligned_array<spread_index_t>(size, align);
+    auto first = make_aligned_array<spread_data_t>(size, align);
+    auto second = make_aligned_array<spread_data_t>(size, align);
+
+    std::iota(indices.get(), indices.get() + size, 0);
+    std::random_device random_device;
+    std::mt19937 generator(random_device());
+    std::shuffle(indices.get(), indices.get() + size, generator);
+
+    for (auto _ : state) kernel(first.get(), indices.get(), second.get(), size);
+}
+
+BENCHMARK_CAPTURE(spread_memory, gather_scalar, spread_gather_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, scatter_scalar, spread_scatter_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
+
+#if defined(__AVX512F__)
+void spread_gather_avx512( //
+    spread_data_t const *data, spread_index_t const *indices, spread_data_t *result, std::size_t size) {
+    constexpr std::size_t simd_width_k = sizeof(__m512i) / sizeof(spread_data_t);
+    static_assert( //
+        sizeof(spread_data_t) == sizeof(spread_index_t), "Data and index types must have the same size");
+    std::size_t i = 0;
+    for (; i + simd_width_k <= size; i += simd_width_k)
+        _mm512_storeu_si512(&result[i], _mm512_i32gather_epi32(_mm512_loadu_si512(&indices[i]), data, 4));
+    for (; i < size; ++i) result[i] = data[indices[i]];
+}
+
+void spread_scatter_avx512( //
+    spread_data_t *data, spread_index_t const *indices, spread_data_t const *source, std::size_t size) {
+    constexpr std::size_t simd_width_k = sizeof(__m512i) / sizeof(spread_data_t);
+    static_assert( //
+        sizeof(spread_data_t) == sizeof(spread_index_t), "Data and index types must have the same size");
+    std::size_t i = 0;
+    for (; i + simd_width_k <= size; i += simd_width_k)
+        _mm512_i32scatter_epi32(data, _mm512_loadu_si512(&indices[i]), _mm512_loadu_si512(&source[i]), 4);
+    for (; i < size; ++i) data[indices[i]] = source[i];
+}
+
+BENCHMARK_CAPTURE(spread_memory, gather_avx512, spread_gather_avx512, 64)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, scatter_avx512, spread_scatter_avx512, 64)->Range(1 << 10, 1 << 20)->MinTime(5);
+
+/**
+ *  For consistent timing, for AVX-512 we align allocations to the ZMM register
+ *  size, which also coincides with the cache line width on x86 CPUs: @b 64!
+ *
+ *  For short arrays under 4K elements, gathers can get up to 50% faster,
+ *  dropping from @b 270ns to @b 136ns. On larger sizes gather can @b lose
+ *  to serial code. Like on arrays of 65K entries it can be 50% slower!
+ *  Scatters are even more questionable!
+ */
+#endif
+
+#if defined(__ARM_FEATURE_SVE) // Arm NEON has no gather/scatter instructions, but SVE does 🥳
+
+/**
+ *  Arm Scalable Vector Extension @b (SVE) is one of the weirdest current SIMD
+ *  extensions. Unlike AVX2, AVX-512, or even RVV on RISC-V, it doesn't preset
+ *  the register width at the ISA level! It's up to the physical implementation
+ *  to choose any power of two between 128 and @b 2048 bits.
+ *
+ *  In practice, Fugaku supercomputer likely has the largest SVE implementation
+ *  at 512-bits length. The Arm Neoverse N2 core has 256-bit SVE. It also
+ *  handles masking differently from AVX-512! Definitely worth reading about!
+ *
+ *  @see "ARM's Scalable Vector Extensions: A Critical Look at SVE2 For Integer
+ *       Workloads" by @ zingaburga:
+ *       https://gist.github.com/zingaburga/805669eb891c820bd220418ee3f0d6bd
+ *
+ */
+#include <arm_sve.h>
+
+constexpr std::size_t max_sve_size_k = 2048 / CHAR_BIT;
+
+void spread_gather_sve( //
+    spread_data_t const *data, spread_index_t const *indices, spread_data_t *result, std::size_t size) {
+    for (std::size_t i = 0; i < size; i += svcntw()) {
+        svbool_t pg = svwhilelt_b32(i, size);
+        svuint32_t sv_indices = svld1(pg, &indices[i]);
+        svfloat32_t sv_data = svld1_gather_offset(pg, data, sv_indices);
+        svst1(pg, &result[i], sv_data);
+    }
+}
+
+void spread_scatter_sve( //
+    spread_data_t *data, spread_index_t const *indices, spread_data_t const *source, std::size_t size) {
+    for (std::size_t i = 0; i < size; i += svcntw()) {
+        svbool_t pg = svwhilelt_b32(i, size);
+        svuint32_t sv_indices = svld1(pg, &indices[i]);
+        svfloat32_t sv_data = svld1(pg, &source[i]);
+        svst1_scatter_offset(pg, data, sv_indices, sv_data);
+    }
+}
+
+BENCHMARK_CAPTURE(spread_memory, gather_sve, spread_gather_sve, max_sve_size_k)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, scatter_sve, spread_scatter_sve, max_sve_size_k)->Range(1 << 10, 1 << 20)->MinTime(5);
+
+/**
+ *  @b Finally! This may just be the first place where SVE supersedes NEON
+ *  in functionality and may have a bigger improvement over scalar code than
+ *  AVX-512 on a similar-level x86 platform!
+ *
+ *  If you are very lucky with your input sizes, on small arrays under 65K
+ *  on AWS Graviton, gathers can be up to 4x faster compared to serial code!
+ *  On larger sizes, they again start losing to serial code. This makes
+ *  their applicability very limited 😡
+ *
+ *  Vectorized scatters are universally slower than serial code on Graviton
+ *  for small inputs, but on larger ones over 1MB start winning up to 50%!
+ *  Great way to get everyone confused 🤬
+ */
+#endif
+
+#pragma endregion // Gather & Scatter Operations for Spread Data
 
 #pragma region Non Uniform Memory Access
 
@@ -3263,7 +3430,7 @@ inline std::byte *reallocate_from_arena( //
         }
     }
 
-    // If we can’t grow in place, do: allocate new + copy + free old
+    // If we can't grow in place, do: allocate new + copy + free old
     std::byte *new_ptr = allocate_from_arena(arena, new_size);
     if (!new_ptr) return nullptr; // Out of memory
 
