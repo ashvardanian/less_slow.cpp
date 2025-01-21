@@ -5224,6 +5224,11 @@ std::string execute_system_call(std::string const &command) {
     return result;
 }
 
+std::string raise_system_error(std::string const &message) {
+    std::string error_message = message + ": " + std::strerror(errno) + " (" + std::to_string(errno) + ")";
+    throw std::runtime_error(error_message);
+}
+
 std::string fetch_public_ip() {
 #if defined(__linux__)
     // Try Linux approach
@@ -5277,40 +5282,46 @@ class echo_libc_server {
   public:
     echo_libc_server(std::string const &address, std::uint16_t port, std::size_t max_concurrency)
         : buffers_(max_concurrency), should_stop_(false) {
+
         // Initialize socket
         socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (socket_fd_ < 0) throw std::runtime_error("Failed to create socket");
+        if (socket_fd_ < 0) raise_system_error("Failed to create socket");
+
+        // Allow port reuse
+        int opt = 1;
+        if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+            raise_system_error("Failed to set SO_REUSEADDR");
 
         // Bind to address and port
         server_addr_.sin_family = AF_INET;
         server_addr_.sin_addr.s_addr = inet_addr(address.c_str());
         server_addr_.sin_port = htons(port);
-
         if (bind(socket_fd_, reinterpret_cast<sockaddr *>(&server_addr_), sizeof(server_addr_)) < 0)
-            throw std::runtime_error("Failed to bind socket");
+            raise_system_error("Failed to bind socket");
 
         // Let's make sure we don't block forever on `recvfrom`
         struct timeval duration;
         duration.tv_sec = 0;
         duration.tv_usec = to_microseconds(echo_batch_timeout_k).count();
         if (setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
-            throw std::runtime_error("Failed to set sockets batch timeout");
+            raise_system_error("Failed to set sockets batch timeout");
     }
 
-    ~echo_libc_server() { close(socket_fd_); }
+    ~echo_libc_server() noexcept { close(socket_fd_); }
 
-    void stop() { should_stop_.store(true, std::memory_order_relaxed); }
+    void stop() noexcept { should_stop_.store(true, std::memory_order_relaxed); }
 
-    void operator()() {
-        sockaddr_in client_addr;
-        socklen_t client_len = sizeof(client_addr);
+    void operator()() noexcept {
+        sockaddr_in client_address;
+        socklen_t client_len = sizeof(client_address);
 
         while (!should_stop_.load(std::memory_order_relaxed)) {
             for (auto &buffer : buffers_) {
                 ssize_t received = recvfrom(socket_fd_, buffer.data(), buffer.size(), 0,
-                                            reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+                                            reinterpret_cast<sockaddr *>(&client_address), &client_len);
                 if (received <= 0) continue;
-                sendto(socket_fd_, buffer.data(), received, 0, reinterpret_cast<sockaddr *>(&client_addr), client_len);
+                sendto(socket_fd_, buffer.data(), received, 0, reinterpret_cast<sockaddr *>(&client_address),
+                       client_len);
             }
         }
     }
@@ -5326,7 +5337,7 @@ class echo_libc_client {
         : buffers_(concurrency) {
         // Initialize socket
         socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (socket_fd_ < 0) throw std::runtime_error("Failed to create socket");
+        if (socket_fd_ < 0) raise_system_error("Failed to create socket");
 
         // Resolve server address
         server_addr_.sin_family = AF_INET;
@@ -5338,15 +5349,15 @@ class echo_libc_client {
         duration.tv_sec = 0;
         duration.tv_usec = to_microseconds(echo_batch_timeout_k).count();
         if (setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
-            throw std::runtime_error("Failed to set sockets batch timeout");
+            raise_system_error("Failed to set sockets batch timeout");
 
         // Fill buffers with data
         for (auto &buf : buffers_) buf.fill('X');
     }
 
-    ~echo_libc_client() { close(socket_fd_); }
+    ~echo_libc_client() noexcept { close(socket_fd_); }
 
-    echo_batch_result operator()() {
+    echo_batch_result operator()() noexcept {
         echo_batch_result result;
 
         sockaddr_in reply_addr;
@@ -5440,7 +5451,312 @@ BENCHMARK_CAPTURE(echo_libc, public, networking_route_t::public_k, //
 
 #pragma region IO Uring
 
-#include <liburing.h> // `liburing`
+/**
+ *  Uses:
+ *  - `IORING_OP_RECVMSG`, `IORING_OP_SENDMSG`: since 5.3
+ *  - `IORING_OP_LINK_TIMEOUT`: since 5.5
+ *
+ *  @see Opcode docs: https://man7.org/linux/man-pages/man2/io_uring_enter2.2.html
+ *
+ *  TODO: Future work may include:
+ *  - `io_uring_prep_recvmsg_multishot`
+ *  - `io_uring_prep_sendmsg_zc`
+ */
+#include <liburing.h> // `io_uring`
+
+class echo_uring_server {
+
+    /**
+     *  @brief  Wraps the `echo_buffer_t` with metadata about the client address.
+     */
+    struct addressed_buffer_t {
+        struct msghdr header;
+        struct iovec io_vec;
+        sockaddr_in client_address;
+        echo_buffer_t buffer;
+    };
+
+    int socket_fd_;
+    sockaddr_in server_addr_;
+    std::atomic_bool should_stop_;
+    io_uring ring_;
+
+    // Pre-allocated resources
+    std::vector<addressed_buffer_t> addressed_buffers_;
+
+  public:
+    echo_uring_server(std::string const &address, std::uint16_t port, std::size_t max_concurrency)
+        : should_stop_(false), addressed_buffers_(max_concurrency) {
+
+        // Initialize socket
+        socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (socket_fd_ < 0) raise_system_error("Failed to create socket");
+
+        // Allow port reuse
+        int opt = 1;
+        if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+            raise_system_error("Failed to set SO_REUSEADDR");
+
+        // Bind to address and port
+        server_addr_.sin_family = AF_INET;
+        server_addr_.sin_addr.s_addr = inet_addr(address.c_str());
+        server_addr_.sin_port = htons(port);
+        if (bind(socket_fd_, reinterpret_cast<sockaddr *>(&server_addr_), sizeof(server_addr_)) < 0)
+            raise_system_error("Failed to bind socket");
+
+        // Initialize io_uring with one slot for each receive/send operation
+        if (io_uring_queue_init(max_concurrency * 2, &ring_, 0) < 0)
+            raise_system_error("Failed to initialize io_uring");
+
+        // Initialize message resources
+        for (addressed_buffer_t &addressed_buffer : addressed_buffers_) {
+            memset(&addressed_buffer.header, 0, sizeof(addressed_buffer.header));
+            addressed_buffer.header.msg_name = &addressed_buffer.client_address;
+            addressed_buffer.header.msg_namelen = sizeof(sockaddr_in);
+            // Each message will be made of just one buffer
+            addressed_buffer.header.msg_iov = &addressed_buffer.io_vec;
+            addressed_buffer.header.msg_iovlen = 1;
+            // ... and that buffer is a member of our `addressed_buffer`
+            addressed_buffer.io_vec.iov_base = addressed_buffer.buffer.data();
+            addressed_buffer.io_vec.iov_len = addressed_buffer.buffer.size();
+        }
+    }
+
+    ~echo_uring_server() noexcept {
+        close(socket_fd_);
+        io_uring_queue_exit(&ring_);
+    }
+
+    void stop() noexcept { should_stop_.store(true, std::memory_order_relaxed); }
+
+    void operator()() noexcept {
+        // Submit initial receive operations
+        for (addressed_buffer_t &addressed_buffer : addressed_buffers_) {
+            struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_recvmsg(receive_entry, socket_fd_, &addressed_buffer.header, 0);
+            io_uring_sqe_set_data(receive_entry, &addressed_buffer);
+        }
+
+        io_uring_submit(&ring_);
+
+        while (!should_stop_.load(std::memory_order_relaxed)) {
+            struct io_uring_cqe *completed_entry;
+            bool completed_something = io_uring_wait_cqe(&ring_, &completed_entry) == 0;
+            if (!completed_something) continue;
+
+            int received_length = completed_entry->res; //? Should contain the number of bytes received
+            addressed_buffer_t &addressed_buffer =
+                *static_cast<addressed_buffer_t *>(io_uring_cqe_get_data(completed_entry));
+            if (received_length > 0) { // Successful receive
+                // Prepare send operation
+                struct io_uring_sqe *send_entry = io_uring_get_sqe(&ring_);
+                io_uring_prep_sendmsg(send_entry, socket_fd_, &addressed_buffer.header, 0);
+                io_uring_sqe_set_data(send_entry, &addressed_buffer);
+
+                // Prepare next receive
+                memset(&addressed_buffer.header, 0, sizeof(addressed_buffer.header));
+                struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
+                io_uring_prep_recvmsg(receive_entry, socket_fd_, &addressed_buffer.header, 0);
+                io_uring_sqe_set_data(receive_entry, &addressed_buffer);
+            }
+
+            io_uring_cqe_seen(&ring_, completed_entry);
+            io_uring_submit(&ring_);
+        }
+    }
+};
+
+class echo_uring_client {
+    enum class message_status_t {
+        pending,
+        sent,
+        received,
+    };
+    struct addressed_buffer_t {
+        struct msghdr header;
+        struct iovec io_vec;
+        echo_buffer_t buffer;
+        std::chrono::steady_clock::time_point send_time;
+        message_status_t status = message_status_t::pending;
+    };
+
+    int socket_fd_;
+    sockaddr_in server_addr_;
+    io_uring ring_;
+
+    // Pre-allocated resources
+    std::vector<addressed_buffer_t> addressed_buffers_;
+    addressed_buffer_t timeout_resource_;
+
+  public:
+    echo_uring_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
+        : addressed_buffers_(concurrency) {
+        // Initialize socket
+        socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (socket_fd_ < 0) raise_system_error("Failed to create socket");
+
+        // Resolve server address
+        server_addr_.sin_family = AF_INET;
+        server_addr_.sin_addr.s_addr = inet_addr(server_addr.c_str());
+        server_addr_.sin_port = htons(port);
+
+        // Initialize io_uring with one slot for each send/receive/timeout operation
+        if (io_uring_queue_init(concurrency * 3, &ring_, 0) < 0) raise_system_error("Failed to initialize io_uring");
+
+        // Initialize message resources
+        for (addressed_buffer_t &addressed_buffer : addressed_buffers_) {
+            memset(&addressed_buffer.header, 0, sizeof(addressed_buffer.header));
+            addressed_buffer.header.msg_name = &server_addr_;
+            addressed_buffer.header.msg_namelen = sizeof(server_addr_);
+            // Each message will be made of just one buffer
+            addressed_buffer.header.msg_iov = &addressed_buffer.io_vec;
+            addressed_buffer.header.msg_iovlen = 1;
+            // ... and that buffer is a member of our `addressed_buffer`
+            addressed_buffer.io_vec.iov_base = addressed_buffer.buffer.data();
+            addressed_buffer.io_vec.iov_len = addressed_buffer.buffer.size();
+            // Initialize the buffer with some data
+            addressed_buffer.buffer.fill('X');
+            addressed_buffer.status = message_status_t::pending;
+        }
+    }
+
+    ~echo_uring_client() noexcept {
+        close(socket_fd_);
+        io_uring_queue_exit(&ring_);
+    }
+
+    echo_batch_result operator()() noexcept {
+        echo_batch_result result;
+
+        auto const batch_start_time = std::chrono::steady_clock::now();
+        auto const batch_deadline = batch_start_time + echo_batch_timeout_k;
+
+        struct __kernel_timespec batch_timeout;
+        {
+            auto const batch_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(echo_batch_timeout_k);
+            batch_timeout.tv_sec = static_cast<__s64>(batch_ns.count() / 1'000'000'000);
+            batch_timeout.tv_nsec = static_cast<__s64>(batch_ns.count() % 1'000'000'000);
+        }
+        struct __kernel_timespec packet_timeout;
+        {
+            auto const packet_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(echo_packet_timeout_k);
+            packet_timeout.tv_sec = static_cast<__s64>(packet_ns.count() / 1'000'000'000);
+            packet_timeout.tv_nsec = static_cast<__s64>(packet_ns.count() % 1'000'000'000);
+        }
+        batch_timeout.tv_sec = 1;
+        packet_timeout.tv_sec = 1;
+
+        // Submit tasks
+        for (auto &res : addressed_buffers_) {
+
+            // Prepare send operation
+            auto *submitted_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_sendmsg(submitted_entry, socket_fd_, &res.header, 0);
+            io_uring_sqe_set_data(submitted_entry, &res);
+            io_uring_sqe_set_flags(submitted_entry, IOSQE_IO_LINK); // Don't receive before sending :)
+            res.send_time = std::chrono::steady_clock::now();
+            res.status = message_status_t::pending;
+
+            // Prepare receive operation
+            submitted_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_recvmsg(submitted_entry, socket_fd_, &res.header, 0);
+            io_uring_sqe_set_data(submitted_entry, &res);           // Attach to the same resource
+            io_uring_sqe_set_flags(submitted_entry, IOSQE_IO_LINK); // Link to timeout!
+
+            // Timeout operation
+            submitted_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_link_timeout(submitted_entry, &packet_timeout, IORING_TIMEOUT_BOOTTIME);
+            io_uring_sqe_set_data(submitted_entry, &timeout_resource_);
+            result.sent_packets++;
+        }
+        io_uring_submit(&ring_);
+
+        // Wait until all packets are received or the batch times out
+        std::size_t failed_packets = 0;
+        while (result.received_packets + failed_packets < result.sent_packets &&
+               std::chrono::steady_clock::now() < batch_deadline) {
+
+            // Process the replies in batches to minimize the cost of synchronization and timing
+            constexpr std::size_t completed_entries_batch_k = 64;
+            struct io_uring_cqe *completed_entries[completed_entries_batch_k];
+            int completed_count =
+                io_uring_wait_cqes(&ring_, &completed_entries[0], completed_entries_batch_k, &batch_timeout, NULL);
+            if (completed_count < 0) continue;
+
+            for (int i = 0; i != completed_count; ++i) {
+                struct io_uring_cqe *completed_entry = completed_entries[i];
+                addressed_buffer_t &addressed_buffer =
+                    *static_cast<addressed_buffer_t *>(io_uring_cqe_get_data(completed_entry));
+                int completion_code = completed_entry->res;
+                if (&addressed_buffer == &timeout_resource_) { continue; } // We don't care about timeouts
+                else if (completion_code < 0) { failed_packets++; }        // Failed operation
+                else {                                                     // Successful operation
+                    if (addressed_buffer.status == message_status_t::pending) {
+                        addressed_buffer.status = message_status_t::sent;
+                    }
+                    else { // Received a reply:
+                        auto now = std::chrono::steady_clock::now();
+                        auto diff = now - addressed_buffer.send_time;
+                        result.batch_latency += diff;
+                        result.max_packet_latency = std::max(result.max_packet_latency, diff);
+                        result.received_packets++;
+                    }
+                }
+                io_uring_cqe_seen(&ring_, completed_entries[i]);
+            }
+        }
+
+        result.batch_latency = std::chrono::steady_clock::now() - batch_start_time;
+        return result;
+    }
+};
+
+static void echo_uring(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+    std::string address = route == networking_route_t::loopback_k ? "127.0.0.1" : fetch_public_ip();
+
+    // Create server and client
+    echo_uring_server server(address, echo_server_port_k + 1, batch_size);
+    echo_uring_client client(address, echo_server_port_k + 1, batch_size);
+
+    std::thread server_thread(std::ref(server));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Benchmark round-trip time
+    echo_batch_result stats;
+    for (auto _ : state) {
+        echo_batch_result batch_stats = client();
+        stats += batch_stats;
+        state.SetIterationTime(
+            std::chrono::duration_cast<std::chrono::duration<double>>(batch_stats.batch_latency).count());
+    }
+
+    server.stop();
+    server_thread.join();
+
+    // Process and report stats
+    auto const mean_batch_latency_us =
+        stats.received_packets ? to_microseconds(stats.batch_latency).count() * 1.0 / state.iterations() : 0.0;
+    auto const mean_packet_latency_us = to_microseconds(stats.batch_latency).count() * 1.0 / stats.received_packets;
+
+    state.SetItemsProcessed(stats.sent_packets);
+    state.SetBytesProcessed(stats.sent_packets * packet_size);
+    state.counters["drop,%"] = 100.0 * (stats.sent_packets - stats.received_packets) / stats.sent_packets;
+    state.counters["mean_batch_latency,us"] = mean_batch_latency_us;
+    state.counters["mean_packet_latency,us"] = mean_packet_latency_us;
+    state.counters["max_packet_latency,us"] = to_microseconds(stats.max_packet_latency).count();
+}
+
+BENCHMARK_CAPTURE(echo_uring, loopback, networking_route_t::loopback_k, 256 /* packets per batch */,
+                  1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()
+    ->Unit(benchmark::kMicrosecond);
+
+BENCHMARK_CAPTURE(echo_uring, public, networking_route_t::public_k, 256 /* packets per batch */,
+                  1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()
+    ->Unit(benchmark::kMicrosecond);
 
 #pragma endregion // IO Uring
 
