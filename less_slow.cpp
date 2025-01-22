@@ -5124,7 +5124,7 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  *  It often prohibits developers from designing larger systems in C++, as
  *  the Web, for example, requires a lot of dependencies.
  *
- *  Let's demystify the process by building an echo server and client,
+ *  Let's demystify the process by building an @b "echo" RPC server and client,
  *  starting them within the same process and measuring the round-trip time.
  *  This will teach us about the overhead of user-space vs kernel-space IO,
  *  and the network stack in general. To benchmark both the latency and
@@ -5178,16 +5178,16 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  *  @see "Asio 201 - timeouts, cancellation & custom tokens" by Klemens Morgenstern:
  *       https://cppalliance.org/asio/2023/01/02/Asio201Timeouts.html
  */
-constexpr std::chrono::milliseconds echo_batch_timeout_k = std::chrono::milliseconds(50);
-constexpr std::chrono::milliseconds echo_packet_timeout_k = std::chrono::milliseconds(1);
+constexpr std::chrono::milliseconds rpc_batch_timeout_k = std::chrono::milliseconds(50);
+constexpr std::chrono::milliseconds rpc_packet_timeout_k = std::chrono::milliseconds(1);
 
-struct echo_batch_result {
+struct rpc_batch_result {
     std::size_t sent_packets = 0;
     std::size_t received_packets = 0;
     std::chrono::nanoseconds batch_latency = std::chrono::nanoseconds::zero();
     std::chrono::nanoseconds max_packet_latency = std::chrono::nanoseconds::zero();
 
-    echo_batch_result &operator+=(echo_batch_result const &other) {
+    rpc_batch_result &operator+=(rpc_batch_result const &other) {
         sent_packets += other.sent_packets;
         received_packets += other.received_packets;
         batch_latency += other.batch_latency;
@@ -5208,9 +5208,9 @@ enum class networking_route_t { loopback_k, public_k };
  *  likely to be Ethernet, which has a MTU of 1500 bytes, but most routers are
  *  configured to fragment packets larger than 1460 bytes. Hence, our choice!
  */
-constexpr std::size_t echo_mtu_k = 1460;
-using echo_buffer_t = std::array<char, echo_mtu_k>;
-constexpr uint16_t echo_server_port_k = 12345;
+constexpr std::size_t rpc_mtu_k = 1460;
+using rpc_buffer_t = std::array<char, rpc_mtu_k>;
+constexpr uint16_t rpc_server_port_k = 12345;
 
 auto to_microseconds(auto duration) { return std::chrono::duration_cast<std::chrono::microseconds>(duration); }
 
@@ -5252,6 +5252,19 @@ std::string fetch_public_ip() {
 #endif
 }
 
+/**
+ *  @brief Emulates some message processing logic, that will update the `input` packet
+ *         and write the result to the `output` buffer, returning the output length.
+ *
+ *  This function will be called on the server size to reply each message.
+ *  It is also called on the client side to validate the received response.
+ */
+std::size_t packet_modify(char const *input, std::size_t input_length, char *output) {
+    // Echo the input packet back. Any wiser suggestions?
+    std::memcpy(output, input, input_length);
+    return input_length;
+}
+
 #pragma region POSIX
 
 /**
@@ -5273,116 +5286,161 @@ std::string fetch_public_ip() {
 #include <array>  // `std::array` for packet buffers
 #include <atomic> // `std::atomic_bool` for stopping the server
 
-class echo_libc_server {
-    int socket_fd_;
-    sockaddr_in server_addr_;
-    std::vector<echo_buffer_t> buffers_;
+struct addressed_socket_t {
+    int socket_descriptor;
+    sockaddr_in server_address;
+};
+
+/**
+ *  @brief  Opens the socket and binds it to the specified address and port.
+ *  @param  port The port to bind to.
+ *  @param  address The address to bind to. If "0.0.0.0" for IPv4 (or "::" for IPv6),
+ *          we bind to all interfaces, meaning we can receive packets from any network
+ *          interface. Binding to "127.0.0.1" (or "::1" for IPv6) will only allow
+ *          packets from the loopback interface, which can be handy for testing.
+ */
+addressed_socket_t rpc_server_socket(std::uint16_t port, std::string const &address = "0.0.0.0") {
+    addressed_socket_t server;
+    // Initialize socket
+    server.socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
+    if (server.socket_descriptor < 0) raise_system_error("Failed to create socket");
+
+    // Allow port reuse
+    int const socket_option = 1;
+    if (setsockopt(server.socket_descriptor, SOL_SOCKET, SO_REUSEADDR, &socket_option, sizeof(socket_option)) < 0)
+        raise_system_error("Failed to set SO_REUSEADDR");
+
+    // Bind to address and port
+    server.server_address.sin_family = AF_INET;
+    server.server_address.sin_addr.s_addr = inet_addr(address.c_str());
+    server.server_address.sin_port = htons(port);
+    if (bind(server.socket_descriptor, reinterpret_cast<sockaddr *>(&server.server_address),
+             sizeof(server.server_address)) < 0)
+        raise_system_error("Failed to bind socket");
+    return server;
+}
+
+/**
+ *  @brief  Opens the socket and resolves the server address.
+ *  @param  port The port to bind to on the server.
+ *  @param  address The address to bind to on the server.
+ */
+addressed_socket_t rpc_client_socket(std::string const &server_addr, std::uint16_t port) {
+    addressed_socket_t client;
+    // Initialize socket
+    client.socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
+    if (client.socket_descriptor < 0) raise_system_error("Failed to create socket");
+
+    // Resolve server address
+    client.server_address.sin_family = AF_INET;
+    client.server_address.sin_addr.s_addr = inet_addr(server_addr.c_str());
+    client.server_address.sin_port = htons(port);
+    return client;
+}
+
+/**
+ *  @brief  A minimal RPC @b server using LibC functionality to setup the UDP socket,
+ *          and synchronous blocking POSIX calls to receive and send packets -
+ *          @b one at a time!
+ */
+class rpc_libc_server {
+    int socket_descriptor_;
+    sockaddr_in server_address_;
     std::atomic_bool should_stop_;
 
   public:
-    echo_libc_server(std::string const &address, std::uint16_t port, std::size_t max_concurrency)
-        : buffers_(max_concurrency), should_stop_(false) {
-
-        // Initialize socket
-        socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (socket_fd_ < 0) raise_system_error("Failed to create socket");
-
-        // Allow port reuse
-        int opt = 1;
-        if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
-            raise_system_error("Failed to set SO_REUSEADDR");
-
-        // Bind to address and port
-        server_addr_.sin_family = AF_INET;
-        server_addr_.sin_addr.s_addr = inet_addr(address.c_str());
-        server_addr_.sin_port = htons(port);
-        if (bind(socket_fd_, reinterpret_cast<sockaddr *>(&server_addr_), sizeof(server_addr_)) < 0)
-            raise_system_error("Failed to bind socket");
+    rpc_libc_server(std::string const &server_address_str, std::uint16_t port, std::size_t max_concurrency)
+        : should_stop_(false) {
+        auto [socket_descriptor, server_address] = rpc_server_socket(port, server_address_str);
+        socket_descriptor_ = socket_descriptor;
+        server_address_ = server_address;
 
         // Let's make sure we don't block forever on `recvfrom`
         struct timeval duration;
         duration.tv_sec = 0;
-        duration.tv_usec = to_microseconds(echo_batch_timeout_k).count();
-        if (setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
+        duration.tv_usec = to_microseconds(rpc_batch_timeout_k).count();
+        if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
             raise_system_error("Failed to set sockets batch timeout");
     }
 
-    ~echo_libc_server() noexcept { close(socket_fd_); }
+    ~rpc_libc_server() noexcept { close(socket_descriptor_); }
 
     void stop() noexcept { should_stop_.store(true, std::memory_order_relaxed); }
 
     void operator()() noexcept {
         sockaddr_in client_address;
         socklen_t client_len = sizeof(client_address);
+        rpc_buffer_t receive_buffer, send_buffer;
 
         while (!should_stop_.load(std::memory_order_relaxed)) {
-            for (auto &buffer : buffers_) {
-                ssize_t received = recvfrom(socket_fd_, buffer.data(), buffer.size(), 0,
-                                            reinterpret_cast<sockaddr *>(&client_address), &client_len);
-                if (received <= 0) continue;
-                sendto(socket_fd_, buffer.data(), received, 0, reinterpret_cast<sockaddr *>(&client_address),
-                       client_len);
-            }
+            ssize_t received_length = recvfrom(socket_descriptor_, receive_buffer.data(), receive_buffer.size(), 0,
+                                               reinterpret_cast<sockaddr *>(&client_address), &client_len);
+            if (received_length <= 0) continue;
+            std::size_t reply_length =
+                packet_modify(receive_buffer.data(), static_cast<std::size_t>(received_length), send_buffer.data());
+            sendto(socket_descriptor_, send_buffer.data(), reply_length, 0,
+                   reinterpret_cast<sockaddr *>(&client_address), client_len);
         }
     }
 };
 
-class echo_libc_client {
-    int socket_fd_;
-    sockaddr_in server_addr_;
-    std::vector<echo_buffer_t> buffers_;
+/**
+ *  @brief  A minimal RPC @b client using LibC functionality to setup the UDP socket,
+ *          and synchronous blocking POSIX calls to send and receive packets -
+ *          @b one at a time!
+ */
+class rpc_libc_client {
+    int socket_descriptor_;
+    sockaddr_in server_address_;
+    std::size_t concurrency_;
 
   public:
-    echo_libc_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
-        : buffers_(concurrency) {
-        // Initialize socket
-        socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (socket_fd_ < 0) raise_system_error("Failed to create socket");
+    rpc_libc_client(std::string const &server_address_str, std::uint16_t port, std::size_t concurrency)
+        : concurrency_(concurrency) {
 
-        // Resolve server address
-        server_addr_.sin_family = AF_INET;
-        server_addr_.sin_addr.s_addr = inet_addr(server_addr.c_str());
-        server_addr_.sin_port = htons(port);
+        auto [socket_descriptor, server_address] = rpc_client_socket(server_address_str, port);
+        socket_descriptor_ = socket_descriptor;
+        server_address_ = server_address;
 
         // Let's make sure we don't block forever on `recvfrom`
         struct timeval duration;
         duration.tv_sec = 0;
-        duration.tv_usec = to_microseconds(echo_batch_timeout_k).count();
-        if (setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
+        duration.tv_usec = to_microseconds(rpc_batch_timeout_k).count();
+        if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
             raise_system_error("Failed to set sockets batch timeout");
-
-        // Fill buffers with data
-        for (auto &buf : buffers_) buf.fill('X');
     }
 
-    ~echo_libc_client() noexcept { close(socket_fd_); }
+    ~rpc_libc_client() noexcept { close(socket_descriptor_); }
 
-    echo_batch_result operator()() noexcept {
-        echo_batch_result result;
+    rpc_batch_result operator()() noexcept {
+        rpc_batch_result result;
 
         sockaddr_in reply_addr;
         socklen_t reply_len = sizeof(reply_addr);
-        for (std::size_t i = 0; i < buffers_.size(); ++i) {
+        rpc_buffer_t send_buffer, receive_buffer;
+        send_buffer.fill('X');
+
+        for (std::size_t i = 0; i < concurrency_; ++i) {
             auto send_time = std::chrono::steady_clock::now();
-            ssize_t sent = sendto(socket_fd_, buffers_[i].data(), buffers_[i].size(), 0,
-                                  reinterpret_cast<sockaddr *>(&server_addr_), sizeof(server_addr_));
+            ssize_t sent_length = sendto(socket_descriptor_, send_buffer.data(), send_buffer.size(), 0,
+                                         reinterpret_cast<sockaddr *>(&server_address_), sizeof(server_address_));
             result.sent_packets++;
-            if (sent <= 0) continue;
+            if (sent_length <= 0) continue;
 
             // In general, `select` is used to monitor multiple file descriptors or sockets at once
             // to see if they are ready for I/O, but in this case we use it to constrain the time
             // we are willing to wait for a single response.
             struct timeval expiry;
             expiry.tv_sec = 0;
-            expiry.tv_usec = to_microseconds(echo_packet_timeout_k).count();
-            fd_set read_fds;
-            FD_ZERO(&read_fds);
-            FD_SET(socket_fd_, &read_fds);
-            if (select(socket_fd_ + 1, &read_fds, nullptr, nullptr, &expiry) <= 0) continue;
+            expiry.tv_usec = to_microseconds(rpc_packet_timeout_k).count();
+            fd_set available_descriptors;
+            FD_ZERO(&available_descriptors);
+            FD_SET(socket_descriptor_, &available_descriptors);
+            if (select(socket_descriptor_ + 1, &available_descriptors, nullptr, nullptr, &expiry) <= 0) continue;
 
-            ssize_t received = recvfrom(socket_fd_, buffers_[i].data(), buffers_[i].size(), 0,
-                                        reinterpret_cast<sockaddr *>(&reply_addr), &reply_len);
-            if (received <= 0) continue;
+            ssize_t received_length = recvfrom(socket_descriptor_, receive_buffer.data(), receive_buffer.size(), 0,
+                                               reinterpret_cast<sockaddr *>(&reply_addr), &reply_len);
+            if (received_length <= 0) continue;
             auto response_time = std::chrono::steady_clock::now();
             auto diff = response_time - send_time;
             result.batch_latency += diff;
@@ -5397,23 +5455,25 @@ class echo_libc_client {
  *  Here we can show-off one more Google Benchmark feature - overriding the
  *  default timer! Measuring the time on the computer is an expensive operation,
  *  and assuming we've already done that in the client itself, we can use the
- *  `UseManualTime` feature to avoid the overhead of measuring time in the server.
+ *  @b `UseManualTime` feature to avoid the overhead of measuring time in the server.
  */
-static void echo_libc(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+template <typename server_t, typename client_t>
+static void rpc(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
 
-    std::string address = route == networking_route_t::loopback_k ? "127.0.0.1" : fetch_public_ip();
+    std::string address_to_listen = route == networking_route_t::loopback_k ? "127.0.0.1" : "0.0.0.0";
+    std::string address_to_talk = route == networking_route_t::loopback_k ? "127.0.0.1" : fetch_public_ip();
 
     // Create server and client
-    echo_libc_server server(address, echo_server_port_k, batch_size);
-    echo_libc_client client(address, echo_server_port_k, batch_size);
+    server_t server(address_to_listen, rpc_server_port_k, batch_size);
+    client_t client(address_to_talk, rpc_server_port_k, batch_size);
 
     std::thread server_thread(std::ref(server));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Benchmark round-trip time
-    echo_batch_result stats;
+    rpc_batch_result stats;
     for (auto _ : state) {
-        echo_batch_result batch_stats = client();
+        rpc_batch_result batch_stats = client();
         stats += batch_stats;
         state.SetIterationTime(
             std::chrono::duration_cast<std::chrono::duration<double>>(batch_stats.batch_latency).count());
@@ -5435,13 +5495,17 @@ static void echo_libc(bm::State &state, networking_route_t route, std::size_t ba
     state.counters["max_packet_latency,us"] = to_microseconds(stats.max_packet_latency).count();
 }
 
-BENCHMARK_CAPTURE(echo_libc, loopback, networking_route_t::loopback_k, //
+static void rpc_libc(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+    return rpc<rpc_libc_server, rpc_libc_client>(state, route, batch_size, packet_size);
+}
+
+BENCHMARK_CAPTURE(rpc_libc, loopback, networking_route_t::loopback_k, //
                   256 /* packets per batch */, 1024 /* bytes per packet */)
     ->MinTime(2)
     ->UseManualTime()                // We are logging time with `SetIterationTime`
     ->Unit(benchmark::kMicrosecond); // For IO, higher resolution than microseconds is too verbose
 
-BENCHMARK_CAPTURE(echo_libc, public, networking_route_t::public_k, //
+BENCHMARK_CAPTURE(rpc_libc, public, networking_route_t::public_k, //
                   256 /* packets per batch */, 1024 /* bytes per packet */)
     ->MinTime(2)
     ->UseManualTime()                // We are logging time with `SetIterationTime`
@@ -5464,20 +5528,27 @@ BENCHMARK_CAPTURE(echo_libc, public, networking_route_t::public_k, //
  */
 #include <liburing.h> // `io_uring`
 
-class echo_uring_server {
+/**
+ *  @brief  A minimal RPC @b server using @b `io_uring` functionality
+ *          to setup the UDP socket, and process many requests concurrently.
+ */
+class rpc_uring_server {
 
     /**
-     *  @brief  Wraps the `echo_buffer_t` with metadata about the client address.
+     *  @brief  Wraps the `rpc_buffer_t` with metadata about the client address.
+     *
+     *  It's a common pattern in async systems to store request metadata next
+     *  to the buffer to locate both with a single pointer.
      */
-    struct addressed_buffer_t {
-        struct msghdr header;
-        struct iovec io_vec;
+    struct alignas(64) addressed_buffer_t {
+        rpc_buffer_t buffer;  //? Put first to improve alignment
+        struct iovec io_vec;  //? Point to `buffer` 🙃
+        struct msghdr header; //? Point to the `io_vec` 🙃🙃
         sockaddr_in client_address;
-        echo_buffer_t buffer;
     };
 
-    int socket_fd_;
-    sockaddr_in server_addr_;
+    int socket_descriptor_;
+    sockaddr_in server_address_;
     std::atomic_bool should_stop_;
     io_uring ring_;
 
@@ -5485,23 +5556,23 @@ class echo_uring_server {
     std::vector<addressed_buffer_t> addressed_buffers_;
 
   public:
-    echo_uring_server(std::string const &address, std::uint16_t port, std::size_t max_concurrency)
+    rpc_uring_server(std::string const &address, std::uint16_t port, std::size_t max_concurrency)
         : should_stop_(false), addressed_buffers_(max_concurrency) {
 
         // Initialize socket
-        socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (socket_fd_ < 0) raise_system_error("Failed to create socket");
+        socket_descriptor_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (socket_descriptor_ < 0) raise_system_error("Failed to create socket");
 
         // Allow port reuse
-        int opt = 1;
-        if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+        int const socket_option = 1;
+        if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_REUSEADDR, &socket_option, sizeof(socket_option)) < 0)
             raise_system_error("Failed to set SO_REUSEADDR");
 
         // Bind to address and port
-        server_addr_.sin_family = AF_INET;
-        server_addr_.sin_addr.s_addr = inet_addr(address.c_str());
-        server_addr_.sin_port = htons(port);
-        if (bind(socket_fd_, reinterpret_cast<sockaddr *>(&server_addr_), sizeof(server_addr_)) < 0)
+        server_address_.sin_family = AF_INET;
+        server_address_.sin_addr.s_addr = inet_addr(address.c_str());
+        server_address_.sin_port = htons(port);
+        if (bind(socket_descriptor_, reinterpret_cast<sockaddr *>(&server_address_), sizeof(server_address_)) < 0)
             raise_system_error("Failed to bind socket");
 
         // Initialize io_uring with one slot for each receive/send operation
@@ -5522,8 +5593,8 @@ class echo_uring_server {
         }
     }
 
-    ~echo_uring_server() noexcept {
-        close(socket_fd_);
+    ~rpc_uring_server() noexcept {
+        close(socket_descriptor_);
         io_uring_queue_exit(&ring_);
     }
 
@@ -5533,7 +5604,7 @@ class echo_uring_server {
         // Submit initial receive operations
         for (addressed_buffer_t &addressed_buffer : addressed_buffers_) {
             struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
-            io_uring_prep_recvmsg(receive_entry, socket_fd_, &addressed_buffer.header, 0);
+            io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &addressed_buffer.header, 0);
             io_uring_sqe_set_data(receive_entry, &addressed_buffer);
         }
 
@@ -5550,13 +5621,14 @@ class echo_uring_server {
             if (received_length > 0) { // Successful receive
                 // Prepare send operation
                 struct io_uring_sqe *send_entry = io_uring_get_sqe(&ring_);
-                io_uring_prep_sendmsg(send_entry, socket_fd_, &addressed_buffer.header, 0);
+                io_uring_prep_sendmsg(send_entry, socket_descriptor_, &addressed_buffer.header, 0);
                 io_uring_sqe_set_data(send_entry, &addressed_buffer);
+                io_uring_sqe_set_flags(send_entry, IOSQE_IO_LINK); // Don't receive next before we send :)
 
                 // Prepare next receive
                 memset(&addressed_buffer.header, 0, sizeof(addressed_buffer.header));
                 struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
-                io_uring_prep_recvmsg(receive_entry, socket_fd_, &addressed_buffer.header, 0);
+                io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &addressed_buffer.header, 0);
                 io_uring_sqe_set_data(receive_entry, &addressed_buffer);
             }
 
@@ -5566,7 +5638,7 @@ class echo_uring_server {
     }
 };
 
-class echo_uring_client {
+class rpc_uring_client {
     enum class message_status_t {
         pending,
         sent,
@@ -5575,13 +5647,13 @@ class echo_uring_client {
     struct addressed_buffer_t {
         struct msghdr header;
         struct iovec io_vec;
-        echo_buffer_t buffer;
+        rpc_buffer_t buffer;
         std::chrono::steady_clock::time_point send_time;
         message_status_t status = message_status_t::pending;
     };
 
-    int socket_fd_;
-    sockaddr_in server_addr_;
+    int socket_descriptor_;
+    sockaddr_in server_address_;
     io_uring ring_;
 
     // Pre-allocated resources
@@ -5589,16 +5661,16 @@ class echo_uring_client {
     addressed_buffer_t timeout_resource_;
 
   public:
-    echo_uring_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
+    rpc_uring_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
         : addressed_buffers_(concurrency) {
         // Initialize socket
-        socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (socket_fd_ < 0) raise_system_error("Failed to create socket");
+        socket_descriptor_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (socket_descriptor_ < 0) raise_system_error("Failed to create socket");
 
         // Resolve server address
-        server_addr_.sin_family = AF_INET;
-        server_addr_.sin_addr.s_addr = inet_addr(server_addr.c_str());
-        server_addr_.sin_port = htons(port);
+        server_address_.sin_family = AF_INET;
+        server_address_.sin_addr.s_addr = inet_addr(server_addr.c_str());
+        server_address_.sin_port = htons(port);
 
         // Initialize io_uring with one slot for each send/receive/timeout operation
         if (io_uring_queue_init(concurrency * 3, &ring_, 0) < 0) raise_system_error("Failed to initialize io_uring");
@@ -5606,8 +5678,8 @@ class echo_uring_client {
         // Initialize message resources
         for (addressed_buffer_t &addressed_buffer : addressed_buffers_) {
             memset(&addressed_buffer.header, 0, sizeof(addressed_buffer.header));
-            addressed_buffer.header.msg_name = &server_addr_;
-            addressed_buffer.header.msg_namelen = sizeof(server_addr_);
+            addressed_buffer.header.msg_name = &server_address_;
+            addressed_buffer.header.msg_namelen = sizeof(server_address_);
             // Each message will be made of just one buffer
             addressed_buffer.header.msg_iov = &addressed_buffer.io_vec;
             addressed_buffer.header.msg_iovlen = 1;
@@ -5620,26 +5692,26 @@ class echo_uring_client {
         }
     }
 
-    ~echo_uring_client() noexcept {
-        close(socket_fd_);
+    ~rpc_uring_client() noexcept {
+        close(socket_descriptor_);
         io_uring_queue_exit(&ring_);
     }
 
-    echo_batch_result operator()() noexcept {
-        echo_batch_result result;
+    rpc_batch_result operator()() noexcept {
+        rpc_batch_result result;
 
         auto const batch_start_time = std::chrono::steady_clock::now();
-        auto const batch_deadline = batch_start_time + echo_batch_timeout_k;
+        auto const batch_deadline = batch_start_time + rpc_batch_timeout_k;
 
         struct __kernel_timespec batch_timeout;
         {
-            auto const batch_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(echo_batch_timeout_k);
+            auto const batch_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(rpc_batch_timeout_k);
             batch_timeout.tv_sec = static_cast<__s64>(batch_ns.count() / 1'000'000'000);
             batch_timeout.tv_nsec = static_cast<__s64>(batch_ns.count() % 1'000'000'000);
         }
         struct __kernel_timespec packet_timeout;
         {
-            auto const packet_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(echo_packet_timeout_k);
+            auto const packet_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(rpc_packet_timeout_k);
             packet_timeout.tv_sec = static_cast<__s64>(packet_ns.count() / 1'000'000'000);
             packet_timeout.tv_nsec = static_cast<__s64>(packet_ns.count() % 1'000'000'000);
         }
@@ -5651,7 +5723,7 @@ class echo_uring_client {
 
             // Prepare send operation
             auto *submitted_entry = io_uring_get_sqe(&ring_);
-            io_uring_prep_sendmsg(submitted_entry, socket_fd_, &res.header, 0);
+            io_uring_prep_sendmsg(submitted_entry, socket_descriptor_, &res.header, 0);
             io_uring_sqe_set_data(submitted_entry, &res);
             io_uring_sqe_set_flags(submitted_entry, IOSQE_IO_LINK); // Don't receive before sending :)
             res.send_time = std::chrono::steady_clock::now();
@@ -5659,7 +5731,7 @@ class echo_uring_client {
 
             // Prepare receive operation
             submitted_entry = io_uring_get_sqe(&ring_);
-            io_uring_prep_recvmsg(submitted_entry, socket_fd_, &res.header, 0);
+            io_uring_prep_recvmsg(submitted_entry, socket_descriptor_, &res.header, 0);
             io_uring_sqe_set_data(submitted_entry, &res);           // Attach to the same resource
             io_uring_sqe_set_flags(submitted_entry, IOSQE_IO_LINK); // Link to timeout!
 
@@ -5711,48 +5783,17 @@ class echo_uring_client {
     }
 };
 
-static void echo_uring(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
-    std::string address = route == networking_route_t::loopback_k ? "127.0.0.1" : fetch_public_ip();
-
-    // Create server and client
-    echo_uring_server server(address, echo_server_port_k + 1, batch_size);
-    echo_uring_client client(address, echo_server_port_k + 1, batch_size);
-
-    std::thread server_thread(std::ref(server));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    // Benchmark round-trip time
-    echo_batch_result stats;
-    for (auto _ : state) {
-        echo_batch_result batch_stats = client();
-        stats += batch_stats;
-        state.SetIterationTime(
-            std::chrono::duration_cast<std::chrono::duration<double>>(batch_stats.batch_latency).count());
-    }
-
-    server.stop();
-    server_thread.join();
-
-    // Process and report stats
-    auto const mean_batch_latency_us =
-        stats.received_packets ? to_microseconds(stats.batch_latency).count() * 1.0 / state.iterations() : 0.0;
-    auto const mean_packet_latency_us = to_microseconds(stats.batch_latency).count() * 1.0 / stats.received_packets;
-
-    state.SetItemsProcessed(stats.sent_packets);
-    state.SetBytesProcessed(stats.sent_packets * packet_size);
-    state.counters["drop,%"] = 100.0 * (stats.sent_packets - stats.received_packets) / stats.sent_packets;
-    state.counters["mean_batch_latency,us"] = mean_batch_latency_us;
-    state.counters["mean_packet_latency,us"] = mean_packet_latency_us;
-    state.counters["max_packet_latency,us"] = to_microseconds(stats.max_packet_latency).count();
+static void rpc_uring(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+    return rpc<rpc_uring_server, rpc_uring_client>(state, route, batch_size, packet_size);
 }
 
-BENCHMARK_CAPTURE(echo_uring, loopback, networking_route_t::loopback_k, 256 /* packets per batch */,
+BENCHMARK_CAPTURE(rpc_uring, loopback, networking_route_t::loopback_k, 256 /* packets per batch */,
                   1024 /* bytes per packet */)
     ->MinTime(2)
     ->UseManualTime()
     ->Unit(benchmark::kMicrosecond);
 
-BENCHMARK_CAPTURE(echo_uring, public, networking_route_t::public_k, 256 /* packets per batch */,
+BENCHMARK_CAPTURE(rpc_uring, public, networking_route_t::public_k, 256 /* packets per batch */,
                   1024 /* bytes per packet */)
     ->MinTime(2)
     ->UseManualTime()
@@ -5763,13 +5804,13 @@ BENCHMARK_CAPTURE(echo_uring, public, networking_route_t::public_k, 256 /* packe
 #pragma region ASIO
 #include <asio.hpp>
 
-class echo_asio_server {
+class rpc_asio_server {
 
     asio::io_context &context_;
     asio::ip::udp::socket socket_;
 
     /// @brief Buffers, one per concurrent request
-    std::vector<echo_buffer_t> buffers_;
+    std::vector<rpc_buffer_t> buffers_;
     /// @brief Where did the packets come from
     std::vector<asio::ip::udp::endpoint> clients_;
     /// @brief Flag to stop the server without corrupting the state
@@ -5781,7 +5822,7 @@ class echo_asio_server {
     std::size_t failed_responses_ = 0;
 
   public:
-    echo_asio_server(                                                          //
+    rpc_asio_server(                                                           //
         asio::io_context &ctx, std::string const &address, std::uint16_t port, //
         std::size_t max_concurrency, std::chrono::microseconds max_cycle_duration)
         : context_(ctx), socket_(context_, asio::ip::udp::endpoint(asio::ip::make_address(address), port)),
@@ -5816,21 +5857,21 @@ class echo_asio_server {
     }
 };
 
-class echo_asio_client {
+class rpc_asio_client {
 
     asio::io_context &context_;
     asio::ip::udp::socket socket_;
     asio::ip::udp::endpoint server_;
 
     /// @brief Buffers, one per concurrent request
-    std::vector<echo_buffer_t> buffers_;
+    std::vector<rpc_buffer_t> buffers_;
     /// @brief Track the send timestamps for each slot to measure latency
     std::vector<std::chrono::steady_clock::time_point> send_times_;
     /// @brief Maximum time for this entire batch
     std::chrono::microseconds max_cycle_duration_;
 
   public:
-    echo_asio_client(                                                              //
+    rpc_asio_client(                                                               //
         asio::io_context &ctx, std::string const &server_addr, std::uint16_t port, //
         std::size_t concurrency, std::chrono::microseconds max_cycle_duration)
         : context_(ctx), socket_(ctx, asio::ip::udp::endpoint(asio::ip::udp::v4(), 0)), buffers_(concurrency),
@@ -5845,11 +5886,11 @@ class echo_asio_client {
         for (auto &buf : buffers_) buf.fill('X');
     }
 
-    echo_batch_result operator()() { return one_batch(); }
+    rpc_batch_result operator()() { return one_batch(); }
 
   private:
-    echo_batch_result one_batch() {
-        echo_batch_result result;
+    rpc_batch_result one_batch() {
+        rpc_batch_result result;
 
         // For per-operation cancellations we could use the `asio::cancellation_signal`,
         // but this is the simple lucky case when we only want to cancel all the outstanding
@@ -5883,18 +5924,18 @@ class echo_asio_client {
     }
 };
 
-static void echo_asio(                            //
+static void rpc_asio(                             //
     bm::State &state, std::string const &address, //
     std::size_t batch_size, std::size_t packet_size, std::chrono::microseconds timeout) {
 
-    constexpr std::uint16_t echo_server_port_k = 12345;
+    constexpr std::uint16_t rpc_server_port_k = 12345;
 
     // Create server and client
     asio::io_context server_context;
     asio::io_context client_context;
 
-    echo_asio_server server(server_context, address, echo_server_port_k, batch_size, timeout);
-    echo_asio_client client(client_context, address, echo_server_port_k, batch_size, timeout);
+    rpc_asio_server server(server_context, address, rpc_server_port_k, batch_size, timeout);
+    rpc_asio_client client(client_context, address, rpc_server_port_k, batch_size, timeout);
 
     // The order of the following thread-initializations is important
     std::thread server_context_thread([&]() { server_context.run(); });
@@ -5903,7 +5944,7 @@ static void echo_asio(                            //
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Benchmark the round-trip time
-    echo_batch_result stats;
+    rpc_batch_result stats;
     for (auto _ : state) stats += client();
 
     // Stop contexts and wait for threads to finish
@@ -5924,9 +5965,7 @@ static void echo_asio(                            //
     state.counters["max_packet_latency,ns"] = stats.max_packet_latency.count();
 }
 
-BENCHMARK_CAPTURE(echo_asio, local, "127.0.0.1", 32, 1024, std::chrono::microseconds(50'000))
-    ->MinTime(2)
-    ->UseRealTime();
+BENCHMARK_CAPTURE(rpc_asio, local, "127.0.0.1", 32, 1024, std::chrono::microseconds(50'000))->MinTime(2)->UseRealTime();
 
 #pragma endregion // ASIO
 
