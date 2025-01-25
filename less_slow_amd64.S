@@ -346,3 +346,8 @@ tops_f32_avx2ma_asm_kernel:
     vmulps  %ymm12, %ymm13, %ymm14
     movabsq $40, %rax
     ret
+
+# ----------------------------------------------------------------------------
+# Tell the linker/assembler that we do NOT need an executable stack:
+    .section .note.GNU-stack, "", @progbits
+# ----------------------------------------------------------------------------
