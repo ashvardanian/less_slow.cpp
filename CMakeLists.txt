@@ -233,7 +233,9 @@ else()
       -Wno-deprecated-pragma
     )
   else()
+    # A few useful options for MSVC:
     target_compile_options(less_slow PRIVATE
+      /MP # Build with multiple processes; equivalent to make -j # except it spans across all cores by default
       /wd4068 # Disable the "unknown pragma" warning (stringzilla uses many gcc and clang pragmas)
       /Zc:__cplusplus # Make __cplusplus macro actually match used standard
       /Zc:preprocessor # Use conformant preprocessor
