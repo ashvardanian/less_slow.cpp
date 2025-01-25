@@ -149,7 +149,7 @@ BENCHMARK(i32_addition_inline_asm);
  *  - @b less_slow_amd64.S - for the x86_64 architecture, with 64-bit extensions,
  *    originally introduced by AMD.
  */
-#if defined(__x86_64__) || defined(__aarch64__)
+#if !defined(_MSC_VER) && (defined(__x86_64__) || defined(__aarch64__) || defined(__i386__) || defined(_M_X64))
 
 extern "C" std::int32_t i32_add_asm_kernel(std::int32_t a, std::int32_t b);
 
@@ -262,6 +262,11 @@ BENCHMARK(i32_addition_randomly_initialized);
 #include <unistd.h> // `_SC_NPROCESSORS_ONLN`
 #elif defined(__APPLE__)
 #include <sys/sysctl.h> // `sysctlbyname` on macOS
+#elif defined (_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#include <WinBase.h>
 #endif
 
 std::size_t physical_cores() {
@@ -273,6 +278,18 @@ std::size_t physical_cores() {
     size_t len = sizeof(nproc);
     sysctlbyname("hw.physicalcpu", &nproc, &len, nullptr, 0);
     return static_cast<std::size_t>(nproc);
+#elif defined (_WIN32)
+    /**
+     * On windows, both std::thread::hardware_concurrency and GetSystemInfo
+     * return at most 64 cores, as limited by a single windows processor group.
+     *
+     * However, starting with newer versions of windows, applications
+     * can seamlessly span across multiple processor groups.
+     *
+     * Using std::thread::hardware_concurrency would unfortunately
+     * limit that, so it is somewhat of a trap at this point.
+     */
+    return GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
 #else
     return std::thread::hardware_concurrency();
 #endif
@@ -354,10 +371,20 @@ class aligned_array {
 
   public:
     aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size) {
+#if defined(_MSC_VER) // MSVC
+        data_ = static_cast<type_ *>(_aligned_malloc(sizeof(type_) * size_, alignment));
+#else 
         data_ = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size_));
+#endif
         if (!data_) throw std::bad_alloc();
     }
-    ~aligned_array() noexcept { std::free(data_); }
+    ~aligned_array() noexcept {
+#if defined(_MSC_VER) // MSVC
+        _aligned_free(data_);
+#else
+        std::free(data_);
+#endif
+    }
     type_ *begin() const noexcept { return data_; }
     type_ *end() const noexcept { return data_ + size_; }
     type_ &operator[](std::size_t index) noexcept { return data_[index]; }
@@ -525,7 +552,7 @@ static void sorting_with_openmp(bm::State &state) {
 
 #pragma omp parallel for
         // Sort each chunk in parallel
-        for (std::size_t i = 0; i < chunks; i++) {
+        for (int64_t i = 0; i < chunks; i++) {
             std::size_t start = chunk_start_offset(i);
             std::size_t finish = chunk_start_offset(i + 1);
             std::sort(array.begin() + start, array.begin() + finish);
@@ -534,7 +561,7 @@ static void sorting_with_openmp(bm::State &state) {
         // Merge the blocks in a tree-like fashion doubling the size of the merged block each time
         for (std::size_t merge_step = 1; merge_step < chunks; merge_step *= 2) {
 #pragma omp parallel for
-            for (std::size_t i = 0; i < chunks; i += 2 * merge_step) {
+            for (int64_t i = 0; i < chunks; i += 2 * merge_step) {
                 std::size_t first_chunk_index = i;
                 std::size_t second_chunk_index = i + merge_step;
                 if (second_chunk_index >= chunks) continue; // No merge needed
@@ -1510,6 +1537,7 @@ void configure_x86_denormals(void) {
  *
  *  @see Arm Feature Detection: https://developer.arm.com/documentation/101028/0010/Feature-test-macros
  */
+#if !defined(_MSC_VER)
 #if defined(__AVX512F__)
 extern "C" std::uint32_t tops_f64_avx512ma_asm_kernel(void);
 BENCHMARK_CAPTURE(theoretic_tops, f64_avx512ma, tops_f64_avx512ma_asm_kernel, configure_x86_denormals)->MinTime(10);
@@ -1620,6 +1648,7 @@ extern "C" std::uint32_t tops_u8_neon_asm_kernel(void);
 BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10);
 BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__ARM_FEATURE_DOTPROD)
+#endif // !defined(_MSC_VER)
 
 #if defined(__AMX_TILE__)
 /**
@@ -1815,6 +1844,39 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 #pragma region Alignment of Memory Accesses
 
 /**
+ *  For the inline expansion compiler optimization, different
+ *  compilers use different attributes (more modern) or
+ *  keywords (in older implementations, or for compatibility).
+ *
+ *  It is common to see a cross-platform/compiler definition
+ *  that covers the most common ones used in libraries.
+ */
+
+#if defined(_MSC_VER)
+#define LESS_SLOW_ALWAYS_INLINE [[msvc::forceinline]] inline
+#elif defined(__GNUC__)
+#define LESS_SLOW_ALWAYS_INLINE [[gnu::always_inline]] inline
+#elif defined(__clang__)
+#define LESS_SLOW_ALWAYS_INLINE [[clang::always_inline]] inline
+#else
+#define LESS_SLOW_ALWAYS_INLINE inline __attribute__((always_inline))
+#endif
+
+/**
+ *  @brief  Checks if a number is a power of two.
+ *
+ *  TODO: use intrinsics when available; possibly use std::popcount;
+ *  benchmark between them?
+ */
+LESS_SLOW_ALWAYS_INLINE bool is_power_of_two(std::uint64_t x) noexcept {
+#if defined(_MSC_VER)
+    return x && !(x & (x - 1));
+#else
+    return __builtin_popcountll(x) == 1;
+#endif
+}
+
+/**
  *  When designing high-performance kernels, memory alignment is crucial.
  *  Misaligned memory accesses split data across cache lines, causing extra
  *  loads and reducing efficiency. While split loads are unavoidable for large
@@ -1847,7 +1909,7 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 std::string read_file_contents(std::string const &path) {
     std::ifstream file(path);
     std::string content;
-    if (!file.is_open()) return 0;
+    if (!file.is_open()) return "";
     std::getline(file, content);
     file.close();
     return content;
@@ -1962,7 +2024,7 @@ static void memory_access(bm::State &state) {
     constexpr std::size_t typical_l2_size = 1024u * 1024u;
     std::size_t const cache_line_width = fetch_cache_line_width();
     assert( //
-        cache_line_width > 0 && __builtin_popcountll(cache_line_width) == 1 &&
+        cache_line_width > 0 && is_power_of_two(cache_line_width) &&
         "The cache line width must be a power of two greater than 0");
 
     // We are using a fairly small L2-cache-sized buffer to show, that this is
@@ -2203,12 +2265,14 @@ std::size_t parse_size_string(std::string const &str) {
 
 template <typename scalar_type_>
 static void cblas_tops(bm::State &state) {
+    openblas_set_num_threads(physical_cores());
+
     // BLAS expects leading dimensions: `lda` = `ldb` = `ldc` = `n` for square inputs.
     std::size_t n = static_cast<std::size_t>(state.range(0));
     int const lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
 
     // Allocate and initialize data
-    aligned_array<scalar_type_> a(n * n), b(n * n), c(n * n, 0);
+    aligned_array<scalar_type_> a(n * n), b(n * n), c(n * n);
     std::iota(a.begin(), a.end(), 0);
     std::iota(b.begin(), b.end(), 0);
 
@@ -2245,6 +2309,9 @@ BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(b
 
 template <typename scalar_type_>
 static void eigen_tops(bm::State &state) {
+    // Make sure Eigen uses all cores - also, Eigen can't multithread without openMP or GEMM
+    Eigen::setNbThreads(physical_cores());
+
     // Matrix dimension
     std::size_t n = static_cast<std::size_t>(state.range(0));
 
@@ -2353,19 +2420,10 @@ constexpr std::uint64_t pipe_start = 3;
 constexpr std::uint64_t pipe_end = 49;
 
 /**
- *  @brief  Checks if a number is a power of two.
- */
-[[gnu::always_inline]]
-inline bool is_power_of_two(std::uint64_t x) noexcept {
-    return __builtin_popcountll(x) == 1;
-}
-
-/**
  *  @brief  Checks if a number is a power of three using modulo division.
  *          The largest power of three fitting in a 64-bit integer is 3^40.
  */
-[[gnu::always_inline]]
-inline bool is_power_of_three(std::uint64_t x) noexcept {
+LESS_SLOW_ALWAYS_INLINE bool is_power_of_three(std::uint64_t x) noexcept {
     constexpr std::uint64_t max_power_of_three = 12157665459056928801ull;
     return x > 0 && max_power_of_three % x == 0;
 }
@@ -2376,7 +2434,7 @@ inline bool is_power_of_three(std::uint64_t x) noexcept {
  *  @brief  Supplies the prime factors to a template-based callback.
  */
 template <typename callback_type_>
-[[gnu::always_inline]] inline void prime_factors_lambdas( //
+LESS_SLOW_ALWAYS_INLINE void prime_factors_lambdas( //
     std::uint64_t input, callback_type_ &&callback) noexcept {
     // Handle factor 2 separately
     while ((input & 1) == 0) {
@@ -2999,7 +3057,9 @@ BENCHMARK(packaging_stl_tuple)->MinTime(2);
  *
  *  @see Reddit discussion: https://www.reddit.com/r/cpp/comments/ar4ghs/stdpair_disappointing_performance/
  */
+#if !defined(_MSC_VER)
 static_assert(!std::is_trivially_copyable_v<std::pair<int, float>>);
+#endif
 static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
 
 /**
@@ -3198,7 +3258,7 @@ void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::st
     auto newlines = sz::char_set("\r\n");
     auto whitespaces = sz::whitespaces_set();
 
-    for (sz::string_view line : sz::string_view(config_text).split(newlines)) {
+    for (sz::string_view line : sz::string_view{config_text}.split(newlines)) {
         line = line.strip(whitespaces);
         if (line.empty() || line.front() == '#') continue; // Skip empty lines or comments
         auto [key, delimiter, value] = line.partition(':');
@@ -3326,8 +3386,13 @@ void parse_regex(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
 
+#if defined(_MSC_VER)
+    // MSVC does not implement std::regex_constants::multiline yet
+    auto regex_options = std::regex_constants::ECMAScript;
+#else
     // Use multiline mode so ^ and $ anchor to line breaks.
     auto regex_options = std::regex_constants::ECMAScript | std::regex_constants::multiline;
+#endif
     // Construct the regex only once. Compilation is expensive!
     // BTW, there is still no `std::string_view` constructor 🤦‍♂️
     std::regex regex_fsm(regex_for_config.data(), regex_for_config.size(), regex_options);
@@ -4988,8 +5053,12 @@ struct log_printf_t {
     std::size_t operator()(                    //
         char *buffer, std::size_t buffer_size, //
         std::source_location const &location, int code, std::string_view message) const noexcept {
-
+#if defined(_MSC_VER)
+        // On MSVC, high_resolution_clock is steady_clock, which cannot have to_time_t applied to it 
+        auto now = std::chrono::system_clock::now();
+#else
         auto now = std::chrono::high_resolution_clock::now();
+#endif
         auto time_since_epoch = now.time_since_epoch();
 
         // Extract seconds and milliseconds
@@ -5049,9 +5118,10 @@ struct log_format_t {
 
 #endif // defined(__cpp_lib_format)
 
+#include <fmt/core.h>    // `fmt::format_to_n`
 #include <fmt/chrono.h>  // formatting for `std::chrono` types
 #include <fmt/compile.h> // compile-time format strings
-#include <fmt/core.h>    // `std::format_to_n`
+#include <fmt/base.h>
 
 struct log_fmt_t {
     std::size_t operator()(                    //
@@ -5068,7 +5138,7 @@ struct log_fmt_t {
         // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
         // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
         // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
-        fmt::format_to_n_result<char *> result = fmt::format_to_n( //
+        fmt::v11::format_to_n_result<char *> result = fmt::v11::format_to_n( //
             buffer, buffer_size,
             FMT_COMPILE(                                     //
                 "{:%FT%R}:{:0>2}.{:0>3}Z | "                 // time format

@@ -32,16 +32,24 @@ endif()
 # ------------------------------------------------------------------------------
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED)
-find_package(BLAS REQUIRED)
-if (BLAS_FOUND)
-    message(STATUS "BLAS found: ${BLAS_LIBRARIES}")
-else ()
-    message(FATAL_ERROR "BLAS not found")
-endif ()
-
 
 set(FETCHCONTENT_QUIET OFF)
 include(FetchContent)
+
+# Fetch and build OpenBLAS
+FetchContent_Declare(
+  OpenBLAS
+  GIT_REPOSITORY https://github.com/xianyi/OpenBLAS.git
+  GIT_TAG v0.3.29
+)
+
+# Set OpenBLAS build options
+set(NOFORTRAN ON CACHE BOOL "Disable Fortran" FORCE)
+set(BUILD_WITHOUT_LAPACK OFF CACHE BOOL "Build without LAPACK" FORCE)
+set(USE_THREAD ON CACHE BOOL "Use threading" FORCE)
+
+# Make OpenBLAS available
+FetchContent_MakeAvailable(OpenBLAS)
 
 # GTest (required by Google Benchmark)
 FetchContent_Declare(
@@ -105,7 +113,7 @@ endif()
 FetchContent_Declare(
   VictorZverovichFMT
   GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-  GIT_TAG 11.1.0
+  GIT_TAG 11.1.2
 )
 FetchContent_MakeAvailable(VictorZverovichFMT)
 
@@ -189,10 +197,10 @@ add_executable(less_slow less_slow.cpp)
 set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Conditionally add the assembly file(s)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64|x64")
     set_source_files_properties(less_slow_amd64.S PROPERTIES LANGUAGE ASM)
     target_sources(less_slow PRIVATE less_slow_amd64.S)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64")
     set_source_files_properties(less_slow_aarch64.S PROPERTIES LANGUAGE ASM)
     target_sources(less_slow PRIVATE less_slow_aarch64.S)
 endif()
@@ -200,8 +208,13 @@ endif()
 # ------------------------------------------------------------------------------
 # Compiler Flags / Options
 # ------------------------------------------------------------------------------
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-  # Apple Clang doesn't support -march=native
+# Check for compiler support of -march=native
+if(CMAKE_CXX_COMPILER_ID MATCHES "Intel")
+  # Intel compiler uses a different flag
+  target_compile_options(less_slow PRIVATE -xHost)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR MSVC)
+  # Apple Clang and msvc don't support any "highest instruction set" flag
+else()
   target_compile_options(less_slow PRIVATE -march=native)
 endif()
 
@@ -214,10 +227,18 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     -fopenmp # OpenMP support, also requires linking
   )
 else()
-  # For other compilers (Clang, MSVC, Intel, etc.)
-  target_compile_options(less_slow PRIVATE
-    -Wno-deprecated-pragma
-  )
+  # For other compilers (Clang, Intel, etc. - but not MSVC)
+  if (!MSVC)
+    target_compile_options(less_slow PRIVATE
+      -Wno-deprecated-pragma
+    )
+  else()
+    target_compile_options(less_slow PRIVATE
+      /wd4068 # Disable the "unknown pragma" warning (stringzilla uses many gcc and clang pragmas)
+      /Zc:__cplusplus # Make __cplusplus macro actually match used standard
+      /Zc:preprocessor # Use conformant preprocessor
+    )
+  endif()
 endif()
 
 # Release vs. Debug flags via generator expressions
@@ -230,11 +251,27 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"
   )
   set_property(TARGET less_slow PROPERTY SANITIZE_ADDRESS TRUE)
   set_property(TARGET less_slow PROPERTY SANITIZE_UNDEFINED TRUE)
+elseif(MSVC)
+  target_compile_options(less_slow PRIVATE
+    $<$<CONFIG:Release>:/O2>
+    $<$<CONFIG:Release>:/Ob2>
+    $<$<CONFIG:Release>:/Oi>
+    $<$<CONFIG:Release>:/Ot>
+    $<$<CONFIG:Release>:/GL>
+  )
+  target_link_options(less_slow PRIVATE
+    $<$<CONFIG:Release>:/LTCG:incremental>
+  )
 endif()
 
 # ------------------------------------------------------------------------------
 # Link Libraries
 # ------------------------------------------------------------------------------
+# Add OpenBLAS include directory manually
+if(openblas_POPULATED)
+  target_include_directories(less_slow PRIVATE ${openblas_SOURCE_DIR})
+endif()
+
 target_link_libraries(less_slow
   PRIVATE
     Threads::Threads
@@ -251,7 +288,7 @@ target_link_libraries(less_slow
     absl::flat_hash_map
     nlohmann_json::nlohmann_json
     Eigen3::Eigen
-    ${BLAS_LIBRARIES}
+    openblas
     $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:TBB::tbb>
-    $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:OpenMP::OpenMP_CXX>
+    OpenMP::OpenMP_CXX
 )
