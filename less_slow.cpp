@@ -5049,6 +5049,30 @@ BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(
 
 using std::string_view_literals::operator""sv;
 
+template <typename logger_type_>
+static void logging(bm::State &state) {
+    struct {
+        int code;
+        std::string_view message;
+    } errors[3] = {
+        {1, "Operation not permitted"sv},
+        {12, "Cannot allocate memory"sv},
+        {113, "No route to host"sv},
+    };
+    char buffer[1024];
+    logger_type_ logger;
+    std::size_t iteration_index = 0;
+    std::size_t bytes_logged = 0;
+    for (auto _ : state) {
+        bytes_logged += logger(              //
+            buffer, sizeof(buffer),          //
+            std::source_location::current(), //
+            errors[iteration_index % 3].code, errors[iteration_index % 3].message);
+        iteration_index++;
+    }
+    state.SetBytesProcessed(bytes_logged);
+}
+
 struct log_printf_t {
     std::size_t operator()(                    //
         char *buffer, std::size_t buffer_size, //
@@ -5083,6 +5107,9 @@ struct log_printf_t {
     }
 };
 
+BENCHMARK(logging<log_printf_t>)->Name("log_printf")->MinTime(2);
+
+#if !defined(_MSC_VER)
 #if defined(__cpp_lib_format)
 #include <format> // `std::format_to_n`
 
@@ -5116,12 +5143,13 @@ struct log_format_t {
     }
 };
 
+BENCHMARK(logging<log_format_t>)->Name("log_format")->MinTime(2);
+
 #endif // defined(__cpp_lib_format)
 
 #include <fmt/core.h>    // `fmt::format_to_n`
 #include <fmt/chrono.h>  // formatting for `std::chrono` types
 #include <fmt/compile.h> // compile-time format strings
-#include <fmt/base.h>
 
 struct log_fmt_t {
     std::size_t operator()(                    //
@@ -5138,7 +5166,7 @@ struct log_fmt_t {
         // `%F` unpacks to `%Y-%m-%d`, implementing the "YYYY-MM-DD" part
         // `%T` would expand to `%H:%M:%S`, implementing the "HH:MM:SS" part
         // To learn more about syntax, read: https://fmt.dev/11.0/syntax/
-        fmt::v11::format_to_n_result<char *> result = fmt::v11::format_to_n( //
+        fmt::format_to_n_result<char *> result = fmt::format_to_n( //
             buffer, buffer_size,
             FMT_COMPILE(                                     //
                 "{:%FT%R}:{:0>2}.{:0>3}Z | "                 // time format
@@ -5153,35 +5181,9 @@ struct log_fmt_t {
     }
 };
 
-template <typename logger_type_>
-static void logging(bm::State &state) {
-    struct {
-        int code;
-        std::string_view message;
-    } errors[3] = {
-        {1, "Operation not permitted"sv},
-        {12, "Cannot allocate memory"sv},
-        {113, "No route to host"sv},
-    };
-    char buffer[1024];
-    logger_type_ logger;
-    std::size_t iteration_index = 0;
-    std::size_t bytes_logged = 0;
-    for (auto _ : state) {
-        bytes_logged += logger(              //
-            buffer, sizeof(buffer),          //
-            std::source_location::current(), //
-            errors[iteration_index % 3].code, errors[iteration_index % 3].message);
-        iteration_index++;
-    }
-    state.SetBytesProcessed(bytes_logged);
-}
-
-BENCHMARK(logging<log_printf_t>)->Name("log_printf")->MinTime(2);
-#if defined(__cpp_lib_format)
-BENCHMARK(logging<log_format_t>)->Name("log_format")->MinTime(2);
-#endif
 BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
+
+#endif //! defined(_MSC_VER)
 
 /**
  *  The results for the logging benchmarks are as follows:
