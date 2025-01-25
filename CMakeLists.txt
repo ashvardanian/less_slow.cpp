@@ -1,5 +1,5 @@
 # Let's used CMake 3.16+ for native sanitizers support
-cmake_minimum_required(VERSION 3.16 FATAL_ERROR) 
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
 # ------------------------------------------------------------------------------
 # Project Setup
@@ -198,22 +198,21 @@ set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Conditionally add the assembly file(s)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64|x64")
-    set_source_files_properties(less_slow_amd64.S PROPERTIES LANGUAGE ASM)
-    target_sources(less_slow PRIVATE less_slow_amd64.S)
+  set_source_files_properties(less_slow_amd64.S PROPERTIES LANGUAGE ASM)
+  target_sources(less_slow PRIVATE less_slow_amd64.S)
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64")
-    set_source_files_properties(less_slow_aarch64.S PROPERTIES LANGUAGE ASM)
-    target_sources(less_slow PRIVATE less_slow_aarch64.S)
+  set_source_files_properties(less_slow_aarch64.S PROPERTIES LANGUAGE ASM)
+  target_sources(less_slow PRIVATE less_slow_aarch64.S)
 endif()
 
 # ------------------------------------------------------------------------------
 # Compiler Flags / Options
 # ------------------------------------------------------------------------------
-# Check for compiler support of -march=native
+# Check for compiler support of `-march=native`
 if(CMAKE_CXX_COMPILER_ID MATCHES "Intel")
-  # Intel compiler uses a different flag
   target_compile_options(less_slow PRIVATE -xHost)
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR MSVC)
-  # Apple Clang and msvc don't support any "highest instruction set" flag
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+# Apple's Clang and MSVC can't auto-detect the highest CPU features
 else()
   target_compile_options(less_slow PRIVATE -march=native)
 endif()
@@ -226,21 +225,18 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     -fconcepts-diagnostics-depth=10 # Needed to debug concepts
     -fopenmp # OpenMP support, also requires linking
   )
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+  target_compile_options(less_slow PRIVATE
+    /MP # Build with multiple processes; equivalent to `make -j` except it spans across all cores by default
+    /wd4068 # Disable the "unknown pragma" warning, as StringZilla uses many GCC and Clang pragmas
+    /Zc:__cplusplus # Make `__cplusplus` macro actually match used standard
+    /Zc:preprocessor # Use conformant preprocessor
+  )
+
 else()
-  # For other compilers (Clang, Intel, etc. - but not MSVC)
-  if (!MSVC)
-    target_compile_options(less_slow PRIVATE
-      -Wno-deprecated-pragma
-    )
-  else()
-    # A few useful options for MSVC:
-    target_compile_options(less_slow PRIVATE
-      /MP # Build with multiple processes; equivalent to make -j # except it spans across all cores by default
-      /wd4068 # Disable the "unknown pragma" warning (stringzilla uses many gcc and clang pragmas)
-      /Zc:__cplusplus # Make __cplusplus macro actually match used standard
-      /Zc:preprocessor # Use conformant preprocessor
-    )
-  endif()
+  target_compile_options(less_slow PRIVATE
+    -Wno-deprecated-pragma
+  )
 endif()
 
 # Release vs. Debug flags via generator expressions
@@ -253,7 +249,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"
   )
   set_property(TARGET less_slow PROPERTY SANITIZE_ADDRESS TRUE)
   set_property(TARGET less_slow PROPERTY SANITIZE_UNDEFINED TRUE)
-elseif(MSVC)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   target_compile_options(less_slow PRIVATE
     $<$<CONFIG:Release>:/O2>
     $<$<CONFIG:Release>:/Ob2>
@@ -272,27 +268,29 @@ endif()
 # Add OpenBLAS include directory manually
 if(openblas_POPULATED)
   target_include_directories(less_slow PRIVATE ${openblas_SOURCE_DIR})
+
   # For config.h
   target_include_directories(less_slow PRIVATE ${openblas_BINARY_DIR})
 endif()
 
 target_link_libraries(less_slow
   PRIVATE
-    Threads::Threads
-    benchmark
-    fmt::fmt
-    range-v3
-    cppcoro
-    unifex
-    stringzilla
-    yyjson
-    ctre
-    # There is no `absl` shortcut:
-    # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
-    absl::flat_hash_map
-    nlohmann_json::nlohmann_json
-    Eigen3::Eigen
-    openblas
-    $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:TBB::tbb>
-    OpenMP::OpenMP_CXX
+  Threads::Threads
+  benchmark
+  fmt::fmt
+  range-v3
+  cppcoro
+  unifex
+  stringzilla
+  yyjson
+  ctre
+  openblas
+
+  # There is no `absl` shortcut:
+  # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
+  absl::flat_hash_map
+  nlohmann_json::nlohmann_json
+  Eigen3::Eigen
+  $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:TBB::tbb>
+  OpenMP::OpenMP_CXX
 )
