@@ -262,13 +262,17 @@ BENCHMARK(i32_addition_randomly_initialized);
 #include <unistd.h> // `_SC_NPROCESSORS_ONLN`
 #elif defined(__APPLE__)
 #include <sys/sysctl.h> // `sysctlbyname` on macOS
-#elif defined (_WIN32)
+#elif defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
-#include <Windows.h>
 #include <WinBase.h>
+#include <Windows.h>
 #endif
 
+/**
+ *  @brief  Returns the number of physical cores available on the system,
+ *          as opposed to the logical cores, which include hyper-threading.
+ */
 std::size_t physical_cores() {
 #if defined(__linux__)
     int nproc = sysconf(_SC_NPROCESSORS_ONLN);
@@ -278,17 +282,11 @@ std::size_t physical_cores() {
     size_t len = sizeof(nproc);
     sysctlbyname("hw.physicalcpu", &nproc, &len, nullptr, 0);
     return static_cast<std::size_t>(nproc);
-#elif defined (_WIN32)
-    /**
-     * On windows, both std::thread::hardware_concurrency and GetSystemInfo
-     * return at most 64 cores, as limited by a single windows processor group.
-     *
-     * However, starting with newer versions of windows, applications
-     * can seamlessly span across multiple processor groups.
-     *
-     * Using std::thread::hardware_concurrency would unfortunately
-     * limit that, so it is somewhat of a trap at this point.
-     */
+#elif defined(_WIN32)
+    // On Windows, both `std::thread::hardware_concurrency` and `GetSystemInfo`
+    // return at most 64 cores, as limited by a single windows processor group.
+    // However, starting with newer versions of Windows, applications can seamlessly
+    // span across multiple processor groups.
     return GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
 #else
     return std::thread::hardware_concurrency();
@@ -373,7 +371,7 @@ class aligned_array {
     aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size) {
 #if defined(_MSC_VER) // MSVC
         data_ = static_cast<type_ *>(_aligned_malloc(sizeof(type_) * size_, alignment));
-#else 
+#else
         data_ = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size_));
 #endif
         if (!data_) throw std::bad_alloc();
@@ -549,21 +547,22 @@ static void sorting_with_openmp(bm::State &state) {
 
     for (auto _ : state) {
         std::reverse(array.begin(), array.end());
-
+        //! Remarkably, on Windows, OpenMP can't handle unsigned integers,
+        //! so we use `std::int64_t` over `std::size_t`.
 #pragma omp parallel for
         // Sort each chunk in parallel
-        for (int64_t i = 0; i < chunks; i++) {
-            std::size_t start = chunk_start_offset(i);
-            std::size_t finish = chunk_start_offset(i + 1);
+        for (std::int64_t i = 0; i < chunks; i++) {
+            std::size_t start = chunk_start_offset(static_cast<std::size_t>(i));
+            std::size_t finish = chunk_start_offset(static_cast<std::size_t>(i) + 1);
             std::sort(array.begin() + start, array.begin() + finish);
         }
 
         // Merge the blocks in a tree-like fashion doubling the size of the merged block each time
         for (std::size_t merge_step = 1; merge_step < chunks; merge_step *= 2) {
 #pragma omp parallel for
-            for (int64_t i = 0; i < chunks; i += 2 * merge_step) {
-                std::size_t first_chunk_index = i;
-                std::size_t second_chunk_index = i + merge_step;
+            for (std::int64_t i = 0; i < chunks; i += 2 * merge_step) {
+                std::size_t first_chunk_index = static_cast<std::size_t>(i);
+                std::size_t second_chunk_index = first_chunk_index + merge_step;
                 if (second_chunk_index >= chunks) continue; // No merge needed
 
                 // We use `inplace_merge` as opposed to `std::merge` to avoid extra memory allocations,
@@ -1844,16 +1843,13 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 #pragma region Alignment of Memory Accesses
 
 /**
- *  For the inline expansion compiler optimization, different
- *  compilers use different attributes (more modern) or
- *  keywords (in older implementations, or for compatibility).
- *
- *  It is common to see a cross-platform/compiler definition
- *  that covers the most common ones used in libraries.
+ *  @b Force-inline is the first macro that many High-Performance Computing
+ *  libraries define. It will bloat the binary, but will reduce the number
+ *  of function calls and stack frames, which can be crucial for small kernels.
+ *  The name of the attribute, however, differs between compilers!
  */
-
 #if defined(_MSC_VER)
-#define LESS_SLOW_ALWAYS_INLINE [[msvc::forceinline]] inline
+#define LESS_SLOW_ALWAYS_INLINE [[msvc::forceinline]] inline // `__forceinline`
 #elif defined(__GNUC__)
 #define LESS_SLOW_ALWAYS_INLINE [[gnu::always_inline]] inline
 #elif defined(__clang__)
@@ -1865,16 +1861,21 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 /**
  *  @brief  Checks if a number is a power of two.
  *
- *  TODO: use intrinsics when available; possibly use std::popcount;
- *  benchmark between them?
+ *  An unsigned integer is a power of two if and only if it has exactly one
+ *  bit set. This can be checked by using the bitwise AND operator with the
+ *  number and its predecessor: `x & (x - 1)` will be zero only for powers
+ *  of two.
+ *
+ *  The same thing can be achieved with the `std::popcount` function, which
+ *  is available in C++20 or compiler intrinsics like `__builtin_popcountll`
+ *  on GCC. Most modern compilers will optimize this to a single instruction.
+ *
+ *  @see "Bit Twiddling Hacks" by Sean Eron Anderson:
+ *       https://graphics.stanford.edu/~seander/bithacks
+ *  @see Book "Hacker's Delight" by Henry S. Warren Jr.:
+ *       https://en.wikipedia.org/wiki/Hacker%27s_Delight
  */
-LESS_SLOW_ALWAYS_INLINE bool is_power_of_two(std::uint64_t x) noexcept {
-#if defined(_MSC_VER)
-    return x && !(x & (x - 1));
-#else
-    return __builtin_popcountll(x) == 1;
-#endif
-}
+LESS_SLOW_ALWAYS_INLINE bool is_power_of_two(std::uint64_t x) noexcept { return x && !(x & (x - 1)); }
 
 /**
  *  When designing high-performance kernels, memory alignment is crucial.
@@ -2263,10 +2264,8 @@ std::size_t parse_size_string(std::string const &str) {
 #pragma region Memory Bound Linear Algebra
 #include <cblas.h>
 /**
- * OpenBLAS defines a SIZE macro for internal use;
- * Later, fmt tries to use a variable named SIZE in one of its function definitions
- * This obviously breaks it; so we must undef size after including openblas
- * and before including fmt later.
+ *! OpenBLAS defines a `SIZE` macro for internal use, which conflicts with `fmt`
+ *! and other code trying to use that name for variable names, so we must undefine it.
  */
 #undef SIZE
 
@@ -2316,7 +2315,6 @@ BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(b
 
 template <typename scalar_type_>
 static void eigen_tops(bm::State &state) {
-    // Make sure Eigen uses all cores - also, Eigen can't multithread without openMP or GEMM
     Eigen::setNbThreads(physical_cores());
 
     // Matrix dimension
@@ -3150,17 +3148,9 @@ static constexpr std::string_view short_config_text =    //
     " # Tricky comment with a : colon in the middle\n\r" // Accorn newline
     "\tpath :/api/v1";                                   // No trailing newline!
 
-#if defined(_MSC_VER) // MSVC
-#define FORCE_INLINE __forceinline
-#elif defined(__GNUC__) || defined(__clang__) // GCC or Clang
-#define FORCE_INLINE inline __attribute__((always_inline))
-#else // Fallback
-#define FORCE_INLINE inline
-#endif
+LESS_SLOW_ALWAYS_INLINE bool is_newline(char c) noexcept { return c == '\n' || c == '\r'; }
 
-FORCE_INLINE bool is_newline(char c) noexcept { return c == '\n' || c == '\r'; }
-
-FORCE_INLINE std::string_view strip_spaces(std::string_view text) noexcept {
+LESS_SLOW_ALWAYS_INLINE std::string_view strip_spaces(std::string_view text) noexcept {
     // Trim leading whitespace
     while (!text.empty() && std::isspace(text.front())) text.remove_prefix(1);
     // Trim trailing whitespace
@@ -3265,7 +3255,7 @@ void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::st
     auto newlines = sz::char_set("\r\n");
     auto whitespaces = sz::whitespaces_set();
 
-    for (sz::string_view line : sz::string_view{config_text}.split(newlines)) {
+    for (sz::string_view line : sz::string_view {config_text}.split(newlines)) {
         line = line.strip(whitespaces);
         if (line.empty() || line.front() == '#') continue; // Skip empty lines or comments
         auto [key, delimiter, value] = line.partition(':');
@@ -3393,12 +3383,11 @@ void parse_regex(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
 
-#if defined(_MSC_VER)
-    // MSVC does not implement std::regex_constants::multiline yet
+    // Prefer multiline mode so ^ and $ anchor to line breaks...
     auto regex_options = std::regex_constants::ECMAScript;
-#else
-    // Use multiline mode so ^ and $ anchor to line breaks.
-    auto regex_options = std::regex_constants::ECMAScript | std::regex_constants::multiline;
+    // ... but MSVC does not define `std::regex_constants::multiline` yet!
+#if defined(_MSC_VER)
+    regex_options |= std::regex_constants::multiline;
 #endif
     // Construct the regex only once. Compilation is expensive!
     // BTW, there is still no `std::string_view` constructor 🤦‍♂️
@@ -5085,7 +5074,7 @@ struct log_printf_t {
         char *buffer, std::size_t buffer_size, //
         std::source_location const &location, int code, std::string_view message) const noexcept {
 #if defined(_MSC_VER)
-        // On MSVC, high_resolution_clock is steady_clock, which cannot have to_time_t applied to it 
+        // On MSVC, high_resolution_clock is steady_clock, which cannot have to_time_t applied to it
         auto now = std::chrono::system_clock::now();
 #else
         auto now = std::chrono::high_resolution_clock::now();
@@ -5154,9 +5143,9 @@ BENCHMARK(logging<log_format_t>)->Name("log_format")->MinTime(2);
 
 #endif // defined(__cpp_lib_format)
 
-#include <fmt/core.h>    // `fmt::format_to_n`
 #include <fmt/chrono.h>  // formatting for `std::chrono` types
 #include <fmt/compile.h> // compile-time format strings
+#include <fmt/core.h>    // `fmt::format_to_n`
 
 struct log_fmt_t {
     std::size_t operator()(                    //
