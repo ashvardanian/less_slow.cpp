@@ -30,13 +30,16 @@ Some of the highlights include:
 - __Is the pointer size really 64 bits__ and how to exploit [pointer-tagging](https://en.wikipedia.org/wiki/Tagged_pointer)?
 - __How many packets is [UDP](https://www.cloudflare.com/learning/ddos/glossary/user-datagram-protocol-udp/) dropping__ and how to serve web requests in [`io_uring`](https://en.wikipedia.org/wiki/Io_uring) from user-space?
 - __Scatter and Gather__ for 50% faster vectorized disjoint memory operations.
-- __How to choose between intrinsics, inline Assembly, and separate Assembly files__ for your performance-critical code?
+- __How to choose between intrinsics, inline Assembly, and separate `.S` files__ for your performance-critical code?
 - __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
 Follow the instructions below to run the code in your environment and compare it to the comments as you read through the source.
 
 ## Running the Benchmarks
+
+The project aims to be compatible with GCC, Clang, and MSVC compilers on Linux, MacOS, and Windows.
+That said, to cover the broadest functionality, using GCC on Linux is recommended:
 
 - If you are on Windows, it's recommended that you set up a Linux environment using [WSL](https://docs.microsoft.com/en-us/windows/wsl/install).
 - If you are on MacOS, consider using the non-native distribution of Clang from [Homebrew](https://brew.sh) or [MacPorts](https://www.macports.org).
