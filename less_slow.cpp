@@ -2262,6 +2262,13 @@ std::size_t parse_size_string(std::string const &str) {
 
 #pragma region Memory Bound Linear Algebra
 #include <cblas.h>
+/**
+ * OpenBLAS defines a SIZE macro for internal use;
+ * Later, fmt tries to use a variable named SIZE in one of its function definitions
+ * This obviously breaks it; so we must undef size after including openblas
+ * and before including fmt later.
+ */
+#undef SIZE
 
 template <typename scalar_type_>
 static void cblas_tops(bm::State &state) {

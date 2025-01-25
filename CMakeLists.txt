@@ -272,6 +272,8 @@ endif()
 # Add OpenBLAS include directory manually
 if(openblas_POPULATED)
   target_include_directories(less_slow PRIVATE ${openblas_SOURCE_DIR})
+  # For config.h
+  target_include_directories(less_slow PRIVATE ${openblas_BINARY_DIR})
 endif()
 
 target_link_libraries(less_slow
