@@ -358,6 +358,12 @@ class aligned_array {
         if (!data_) throw std::bad_alloc();
     }
     ~aligned_array() noexcept { std::free(data_); }
+
+    aligned_array(aligned_array const &) = delete;
+    aligned_array &operator=(aligned_array const &) = delete;
+    aligned_array(aligned_array &&) = delete;
+    aligned_array &operator=(aligned_array &&) = delete;
+
     type_ *begin() const noexcept { return data_; }
     type_ *end() const noexcept { return data_ + size_; }
     type_ &operator[](std::size_t index) noexcept { return data_[index]; }
