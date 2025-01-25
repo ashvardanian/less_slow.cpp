@@ -552,7 +552,7 @@ static void sorting_with_openmp(bm::State &state) {
 
 #pragma omp parallel for
         // Sort each chunk in parallel
-        for (int64_t i = 0; i < chunks; i++) {
+        for (std::int64_t i = 0; i < chunks; i++) {
             std::size_t start = chunk_start_offset(i);
             std::size_t finish = chunk_start_offset(i + 1);
             std::sort(array.begin() + start, array.begin() + finish);
@@ -561,7 +561,7 @@ static void sorting_with_openmp(bm::State &state) {
         // Merge the blocks in a tree-like fashion doubling the size of the merged block each time
         for (std::size_t merge_step = 1; merge_step < chunks; merge_step *= 2) {
 #pragma omp parallel for
-            for (int64_t i = 0; i < chunks; i += 2 * merge_step) {
+            for (std::int64_t i = 0; i < chunks; i += 2 * merge_step) {
                 std::size_t first_chunk_index = i;
                 std::size_t second_chunk_index = i + merge_step;
                 if (second_chunk_index >= chunks) continue; // No merge needed
@@ -1865,6 +1865,9 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 /**
  *  @brief  Checks if a number is a power of two.
  *
+ *  A great reference for manual implementations of such operations:
+ *  https://graphics.stanford.edu/~seander/bithacks.html
+ *
  *  TODO: use intrinsics when available; possibly use std::popcount;
  *  benchmark between them?
  */
@@ -2316,7 +2319,7 @@ BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(b
 
 template <typename scalar_type_>
 static void eigen_tops(bm::State &state) {
-    // Make sure Eigen uses all cores - also, Eigen can't multithread without openMP or GEMM
+    // Make sure Eigen uses all cores - also, Eigen can't multithread without either openMP or EIGEN_GEMM_THREADPOOL
     Eigen::setNbThreads(physical_cores());
 
     // Matrix dimension
@@ -5084,8 +5087,14 @@ struct log_printf_t {
     std::size_t operator()(                    //
         char *buffer, std::size_t buffer_size, //
         std::source_location const &location, int code, std::string_view message) const noexcept {
+        /**
+         * On MSVC, high_resolution_clock is steady_clock, which cannot have to_time_t applied to it.
+         * std::chrono wraps many system APIs and has some parts that are implementatio-defined;
+         * In particular, std::chrono::high_resolution_clock is usually just an alias to
+         * either system_clock or steady_clock. There is debate on whether using it is a good idea at all.
+         * https://en.cppreference.com/w/cpp/chrono/high_resolution_clock
+         */
 #if defined(_MSC_VER)
-        // On MSVC, high_resolution_clock is steady_clock, which cannot have to_time_t applied to it 
         auto now = std::chrono::system_clock::now();
 #else
         auto now = std::chrono::high_resolution_clock::now();
@@ -5153,7 +5162,7 @@ struct log_format_t {
 BENCHMARK(logging<log_format_t>)->Name("log_format")->MinTime(2);
 
 #endif // defined(__cpp_lib_format)
-
+#endif //! defined(_MSC_VER)
 #include <fmt/core.h>    // `fmt::format_to_n`
 #include <fmt/chrono.h>  // formatting for `std::chrono` types
 #include <fmt/compile.h> // compile-time format strings
@@ -5190,7 +5199,7 @@ struct log_fmt_t {
 
 BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
 
-#endif //! defined(_MSC_VER)
+
 
 /**
  *  The results for the logging benchmarks are as follows:
