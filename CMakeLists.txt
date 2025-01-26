@@ -323,6 +323,7 @@ if(USE_NVIDIA_CCCL)
   # These are automatically included when you include the CUDA Toolkit directories.
   target_include_directories(less_slow PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas CUDA::cuda_driver)
+  target_sources(less_slow PRIVATE less_slow.cu)
 
   # Copy the PTX Intermediate Representation file to the runtime directory
   set_source_files_properties(less_slow_ptx.ptx PROPERTIES LANGUAGE "")

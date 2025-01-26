@@ -18,9 +18,6 @@
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
 
-namespace ashvardanian {
-namespace less_slow {
-
 template <typename scalar_type_, std::size_t side_>
 struct small_square_matrix {
     scalar_type_ scalars[side_][side_];
@@ -31,8 +28,10 @@ struct small_square_matrix {
  *          Doesn't use any block/warp-level communication and optimizations.
  */
 template <typename scalar_type_, std::size_t side_>
-__device__ small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda(
-    small_square_matrix<scalar_type_, side_> const &a, small_square_matrix<scalar_type_, side_> const &b) noexcept {
+small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda( //
+    small_square_matrix<scalar_type_, side_> const &a,             //
+    small_square_matrix<scalar_type_, side_> const &b) {
+
     small_square_matrix<scalar_type_, side_> c;
     for (std::size_t i = 0; i != side_; ++i)
         for (std::size_t j = 0; j != side_; ++j)
@@ -40,5 +39,15 @@ __device__ small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda(
     return c;
 }
 
-} // namespace less_slow
-} // namespace ashvardanian
+#include <cuda_fp16.h> //`half` type
+#include <mma.h>       // `mma::` intrinsics
+
+__global__ void tops_f16_sm70tc_cuda_kernel() {
+    using namespace nvcuda;
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::col_major> b_frag;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag;
+
+    // To initialize, we can call: `wmma::fill_fragment(c_frag, 0.0f)`
+    wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+}

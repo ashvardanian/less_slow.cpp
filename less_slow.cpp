@@ -37,10 +37,6 @@
 
 namespace bm = benchmark;
 
-#include "less_slow.cuh"
-
-namespace ls = ashvardanian::less_slow;
-
 #pragma region - Basics
 
 #pragma region How to Benchmark and Randomness
@@ -1954,6 +1950,31 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 
 #if defined(__CUDA__) || 1
 #include <cuda.h>
+
+extern __global__ void tops_f16_sm70tc_cuda_kernel();
+
+static void theoretic_tops_cuda(                 //
+    bm::State &state, void (*kernel)(void),      //
+    std::size_t m, std::size_t n, std::size_t k, //
+    int required_capability = 70) {
+
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    int const blocks = prop.multiProcessorCount;
+    int const threads_per_block = prop.warpSize;
+
+    for (auto _ : state) {
+        kernel<<<blocks, threads_per_block>>>();
+        cudaDeviceSynchronize();
+    }
+
+    std::size_t const tops_per_cycle = m * n * k * 2;
+    std::size_t const tops_per_gpu = tops_per_cycle * blocks; //? Warps compute each tile product collectively!
+    state.counters["TOP"] = benchmark::Counter(tops_per_gpu * state.iterations(), benchmark::Counter::kIsRate);
+}
+
+BENCHMARK_CAPTURE(theoretic_tops_cuda, f16_sm70tc_sm70, tops_f16_sm70tc_cuda_kernel, 16, 16, 16, 70)->MinTime(10);
+
 #include <filesystem>
 
 static void theoretic_tops_ptx(                  //
@@ -2068,7 +2089,7 @@ static void theoretic_tops_ptx(                  //
     cuCtxDestroy(context);
 }
 // Benchmark configurations with explicit compute capability requirements
-BENCHMARK_CAPTURE(theoretic_tops_ptx, f16_tc_sm70, "tops_f16_tc_ptx_kernel_sm70", 16, 8, 8, 70)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops_ptx, f16_tc_sm70, "tops_f16_sm70tc_ptx_kernel", 16, 8, 8, 70)->MinTime(10);
 BENCHMARK_CAPTURE(theoretic_tops_ptx, bf16_tc_sm80, "tops_bf16_tc_ptx_kernel_sm80", 16, 8, 8, 80)->MinTime(10);
 BENCHMARK_CAPTURE(theoretic_tops_ptx, f8_tc_sm90, "tops_f8_tc_ptx_kernel_sm90", 16, 8, 8, 90)->MinTime(10);
 
@@ -2327,7 +2348,6 @@ void spread_scatter_scalar( //
 
 template <typename kernel_type_>
 static void spread_memory(bm::State &state, kernel_type_ kernel, std::size_t align = sizeof(spread_data_t)) {
-
     std::size_t const size = static_cast<std::size_t>(state.range(0));
     aligned_array<spread_index_t> indices(size, align);
     aligned_array<spread_data_t> first(size, align);

@@ -59,7 +59,9 @@
     "Niebler",
     "Niels",
     "nlohmann",
+    "noexcept",
     "NVCC",
+    "nvcuda",
     "openmp",
     "Ormrod",
     "Peta",
@@ -92,6 +94,7 @@
     "VNNI",
     "VPCLMULQDQ",
     "Weis",
+    "wmma",
     "XCOMP",
     "XFEATURE",
     "XTILE",
@@ -218,6 +221,15 @@
     "valarray": "cpp",
     "variant": "cpp",
     "vector": "cpp",
-    "version": "cpp"
+    "version": "cpp",
+    "strstream": "cpp",
+    "cinttypes": "cpp",
+    "codecvt": "cpp",
+    "csetjmp": "cpp",
+    "csignal": "cpp",
+    "hash_map": "cpp",
+    "future": "cpp",
+    "scoped_allocator": "cpp",
+    "typeindex": "cpp"
   }
 }
