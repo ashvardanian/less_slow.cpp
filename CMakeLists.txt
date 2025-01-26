@@ -36,20 +36,26 @@ find_package(OpenMP REQUIRED)
 set(FETCHCONTENT_QUIET OFF)
 include(FetchContent) # For CMake-friendly dependencies
 
-# Fetch and build OpenBLAS
-FetchContent_Declare(
-  OpenBLAS
-  GIT_REPOSITORY https://github.com/xianyi/OpenBLAS.git
-  GIT_TAG v0.3.29
-)
+# Disable warnings for dependencies
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
 
-# Set OpenBLAS build options
-set(NOFORTRAN ON CACHE BOOL "Disable Fortran" FORCE)
-set(BUILD_WITHOUT_LAPACK OFF CACHE BOOL "Build without LAPACK" FORCE)
-set(USE_THREAD ON CACHE BOOL "Use threading" FORCE)
-
-# Make OpenBLAS available
-FetchContent_MakeAvailable(OpenBLAS)
+# Sadly, OpenBLAS compilation fails on some platforms
+#
+# FetchContent_Declare(
+# OpenBLAS
+# GIT_REPOSITORY https://github.com/xianyi/OpenBLAS.git
+# GIT_TAG v0.3.29
+# )
+# set(NOFORTRAN ON CACHE BOOL "Disable Fortran" FORCE)
+# set(BUILD_WITHOUT_LAPACK ON CACHE BOOL "Build without LAPACK" FORCE)
+# set(USE_THREAD ON CACHE BOOL "Use threading" FORCE)
+# FetchContent_MakeAvailable(OpenBLAS)
+#
+# Moreover, CMake sometimes fails to find it on Windows:
+# https://stackoverflow.com/a/78335726/2766161
+set(CMAKE_FIND_LIBRARY_PREFIXES ";lib")
+find_package(BLAS REQUIRED)
 
 # GTest (required by Google Benchmark)
 FetchContent_Declare(
@@ -241,6 +247,7 @@ endif()
 # ------------------------------------------------------------------------------
 # Compiler Flags / Options
 # ------------------------------------------------------------------------------
+
 # Check for compiler support of `-march=native`
 if(CMAKE_CXX_COMPILER_ID MATCHES "Intel")
   target_compile_options(less_slow PRIVATE -xHost)
@@ -325,6 +332,7 @@ target_link_libraries(less_slow
   absl::flat_hash_map
   nlohmann_json::nlohmann_json
   Eigen3::Eigen
+  ${BLAS_LIBRARIES}
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
