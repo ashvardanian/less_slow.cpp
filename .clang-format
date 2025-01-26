@@ -44,7 +44,7 @@ BraceWrapping:
   SplitEmptyNamespace: false
   IndentBraces: false
 
-SortIncludes: true
+SortIncludes: false
 SortUsingDeclarations: true
 
 SpaceAfterCStyleCast: false

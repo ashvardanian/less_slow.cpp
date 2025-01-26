@@ -1836,10 +1836,10 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
  */
 
 #include <cassert>  // `assert`
-#include <fstream>  // `std::ifstream`
-#include <iterator> // `std::random_access_iterator_tag`
 #include <memory>   // `std::assume_aligned`, `std::unique_ptr`
 #include <string>   // `std::string`, `std::stoull`
+#include <iterator> // `std::random_access_iterator_tag`
+#include <fstream>  // `std::ifstream`
 
 /**
  *  @brief  Reads the contents of a file from the specified path into a string.
@@ -2801,12 +2801,6 @@ static void pipeline_unifex(bm::State &state) {
 BENCHMARK(pipeline_unifex);
 #endif            // TODO: UnifEx needs more work
 #pragma endregion // Ranges and Iterators
-#pragma region Variants, Tuples, and State Machines
-
-#include <tuple>   // `std::tuple`
-#include <variant> // `std::variant`
-
-#pragma endregion // Variants, Tuples, and State Machines
 
 #pragma region Virtual Functions and Polymorphism
 
@@ -5055,9 +5049,9 @@ struct log_format_t {
 
 #endif // defined(__cpp_lib_format)
 
-#include <fmt/chrono.h>  // formatting for `std::chrono` types
-#include <fmt/compile.h> // compile-time format strings
 #include <fmt/core.h>    // `std::format_to_n`
+#include <fmt/compile.h> // compile-time format strings
+#include <fmt/chrono.h>  // formatting for `std::chrono` types
 
 struct log_fmt_t {
     std::size_t operator()(                    //
