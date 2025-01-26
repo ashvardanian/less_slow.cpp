@@ -1984,10 +1984,10 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
  */
 
 #include <cassert>  // `assert`
-#include <fstream>  // `std::ifstream`
-#include <iterator> // `std::random_access_iterator_tag`
 #include <memory>   // `std::assume_aligned`, `std::unique_ptr`
 #include <string>   // `std::string`, `std::stoull`
+#include <iterator> // `std::random_access_iterator_tag`
+#include <fstream>  // `std::ifstream`
 
 /**
  *  @brief  Reads the contents of a file from the specified path into a string.
@@ -2951,12 +2951,6 @@ static void pipeline_unifex(bm::State &state) {
 BENCHMARK(pipeline_unifex);
 #endif            // TODO: UnifEx needs more work
 #pragma endregion // Ranges and Iterators
-#pragma region Variants, Tuples, and State Machines
-
-#include <tuple>   // `std::tuple`
-#include <variant> // `std::variant`
-
-#pragma endregion // Variants, Tuples, and State Machines
 
 #pragma region Virtual Functions and Polymorphism
 
@@ -4507,18 +4501,25 @@ struct basic_graph_map {
 #include <absl/container/flat_hash_set.h> // `absl::flat_hash_set`
 #include <absl/hash/hash.h>               // `absl::Hash`
 
-struct graph_flat_set_t {
-    struct edge_t {
-        node_id_t from;
-        node_id_t to;
-        edge_weight_t weight;
+struct edge_t {
+    vertex_id_t from;
+    vertex_id_t to;
+    edge_weight_t weight;
 
-        //! NVCC's `std::construct_at` requires those default constructors
-        constexpr edge_t() noexcept = default;
-        constexpr edge_t(edge_t const &) noexcept = default;
-        constexpr edge_t(node_id_t from, node_id_t to, edge_weight_t weight) noexcept
-            : from(from), to(to), weight(weight) {}
-    };
+    //! NVCC's `std::construct_at` requires those default constructors
+    constexpr edge_t() noexcept = default;
+    constexpr edge_t(edge_t const &) noexcept = default;
+    constexpr edge_t(vertex_id_t from, vertex_id_t to, edge_weight_t weight) noexcept
+        : from(from), to(to), weight(weight) {}
+};
+
+static_assert( //
+    sizeof(edge_t) == sizeof(vertex_id_t) + sizeof(vertex_id_t) + sizeof(edge_weight_t),
+    "With a single-level flat structure we can guarantee structure packing");
+
+template <typename allocator_type_ = std::allocator<std::byte>>
+struct basic_graph_flat_set {
+
     struct equal_t {
         using is_transparent = std::true_type;
         bool operator()(edge_t const &lhs, edge_t const &rhs) const noexcept {
@@ -5205,9 +5206,9 @@ struct log_format_t {
 
 #endif // defined(__cpp_lib_format)
 
-#include <fmt/chrono.h>  // formatting for `std::chrono` types
-#include <fmt/compile.h> // compile-time format strings
 #include <fmt/core.h>    // `std::format_to_n`
+#include <fmt/compile.h> // compile-time format strings
+#include <fmt/chrono.h>  // formatting for `std::chrono` types
 
 struct log_fmt_t {
     std::size_t operator()(                    //
