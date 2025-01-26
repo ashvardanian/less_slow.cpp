@@ -5635,18 +5635,24 @@ BENCHMARK_CAPTURE(rpc_libc, public, networking_route_t::public_k, //
 #pragma region IO Uring
 
 /**
- *  Uses:
- *  - `IORING_OP_RECVMSG`, `IORING_OP_SENDMSG`: since 5.3
- *  - `IORING_OP_LINK_TIMEOUT`: since 5.5
- *  - `IORING_OP_TIMEOUT`: since 5.4
+ *  We will start by designing a version that only uses features available
+ *  on the Linux kernel 5.5 or earlier:
+ *  - `IORING_OP_RECVMSG` and `IORING_OP_SENDMSG` - since 5.3
+ *  - `IORING_OP_LINK_TIMEOUT` - since 5.5
+ *  - `IORING_OP_TIMEOUT` - since 5.4
  *
- *  @see Opcode docs: https://man7.org/linux/man-pages/man2/io_uring_enter2.2.html
+ *  Relative timeouts are used, as the `IORING_TIMEOUT_BOOTTIME` is only
+ *  available with kernel 5.19. It also excludes the following features:
+ *  - `IORING_REGISTER_BUFFERS` - since 5.1
+ *  - `IORING_RECV_MULTISHOT` or `io_uring_prep_recvmsg_multishot` - since 6.0
+ *  - `IORING_OP_SEND_ZC` or `io_uring_prep_sendmsg_zc` - since 6.0
+ *  - `IORING_SETUP_SQPOLL` - with `IORING_FEAT_SQPOLL_NONFIXED` after 5.11
+ *  - `IORING_SETUP_SUBMIT_ALL` - since 5.18
+ *  - `IORING_SETUP_COOP_TASKRUN` - since 5.19
+ *  - `IORING_SETUP_SINGLE_ISSUER` - since 6.0
  *
- *  TODO: Future work may include:
- *  - `io_uring_prep_recvmsg_multishot`
- *  - `io_uring_prep_sendmsg_zc`
- *  - IOSQE_IO_DRAIN - put barrier between batches
- *  - IOSQE_CQE_SKIP_SUCCESS - to skip timeouts?
+ *  @see Supported operations: https://man7.org/linux/man-pages/man2/io_uring_enter2.2.html
+ *  @see Kernel versions in Ubuntu: https://ubuntu.com/security/livepatch/docs/livepatch/reference/kernels
  */
 #include <liburing.h> // `io_uring`
 
@@ -5674,7 +5680,7 @@ struct alignas(64) message_t {
  *  @brief  A minimal RPC @b server using @b `io_uring` functionality
  *          to setup the UDP socket, and process many requests concurrently.
  */
-class rpc_uring_server {
+class rpc_uring55_server {
 
     int socket_descriptor_;
     sockaddr_in server_address_;
@@ -5688,7 +5694,7 @@ class rpc_uring_server {
   public:
     using status_t = message_t::message_status_t;
 
-    rpc_uring_server(std::string const &server_address_str, std::uint16_t port, std::size_t max_concurrency)
+    rpc_uring55_server(std::string const &server_address_str, std::uint16_t port, std::size_t max_concurrency)
         : should_stop_(false), messages_(max_concurrency * 2), max_concurrency_(max_concurrency) {
 
         auto [socket_descriptor, server_address] = rpc_server_socket(port, server_address_str);
@@ -5714,7 +5720,7 @@ class rpc_uring_server {
         }
     }
 
-    ~rpc_uring_server() noexcept {}
+    ~rpc_uring55_server() noexcept {}
     void close() noexcept {
         ::close(socket_descriptor_);
         io_uring_queue_exit(&ring_);
@@ -5769,7 +5775,7 @@ class rpc_uring_server {
  *  @brief  A minimal RPC @b client using @b `io_uring` functionality
  *          to setup the UDP socket, and process many requests in batches.
  */
-class rpc_uring_client {
+class rpc_uring55_client {
 
     int socket_descriptor_;
     sockaddr_in server_address_;
@@ -5783,7 +5789,7 @@ class rpc_uring_client {
   public:
     using status_t = message_t::message_status_t;
 
-    rpc_uring_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
+    rpc_uring55_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
         : messages_(concurrency) {
         // Initialize socket
         socket_descriptor_ = socket(AF_INET, SOCK_DGRAM, 0);
@@ -5817,7 +5823,7 @@ class rpc_uring_client {
         }
     }
 
-    ~rpc_uring_client() noexcept {
+    ~rpc_uring55_client() noexcept {
         close(socket_descriptor_);
         io_uring_queue_exit(&ring_);
     }
@@ -5865,7 +5871,7 @@ class rpc_uring_client {
 
             // Timeout operation
             submitted_entry = io_uring_get_sqe(&ring_);
-            io_uring_prep_link_timeout(submitted_entry, &packet_timeout, IORING_TIMEOUT_BOOTTIME);
+            io_uring_prep_link_timeout(submitted_entry, &packet_timeout, 0);
             io_uring_sqe_set_data(submitted_entry, &packet_timeout_handle_);
             count_entries++;
 
@@ -5874,7 +5880,7 @@ class rpc_uring_client {
         // We can add a batch-wide timeout:
         //
         //      auto *batch_timeout_entry = io_uring_get_sqe(&ring_);
-        //      io_uring_prep_timeout(batch_timeout_entry, &batch_timeout, count_entries, IORING_TIMEOUT_BOOTTIME);
+        //      io_uring_prep_timeout(batch_timeout_entry, &batch_timeout, count_entries, 0);
         //      io_uring_sqe_set_data(batch_timeout_entry, &batch_timeout_handle_);
         //      count_entries++;
         int submitted_entries = io_uring_submit_and_wait(&ring_, count_entries);
@@ -5920,17 +5926,17 @@ class rpc_uring_client {
     }
 };
 
-static void rpc_uring(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
-    return rpc<rpc_uring_server, rpc_uring_client>(state, route, batch_size, packet_size);
+static void rpc_uring55(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+    return rpc<rpc_uring55_server, rpc_uring55_client>(state, route, batch_size, packet_size);
 }
 
-BENCHMARK_CAPTURE(rpc_uring, loopback, networking_route_t::loopback_k, 256 /* messages per batch */,
+BENCHMARK_CAPTURE(rpc_uring55, loopback, networking_route_t::loopback_k, 256 /* messages per batch */,
                   1024 /* bytes per packet */)
     ->MinTime(2)
     ->UseManualTime()
     ->Unit(benchmark::kMicrosecond);
 
-BENCHMARK_CAPTURE(rpc_uring, public, networking_route_t::public_k, 256 /* messages per batch */,
+BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* messages per batch */,
                   1024 /* bytes per packet */)
     ->MinTime(2)
     ->UseManualTime()
