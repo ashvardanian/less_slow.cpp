@@ -149,7 +149,7 @@ BENCHMARK(i32_addition_inline_asm);
  *  - @b less_slow_amd64.S - for the x86_64 architecture, with 64-bit extensions,
  *    originally introduced by AMD.
  */
-#if defined(__x86_64__) || defined(__aarch64__)
+#if !defined(_MSC_VER) && (defined(__x86_64__) || defined(__aarch64__) || defined(__i386__) || defined(_M_X64))
 
 extern "C" std::int32_t i32_add_asm_kernel(std::int32_t a, std::int32_t b);
 
@@ -262,8 +262,17 @@ BENCHMARK(i32_addition_randomly_initialized);
 #include <unistd.h> // `_SC_NPROCESSORS_ONLN`
 #elif defined(__APPLE__)
 #include <sys/sysctl.h> // `sysctlbyname` on macOS
+#elif defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#include <WinBase.h>
 #endif
 
+/**
+ *  @brief  Returns the number of physical cores available on the system,
+ *          as opposed to the logical cores, which include hyper-threading.
+ */
 std::size_t physical_cores() {
 #if defined(__linux__)
     int nproc = sysconf(_SC_NPROCESSORS_ONLN);
@@ -273,6 +282,37 @@ std::size_t physical_cores() {
     size_t len = sizeof(nproc);
     sysctlbyname("hw.physicalcpu", &nproc, &len, nullptr, 0);
     return static_cast<std::size_t>(nproc);
+#elif defined(_WIN32)
+    // On Windows, both `std::thread::hardware_concurrency` and `GetSystemInfo`
+    // return at most 64 cores, as limited by a single windows processor group.
+    // However, starting with newer versions of Windows, applications can seamlessly
+    // span across multiple processor groups.
+    // GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) can return all logical cores;
+    // However, in order to get physical cores, we have to dive deeper.
+    DWORD bufferSize = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &bufferSize);
+    if (bufferSize == 0) {
+        return 0; // Error occurred
+    }
+
+    std::vector<BYTE> buffer(bufferSize);
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore,
+                                          reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()),
+                                          &bufferSize)) {
+        return 0; // Error occurred
+    }
+
+    std::size_t coreCount = 0;
+    PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX ptr =
+        reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data());
+    DWORD byteOffset = 0;
+    while (byteOffset < bufferSize) {
+        if (ptr->Relationship == RelationProcessorCore) { ++coreCount; }
+        byteOffset += ptr->Size;
+        ptr = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(reinterpret_cast<BYTE *>(ptr) + ptr->Size);
+    }
+
+    return coreCount;
 #else
     return std::thread::hardware_concurrency();
 #endif
@@ -340,14 +380,50 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(physical_cores());
  */
 #include <algorithm> // `std::sort`
 #include <numeric>   // `std::iota`
-#include <vector>    // `std::vector`
+
+/**
+ *  @brief  A minimalistic `std::vector` replacement, wrapping an aligned
+ *          allocation similar to `std::unique_ptr`.
+ *  @see    https://stackoverflow.com/a/79363156/2766161
+ */
+template <typename type_>
+class aligned_array {
+
+    type_ *data_ = nullptr;
+    std::size_t size_ = 0;
+
+  public:
+#if defined(_MSC_VER) //! MSVC doesn't support `std::aligned_alloc` yet
+    aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size) {
+        data_ = static_cast<type_ *>(_aligned_malloc(sizeof(type_) * size_, alignment));
+        if (!data_) throw std::bad_alloc();
+    }
+    ~aligned_array() noexcept { _aligned_free(data_); }
+#else
+    aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size) {
+        data_ = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size_));
+        if (!data_) throw std::bad_alloc();
+    }
+    ~aligned_array() noexcept { std::free(data_); }
+#endif
+
+    aligned_array(aligned_array const &) = delete;
+    aligned_array &operator=(aligned_array const &) = delete;
+    aligned_array(aligned_array &&) = delete;
+    aligned_array &operator=(aligned_array &&) = delete;
+
+    type_ *begin() const noexcept { return data_; }
+    type_ *end() const noexcept { return data_ + size_; }
+    type_ &operator[](std::size_t index) noexcept { return data_[index]; }
+    type_ operator[](std::size_t index) const noexcept { return data_[index]; }
+};
 
 static void sorting(bm::State &state) {
 
     auto length = static_cast<std::size_t>(state.range(0));
     auto include_preprocessing = static_cast<bool>(state.range(1));
 
-    std::vector<std::uint32_t> array(length);
+    aligned_array<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
@@ -356,9 +432,7 @@ static void sorting(bm::State &state) {
         // Reverse order is the most classical worst case, but not the only one.
         std::reverse(array.begin(), array.end());
         if (!include_preprocessing) state.ResumeTiming();
-
         std::sort(array.begin(), array.end());
-        bm::DoNotOptimize(array.size());
     }
 
     if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
@@ -393,13 +467,12 @@ static void sorting_with_executors( //
     bm::State &state, execution_policy_ &&policy) {
 
     auto length = static_cast<std::size_t>(state.range(0));
-    std::vector<std::uint32_t> array(length);
+    aligned_array<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
         std::reverse(policy, array.begin(), array.end());
         std::sort(policy, array.begin(), array.end());
-        bm::DoNotOptimize(array.size());
     }
 
     if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
@@ -498,26 +571,27 @@ static void sorting_with_openmp(bm::State &state) {
         return offset < length ? offset : length;
     };
 
-    std::vector<std::uint32_t> array(length);
+    aligned_array<std::uint32_t> array(length);
     std::iota(array.begin(), array.end(), 1u);
 
     for (auto _ : state) {
         std::reverse(array.begin(), array.end());
-
+        //! Remarkably, on Windows, OpenMP can't handle unsigned integers,
+        //! so we use `std::int64_t` over `std::size_t`.
 #pragma omp parallel for
         // Sort each chunk in parallel
-        for (std::size_t i = 0; i < chunks; i++) {
-            std::size_t start = chunk_start_offset(i);
-            std::size_t finish = chunk_start_offset(i + 1);
+        for (std::int64_t i = 0; i < chunks; i++) {
+            std::size_t start = chunk_start_offset(static_cast<std::size_t>(i));
+            std::size_t finish = chunk_start_offset(static_cast<std::size_t>(i) + 1);
             std::sort(array.begin() + start, array.begin() + finish);
         }
 
         // Merge the blocks in a tree-like fashion doubling the size of the merged block each time
         for (std::size_t merge_step = 1; merge_step < chunks; merge_step *= 2) {
 #pragma omp parallel for
-            for (std::size_t i = 0; i < chunks; i += 2 * merge_step) {
-                std::size_t first_chunk_index = i;
-                std::size_t second_chunk_index = i + merge_step;
+            for (std::int64_t i = 0; i < chunks; i += 2 * merge_step) {
+                std::size_t first_chunk_index = static_cast<std::size_t>(i);
+                std::size_t second_chunk_index = first_chunk_index + merge_step;
                 if (second_chunk_index >= chunks) continue; // No merge needed
 
                 // We use `inplace_merge` as opposed to `std::merge` to avoid extra memory allocations,
@@ -528,8 +602,6 @@ static void sorting_with_openmp(bm::State &state) {
                 std::inplace_merge(array.begin() + start, array.begin() + mid, array.begin() + finish);
             }
         }
-
-        bm::DoNotOptimize(array.size());
     }
 
     if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
@@ -621,6 +693,7 @@ struct quick_sort_recurse {
  *  with additional bookkeeping. In our logic we never need to pop from the middle
  *  or from the front, so a `std::vector` is a better choice.
  */
+#include <vector> // `std::vector`
 
 template <typename element_type_>
 struct quick_sort_iterate {
@@ -663,10 +736,10 @@ template <typename sorter_type_, std::size_t length_> //
 static void recursion_cost(bm::State &state) {
     using element_t = typename sorter_type_::element_t;
     sorter_type_ sorter;
-    std::vector<element_t> array(length_);
+    aligned_array<element_t> array(length_);
     for (auto _ : state) {
         for (std::size_t i = 0; i != length_; ++i) array[i] = length_ - i;
-        sorter(array.data(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
+        sorter(array.begin(), 0, static_cast<std::ptrdiff_t>(length_ - 1));
     }
 
     if (!std::is_sorted(array.begin(), array.end())) state.SkipWithError("Array is not sorted!");
@@ -720,8 +793,8 @@ BENCHMARK_TEMPLATE(recursion_cost, iterative_sort_i32s, 4096);
  */
 static void branch_cost(bm::State &state) {
     auto count = static_cast<std::size_t>(state.range(0));
-    std::vector<std::int32_t> random_values(count);
-    std::generate_n(random_values.begin(), random_values.size(), &std::rand);
+    aligned_array<std::int32_t> random_values(count);
+    std::generate_n(random_values.begin(), count, &std::rand);
     std::int32_t variable = 0;
     std::size_t iteration = 0;
 
@@ -764,16 +837,16 @@ static void cache_misses_cost(bm::State &state) {
     auto count = static_cast<std::uint32_t>(state.range(0));
 
     // Populate with arbitrary data
-    std::vector<std::int32_t> data(count);
+    aligned_array<std::int32_t> data(count);
     std::iota(data.begin(), data.end(), 0);
 
     // Initialize different access orders
-    std::vector<std::uint32_t> indices(count);
+    aligned_array<std::uint32_t> indices(count);
     if constexpr (access_order_ == access_order_t::random) {
         std::random_device random_device;
         std::mt19937 generator(random_device());
         std::uniform_int_distribution<std::uint32_t> uniform_distribution(0, count - 1);
-        std::generate_n(indices.begin(), indices.size(), [&] { return uniform_distribution(generator); });
+        std::generate(indices.begin(), indices.end(), [&] { return uniform_distribution(generator); });
     }
     else { std::iota(indices.begin(), indices.end(), 0u); }
 
@@ -1492,6 +1565,7 @@ void configure_x86_denormals(void) {
  *
  *  @see Arm Feature Detection: https://developer.arm.com/documentation/101028/0010/Feature-test-macros
  */
+#if !defined(_MSC_VER)
 #if defined(__AVX512F__)
 extern "C" std::uint32_t tops_f64_avx512ma_asm_kernel(void);
 BENCHMARK_CAPTURE(theoretic_tops, f64_avx512ma, tops_f64_avx512ma_asm_kernel, configure_x86_denormals)->MinTime(10);
@@ -1602,6 +1676,7 @@ extern "C" std::uint32_t tops_u8_neon_asm_kernel(void);
 BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10);
 BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
 #endif // defined(__ARM_FEATURE_DOTPROD)
+#endif // !defined(_MSC_VER)
 
 #if defined(__AMX_TILE__)
 /**
@@ -1797,6 +1872,41 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 #pragma region Alignment of Memory Accesses
 
 /**
+ *  @b Force-inline is the first macro that many High-Performance Computing
+ *  libraries define. It will bloat the binary, but will reduce the number
+ *  of function calls and stack frames, which can be crucial for small kernels.
+ *  The name of the attribute, however, differs between compilers!
+ */
+#if defined(_MSC_VER)
+#define LESS_SLOW_ALWAYS_INLINE [[msvc::forceinline]] inline // `__forceinline`
+#elif defined(__GNUC__)
+#define LESS_SLOW_ALWAYS_INLINE [[gnu::always_inline]] inline
+#elif defined(__clang__)
+#define LESS_SLOW_ALWAYS_INLINE [[clang::always_inline]] inline
+#else
+#define LESS_SLOW_ALWAYS_INLINE inline __attribute__((always_inline))
+#endif
+
+/**
+ *  @brief  Checks if a number is a power of two.
+ *
+ *  An unsigned integer is a power of two if and only if it has exactly one
+ *  bit set. This can be checked by using the bitwise AND operator with the
+ *  number and its predecessor: `x & (x - 1)` will be zero only for powers
+ *  of two.
+ *
+ *  The same thing can be achieved with the `std::popcount` function, which
+ *  is available in C++20 or compiler intrinsics like `__builtin_popcountll`
+ *  on GCC. Most modern compilers will optimize this to a single instruction.
+ *
+ *  @see "Bit Twiddling Hacks" by Sean Eron Anderson:
+ *       https://graphics.stanford.edu/~seander/bithacks
+ *  @see Book "Hacker's Delight" by Henry S. Warren Jr.:
+ *       https://en.wikipedia.org/wiki/Hacker%27s_Delight
+ */
+LESS_SLOW_ALWAYS_INLINE bool is_power_of_two(std::uint64_t x) noexcept { return x && !(x & (x - 1)); }
+
+/**
  *  When designing high-performance kernels, memory alignment is crucial.
  *  Misaligned memory accesses split data across cache lines, causing extra
  *  loads and reducing efficiency. While split loads are unavoidable for large
@@ -1818,10 +1928,10 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
  */
 
 #include <cassert>  // `assert`
-#include <fstream>  // `std::ifstream`
-#include <iterator> // `std::random_access_iterator_tag`
 #include <memory>   // `std::assume_aligned`, `std::unique_ptr`
 #include <string>   // `std::string`, `std::stoull`
+#include <iterator> // `std::random_access_iterator_tag`
+#include <fstream>  // `std::ifstream`
 
 /**
  *  @brief  Reads the contents of a file from the specified path into a string.
@@ -1829,7 +1939,7 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 std::string read_file_contents(std::string const &path) {
     std::ifstream file(path);
     std::string content;
-    if (!file.is_open()) return 0;
+    if (!file.is_open()) return "";
     std::getline(file, content);
     file.close();
     return content;
@@ -1928,13 +2038,6 @@ class strided_ptr {
     // clang-format on
 };
 
-template <typename type_>
-std::unique_ptr<type_[], decltype(&std::free)> make_aligned_array(std::size_t size, std::size_t alignment) {
-    type_ *raw_ptr = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size));
-    if (!raw_ptr) throw std::bad_alloc();
-    return std::unique_ptr<type_[], decltype(&std::free)>(raw_ptr, &std::free);
-}
-
 #if defined(__aarch64__)
 /**
  *  @brief  Helper derived from `__aarch64_sync_cache_range` in `libgcc`, used to
@@ -1951,7 +2054,7 @@ static void memory_access(bm::State &state) {
     constexpr std::size_t typical_l2_size = 1024u * 1024u;
     std::size_t const cache_line_width = fetch_cache_line_width();
     assert( //
-        cache_line_width > 0 && __builtin_popcountll(cache_line_width) == 1 &&
+        cache_line_width > 0 && is_power_of_two(cache_line_width) &&
         "The cache line width must be a power of two greater than 0");
 
     // We are using a fairly small L2-cache-sized buffer to show, that this is
@@ -1959,8 +2062,8 @@ static void memory_access(bm::State &state) {
     // memory accesses may suffer from the same issues. For split-loads, pad our
     // buffer with an extra `cache_line_width` bytes of space.
     std::size_t const buffer_size = typical_l2_size + cache_line_width;
-    auto const buffer = make_aligned_array<std::byte>(buffer_size, cache_line_width);
-    std::byte *const buffer_ptr = buffer.get();
+    aligned_array<std::byte> buffer(buffer_size, cache_line_width);
+    std::byte *const buffer_ptr = buffer.begin();
 
     // Let's initialize a strided range using out `strided_ptr` template, but
     // for `alignment_mode_t::unaligned_k` make sure that the scalar-of-interest in each
@@ -2050,20 +2153,26 @@ template <typename kernel_type_>
 static void spread_memory(bm::State &state, kernel_type_ kernel, std::size_t align = sizeof(spread_data_t)) {
 
     std::size_t const size = static_cast<std::size_t>(state.range(0));
-    auto indices = make_aligned_array<spread_index_t>(size, align);
-    auto first = make_aligned_array<spread_data_t>(size, align);
-    auto second = make_aligned_array<spread_data_t>(size, align);
+    aligned_array<spread_index_t> indices(size, align);
+    aligned_array<spread_data_t> first(size, align);
+    aligned_array<spread_data_t> second(size, align);
 
-    std::iota(indices.get(), indices.get() + size, 0);
+    std::iota(indices.begin(), indices.begin() + size, 0);
     std::random_device random_device;
     std::mt19937 generator(random_device());
-    std::shuffle(indices.get(), indices.get() + size, generator);
+    std::shuffle(indices.begin(), indices.begin() + size, generator);
 
-    for (auto _ : state) kernel(first.get(), indices.get(), second.get(), size);
+    for (auto _ : state) kernel(first.begin(), indices.begin(), second.begin(), size);
 }
 
-BENCHMARK_CAPTURE(spread_memory, gather_scalar, spread_gather_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
-BENCHMARK_CAPTURE(spread_memory, scatter_scalar, spread_scatter_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, gather_scalar, spread_gather_scalar)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
+BENCHMARK_CAPTURE(spread_memory, scatter_scalar, spread_scatter_scalar)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
 
 #if defined(__AVX512F__)
 void spread_gather_avx512( //
@@ -2183,15 +2292,22 @@ std::size_t parse_size_string(std::string const &str) {
 
 #pragma region Memory Bound Linear Algebra
 #include <cblas.h>
+/**
+ *! OpenBLAS defines a `SIZE` macro for internal use, which conflicts with `fmt`
+ *! and other code trying to use that name for variable names, so we must undefine it.
+ */
+#undef SIZE
 
 template <typename scalar_type_>
 static void cblas_tops(bm::State &state) {
+    openblas_set_num_threads(physical_cores());
+
     // BLAS expects leading dimensions: `lda` = `ldb` = `ldc` = `n` for square inputs.
     std::size_t n = static_cast<std::size_t>(state.range(0));
     int const lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
 
     // Allocate and initialize data
-    std::vector<scalar_type_> a(n * n), b(n * n), c(n * n, 0);
+    aligned_array<scalar_type_> a(n * n), b(n * n), c(n * n);
     std::iota(a.begin(), a.end(), 0);
     std::iota(b.begin(), b.end(), 0);
 
@@ -2199,12 +2315,12 @@ static void cblas_tops(bm::State &state) {
     for (auto _ : state)
         if constexpr (std::is_same_v<scalar_type_, float>)
             cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n, n, n, //
-                        /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
-                        /* beta: */ 0, c.data(), ldc);
+                        /* alpha: */ 1, a.begin(), lda, b.begin(), ldb,     //
+                        /* beta: */ 0, c.begin(), ldc);
         else
             cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n, n, n, //
-                        /* alpha: */ 1, a.data(), lda, b.data(), ldb,       //
-                        /* beta: */ 0, c.data(), ldc);
+                        /* alpha: */ 1, a.begin(), lda, b.begin(), ldb,     //
+                        /* beta: */ 0, c.begin(), ldc);
 
     std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
     state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
@@ -2228,6 +2344,8 @@ BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(b
 
 template <typename scalar_type_>
 static void eigen_tops(bm::State &state) {
+    Eigen::setNbThreads(physical_cores());
+
     // Matrix dimension
     std::size_t n = static_cast<std::size_t>(state.range(0));
 
@@ -2336,19 +2454,10 @@ constexpr std::uint64_t pipe_start = 3;
 constexpr std::uint64_t pipe_end = 49;
 
 /**
- *  @brief  Checks if a number is a power of two.
- */
-[[gnu::always_inline]]
-inline bool is_power_of_two(std::uint64_t x) noexcept {
-    return __builtin_popcountll(x) == 1;
-}
-
-/**
  *  @brief  Checks if a number is a power of three using modulo division.
  *          The largest power of three fitting in a 64-bit integer is 3^40.
  */
-[[gnu::always_inline]]
-inline bool is_power_of_three(std::uint64_t x) noexcept {
+LESS_SLOW_ALWAYS_INLINE bool is_power_of_three(std::uint64_t x) noexcept {
     constexpr std::uint64_t max_power_of_three = 12157665459056928801ull;
     return x > 0 && max_power_of_three % x == 0;
 }
@@ -2359,7 +2468,7 @@ inline bool is_power_of_three(std::uint64_t x) noexcept {
  *  @brief  Supplies the prime factors to a template-based callback.
  */
 template <typename callback_type_>
-[[gnu::always_inline]] inline void prime_factors_lambdas( //
+LESS_SLOW_ALWAYS_INLINE void prime_factors_lambdas( //
     std::uint64_t input, callback_type_ &&callback) noexcept {
     // Handle factor 2 separately
     while ((input & 1) == 0) {
@@ -2784,12 +2893,6 @@ static void pipeline_unifex(bm::State &state) {
 BENCHMARK(pipeline_unifex);
 #endif            // TODO: UnifEx needs more work
 #pragma endregion // Ranges and Iterators
-#pragma region Variants, Tuples, and State Machines
-
-#include <tuple>   // `std::tuple`
-#include <variant> // `std::variant`
-
-#pragma endregion // Variants, Tuples, and State Machines
 
 #pragma region Virtual Functions and Polymorphism
 
@@ -2982,7 +3085,9 @@ BENCHMARK(packaging_stl_tuple)->MinTime(2);
  *
  *  @see Reddit discussion: https://www.reddit.com/r/cpp/comments/ar4ghs/stdpair_disappointing_performance/
  */
+#if !defined(_MSC_VER)
 static_assert(!std::is_trivially_copyable_v<std::pair<int, float>>);
+#endif
 static_assert(!std::is_trivially_copyable_v<std::tuple<int, float>>);
 
 /**
@@ -3066,17 +3171,9 @@ static constexpr std::string_view short_config_text =    //
     " # Tricky comment with a : colon in the middle\n\r" // Accorn newline
     "\tpath :/api/v1";                                   // No trailing newline!
 
-#if defined(_MSC_VER) // MSVC
-#define FORCE_INLINE __forceinline
-#elif defined(__GNUC__) || defined(__clang__) // GCC or Clang
-#define FORCE_INLINE inline __attribute__((always_inline))
-#else // Fallback
-#define FORCE_INLINE inline
-#endif
+LESS_SLOW_ALWAYS_INLINE bool is_newline(char c) noexcept { return c == '\n' || c == '\r'; }
 
-FORCE_INLINE bool is_newline(char c) noexcept { return c == '\n' || c == '\r'; }
-
-FORCE_INLINE std::string_view strip_spaces(std::string_view text) noexcept {
+LESS_SLOW_ALWAYS_INLINE std::string_view strip_spaces(std::string_view text) noexcept {
     // Trim leading whitespace
     while (!text.empty() && std::isspace(text.front())) text.remove_prefix(1);
     // Trim trailing whitespace
@@ -3181,7 +3278,7 @@ void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::st
     auto newlines = sz::char_set("\r\n");
     auto whitespaces = sz::whitespaces_set();
 
-    for (sz::string_view line : sz::string_view(config_text).split(newlines)) {
+    for (sz::string_view line : sz::string_view {config_text}.split(newlines)) {
         line = line.strip(whitespaces);
         if (line.empty() || line.front() == '#') continue; // Skip empty lines or comments
         auto [key, delimiter, value] = line.partition(':');
@@ -3309,8 +3406,12 @@ void parse_regex(bm::State &state, std::string_view config_text) {
     std::size_t pairs = 0, bytes = 0;
     std::vector<std::pair<std::string, std::string>> settings;
 
-    // Use multiline mode so ^ and $ anchor to line breaks.
-    auto regex_options = std::regex_constants::ECMAScript | std::regex_constants::multiline;
+    // Prefer multiline mode so ^ and $ anchor to line breaks...
+    auto regex_options = std::regex_constants::ECMAScript;
+    // ... but MSVC does not define `std::regex_constants::multiline` yet!
+#if !defined(_MSC_VER)
+    regex_options |= std::regex_constants::multiline;
+#endif
     // Construct the regex only once. Compilation is expensive!
     // BTW, there is still no `std::string_view` constructor 🤦‍♂️
     std::regex regex_fsm(regex_for_config.data(), regex_for_config.size(), regex_options);
@@ -4337,6 +4438,12 @@ struct edge_t {
     vertex_id_t from;
     vertex_id_t to;
     edge_weight_t weight;
+
+    //! NVCC's `std::construct_at` requires those default constructors
+    constexpr edge_t() noexcept = default;
+    constexpr edge_t(edge_t const &) noexcept = default;
+    constexpr edge_t(vertex_id_t from, vertex_id_t to, edge_weight_t weight) noexcept
+        : from(from), to(to), weight(weight) {}
 };
 
 static_assert( //
@@ -4698,17 +4805,17 @@ BENCHMARK(graph_rank<graph_flat_set>)->MinTime(10)->Name("graph_rank<absl::flat_
 #include <charconv>  // `std::from_chars`, `std::to_chars`
 #include <stdexcept> // `std::runtime_error`, `std::out_of_range`
 
-constexpr std::size_t fail_period_read_integer = 6;
-constexpr std::size_t fail_period_convert_to_integer = 11;
-constexpr std::size_t fail_period_next_string = 17;
-constexpr std::size_t fail_period_write_back = 23;
+constexpr std::size_t fail_period_read_integer_k = 6;
+constexpr std::size_t fail_period_convert_to_integer_k = 11;
+constexpr std::size_t fail_period_next_string_k = 17;
+constexpr std::size_t fail_period_write_back_k = 23;
 
 double get_max_value(std::vector<double> const &v) noexcept { return *(std::max_element(std::begin(v), std::end(v))); }
 
 static std::string read_integer_from_file_or_throw( //
     [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept(false) {
-    if (iteration_index % fail_period_read_integer == 0) throw std::runtime_error("File read failed");
-    if (iteration_index % fail_period_convert_to_integer == 0) return "abc";
+    if (iteration_index % fail_period_read_integer_k == 0) throw std::runtime_error("File read failed");
+    if (iteration_index % fail_period_convert_to_integer_k == 0) return "abc";
     // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
     // but given the Small String Optimization, it shouldn't happen in practice.
     return "1";
@@ -4728,7 +4835,7 @@ static std::size_t string_to_integer_or_throw( //
 }
 
 static std::string integer_to_next_string_or_throw(std::size_t value, std::size_t iteration_index) noexcept(false) {
-    if (iteration_index % fail_period_next_string == 0) throw std::runtime_error("Increment failed");
+    if (iteration_index % fail_period_next_string_k == 0) throw std::runtime_error("Increment failed");
     value++;
     constexpr std::size_t buffer_size = 10;
     char buffer[buffer_size] {};
@@ -4740,7 +4847,7 @@ static std::string integer_to_next_string_or_throw(std::size_t value, std::size_
 static void write_to_file_or_throw( //
     [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
     std::size_t iteration_index) noexcept(false) {
-    if (iteration_index % fail_period_write_back == 0) throw std::runtime_error("File write failed");
+    if (iteration_index % fail_period_write_back_k == 0) throw std::runtime_error("File write failed");
 }
 
 static void errors_throw(bm::State &state) {
@@ -4791,8 +4898,8 @@ class expected {
 
 static expected<std::string> read_integer_from_file_or_variants( //
     [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_read_integer == 0) return std::error_code {EIO, std::generic_category()};
-    if (iteration_index % fail_period_convert_to_integer == 0) return "abc"s;
+    if (iteration_index % fail_period_read_integer_k == 0) return std::error_code {EIO, std::generic_category()};
+    if (iteration_index % fail_period_convert_to_integer_k == 0) return "abc"s;
     // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
     // but given the Small String Optimization, it shouldn't happen in practice.
     return "1"s;
@@ -4808,7 +4915,7 @@ static expected<std::size_t> string_to_integer_or_variants( //
 
 static expected<std::string> integer_to_next_string_or_variants(std::size_t value,
                                                                 std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_next_string == 0) return std::error_code {EIO, std::generic_category()};
+    if (iteration_index % fail_period_next_string_k == 0) return std::error_code {EIO, std::generic_category()};
     value++;
     constexpr std::size_t buffer_size = 10;
     char buffer[buffer_size] {};
@@ -4820,7 +4927,7 @@ static expected<std::string> integer_to_next_string_or_variants(std::size_t valu
 static std::error_code write_to_file_or_variants( //
     [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
     std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_write_back == 0) return std::error_code {EIO, std::generic_category()};
+    if (iteration_index % fail_period_write_back_k == 0) return std::error_code {EIO, std::generic_category()};
     return std::error_code {};
 }
 
@@ -4869,8 +4976,8 @@ struct result {
 
 static result<std::string> read_integer_from_file_with_status( //
     [[maybe_unused]] std::string const &filename, std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_read_integer == 0) return {{}, status::read_failed};
-    if (iteration_index % fail_period_convert_to_integer == 0) return {"abc"s, status::success};
+    if (iteration_index % fail_period_read_integer_k == 0) return {{}, status::read_failed};
+    if (iteration_index % fail_period_convert_to_integer_k == 0) return {"abc"s, status::success};
     // Technically, the constructor may throw `std::bad_alloc` if the allocation fails,
     // but given the Small String Optimization, it shouldn't happen in practice.
     return {"1"s, status::success};
@@ -4885,7 +4992,7 @@ static result<std::size_t> string_to_integer_with_status( //
 }
 
 static result<std::string> integer_to_next_string_with_status(std::size_t value, std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_next_string == 0) return {{}, status::increment_failed};
+    if (iteration_index % fail_period_next_string_k == 0) return {{}, status::increment_failed};
     value++;
     constexpr std::size_t buffer_size = 10;
     char buffer[buffer_size] {};
@@ -4897,7 +5004,7 @@ static result<std::string> integer_to_next_string_with_status(std::size_t value,
 static status write_to_file_with_status( //
     [[maybe_unused]] std::string const &filename, [[maybe_unused]] std::string const &value,
     std::size_t iteration_index) noexcept {
-    if (iteration_index % fail_period_write_back == 0) return status::write_failed;
+    if (iteration_index % fail_period_write_back_k == 0) return status::write_failed;
     return status::success;
 }
 
@@ -4967,12 +5074,43 @@ BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(
 
 using std::string_view_literals::operator""sv;
 
+template <typename logger_type_>
+static void logging(bm::State &state) {
+    struct {
+        int code;
+        std::string_view message;
+    } errors[3] = {
+        {1, "Operation not permitted"sv},
+        {12, "Cannot allocate memory"sv},
+        {113, "No route to host"sv},
+    };
+    char buffer[1024];
+    logger_type_ logger;
+    std::size_t iteration_index = 0;
+    std::size_t bytes_logged = 0;
+    for (auto _ : state) {
+        bytes_logged += logger(              //
+            buffer, sizeof(buffer),          //
+            std::source_location::current(), //
+            errors[iteration_index % 3].code, errors[iteration_index % 3].message);
+        iteration_index++;
+    }
+    state.SetBytesProcessed(bytes_logged);
+}
+
 struct log_printf_t {
     std::size_t operator()(                    //
         char *buffer, std::size_t buffer_size, //
         std::source_location const &location, int code, std::string_view message) const noexcept {
-
+        // On MSVC, the `high_resolution_clock` is the `steady_clock`, which won't work with `to_time_t`.
+        // `std::chrono::high_resolution_clock` is usually just an alias to either `system_clock` or
+        // `steady_clock`. There is debate on whether using it is a good idea at all.
+        // https://en.cppreference.com/w/cpp/chrono/high_resolution_clock
+#if defined(_MSC_VER)
+        auto now = std::chrono::system_clock::now();
+#else
         auto now = std::chrono::high_resolution_clock::now();
+#endif
         auto time_since_epoch = now.time_since_epoch();
 
         // Extract seconds and milliseconds
@@ -4997,6 +5135,9 @@ struct log_printf_t {
     }
 };
 
+BENCHMARK(logging<log_printf_t>)->Name("log_printf")->MinTime(2);
+
+#if !defined(_MSC_VER)
 #if defined(__cpp_lib_format)
 #include <format> // `std::format_to_n`
 
@@ -5030,11 +5171,12 @@ struct log_format_t {
     }
 };
 
-#endif // defined(__cpp_lib_format)
+BENCHMARK(logging<log_format_t>)->Name("log_format")->MinTime(2);
 
-#include <fmt/chrono.h>  // formatting for `std::chrono` types
-#include <fmt/compile.h> // compile-time format strings
+#endif                   // defined(__cpp_lib_format)
 #include <fmt/core.h>    // `std::format_to_n`
+#include <fmt/compile.h> // compile-time format strings
+#include <fmt/chrono.h>  // formatting for `std::chrono` types
 
 struct log_fmt_t {
     std::size_t operator()(                    //
@@ -5066,34 +5208,6 @@ struct log_fmt_t {
     }
 };
 
-template <typename logger_type_>
-static void logging(bm::State &state) {
-    struct {
-        int code;
-        std::string_view message;
-    } errors[3] = {
-        {1, "Operation not permitted"sv},
-        {12, "Cannot allocate memory"sv},
-        {113, "No route to host"sv},
-    };
-    char buffer[1024];
-    logger_type_ logger;
-    std::size_t iteration_index = 0;
-    std::size_t bytes_logged = 0;
-    for (auto _ : state) {
-        bytes_logged += logger(              //
-            buffer, sizeof(buffer),          //
-            std::source_location::current(), //
-            errors[iteration_index % 3].code, errors[iteration_index % 3].message);
-        iteration_index++;
-    }
-    state.SetBytesProcessed(bytes_logged);
-}
-
-BENCHMARK(logging<log_printf_t>)->Name("log_printf")->MinTime(2);
-#if defined(__cpp_lib_format)
-BENCHMARK(logging<log_format_t>)->Name("log_format")->MinTime(2);
-#endif
 BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
 
 /**
@@ -5112,6 +5226,7 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  *       https://youtu.be/ptba_AqFYCM
  */
 
+#endif            // !defined(_MSC_VER)
 #endif            // defined(__cpp_lib_source_location)
 #pragma endregion // Logs
 

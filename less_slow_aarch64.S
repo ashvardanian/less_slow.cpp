@@ -147,3 +147,6 @@ tops_u8_neon_asm_kernel:
     ret
 
 # ----------------------------------------------------------------------------
+# Tell the linker/assembler that we do NOT need an executable stack:
+    .section .note.GNU-stack, "", @progbits
+# ----------------------------------------------------------------------------

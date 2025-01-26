@@ -38,6 +38,9 @@ Follow the instructions below to run the code in your environment and compare it
 
 ## Running the Benchmarks
 
+The project aims to be compatible with GCC, Clang, and MSVC compilers on Linux, MacOS, and Windows.
+That said, to cover the broadest functionality, using GCC on Linux is recommended:
+
 - If you are on Windows, it's recommended that you set up a Linux environment using [WSL](https://docs.microsoft.com/en-us/windows/wsl/install).
 - If you are on MacOS, consider using the non-native distribution of Clang from [Homebrew](https://brew.sh) or [MacPorts](https://www.macports.org).
 - If you are on Linux, make sure to install CMake and a recent version of GCC or Clang compilers to support C++20 features.
@@ -111,3 +114,32 @@ Come on!
   </tr>
 </table>
 
+## Google Benchmark Functionality
+
+This benchmark suite uses most of the features provided by Google Benchmark.
+If you write a lot of benchmarks and avoid going to the full [User Guide](https://github.com/google/benchmark/blob/main/docs/user_guide.md), here is a condensed list of the most useful features:
+
+- `->Args({x, y})` - Pass multiple arguments to parameterized benchmarks
+- `BENCHMARK()` - Register a basic benchmark function
+- `BENCHMARK_CAPTURE()` - Create variants of benchmarks with different captured values
+- `Counter::kAvgThreads` - Specify thread-averaged counters
+- `DoNotOptimize()` - Prevent compiler from optimizing away operations
+- `ClobberMemory()` - Force memory synchronization
+- `->Complexity(oNLogN)` - Specify and validate algorithmic complexity
+- `->SetComplexityN(n)` - Set input size for complexity calculations
+- `->ComputeStatistics("max", ...)` - Calculate custom statistics across runs
+- `->Iterations(n)` - Control exact number of iterations
+- `->MinTime(n)` - Set minimum benchmark duration
+- `->MinWarmUpTime(n)` - To warm up the data caches
+- `->Name("...")` - Assign custom benchmark names
+- `->Range(start, end)` - Profile for a range of input sizes
+- `->RangeMultiplier(n)` - Set multiplier between range values
+- `->ReportAggregatesOnly()` - Show only aggregated statistics
+- `state.counters["name"]` - Create custom performance counters
+- `state.PauseTiming()`, `ResumeTiming()` - Control timing measurement
+- `state.SetBytesProcessed(n)` - Record number of bytes processed
+- `state.SkipWithError()` - Skip benchmark with error message
+- `->Threads(n)` - Run benchmark with specified number of threads
+- `->Unit(kMicrosecond)` - Set time unit for reporting
+- `->UseRealTime()` - Measure real time instead of CPU time
+- `->UseManualTime()` - To feed custom timings for GPU and IO benchmarks
