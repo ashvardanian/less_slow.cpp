@@ -2211,8 +2211,14 @@ static void spread_memory(bm::State &state, kernel_type_ kernel, std::size_t ali
     for (auto _ : state) kernel(first.begin(), indices.begin(), second.begin(), size);
 }
 
-BENCHMARK_CAPTURE(spread_memory, gather_scalar, spread_gather_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
-BENCHMARK_CAPTURE(spread_memory, scatter_scalar, spread_scatter_scalar)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, gather_scalar, spread_gather_scalar)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
+BENCHMARK_CAPTURE(spread_memory, scatter_scalar, spread_scatter_scalar)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
 
 #if defined(__AVX512F__)
 void spread_gather_avx512( //
