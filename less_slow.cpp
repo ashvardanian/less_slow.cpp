@@ -1951,9 +1951,129 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 #pragma endregion // Port Interleaving and Latency Hiding
 
 #pragma region GPGPU Programming
-#if defined(__CUDA__) || defined(__HIP__)
+
+#if defined(__CUDA__) || 1
+#include <cuda.h>
+#include <filesystem>
+
+static void theoretic_tops_ptx(                  //
+    bm::State &state,                            //
+    std::string kernel_name,                     //
+    std::size_t m, std::size_t n, std::size_t k, //
+    int required_capability = 70) {
+
+    // Resolve the absolute path to the PTX file
+    std::string ptx_file = "less_slow_ptx.ptx";
+    std::filesystem::path ptx_path = std::filesystem::absolute(ptx_file);
+    if (!std::filesystem::exists(ptx_path)) {
+        state.SkipWithError("Failed to find PTX file.");
+        return;
+    }
+    ptx_file = ptx_path.string();
+
+    CUdevice device;
+    CUcontext context;
+    CUmodule module_;
+    CUfunction kernel;
+
+    // Initialize CUDA
+    if (cuInit(0) != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to initialize CUDA.");
+        return;
+    }
+
+    // Get the first device
+    if (cuDeviceGet(&device, 0) != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to get CUDA device.");
+        return;
+    }
+
+    // Get compute capability
+    int capability_major = 0, capability_minor = 0;
+    if (cuDeviceGetAttribute(&capability_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device) != CUDA_SUCCESS ||
+        cuDeviceGetAttribute(&capability_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device) != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to query compute capability.");
+        return;
+    }
+
+    int const capability = capability_major * 10 + capability_minor;
+    if (capability < required_capability) {
+        std::string error_msg =
+            "Insufficient compute capability. Required: " + std::to_string(required_capability / 10) + "." +
+            std::to_string(required_capability % 10) + ", Detected: " + std::to_string(capability_major) + "." +
+            std::to_string(capability_minor);
+        state.SkipWithError(error_msg.c_str());
+        return;
+    }
+
+    // Create context
+    if (cuCtxCreate(&context, 0, device) != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to create CUDA context.");
+        return;
+    }
+
+    // Load the PTX file
+    CUresult result = cuModuleLoad(&module_, ptx_file.c_str());
+    if (result != CUDA_SUCCESS) {
+        char const *error_string;
+        cuGetErrorString(result, &error_string);
+        state.SkipWithError("Failed to load PTX file: " + std::string(error_string));
+        cuCtxDestroy(context);
+        return;
+    }
+
+    // Access the kernel function
+    if (cuModuleGetFunction(&kernel, module_, kernel_name.c_str()) != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to get kernel function from PTX file.");
+        cuModuleUnload(module_);
+        cuCtxDestroy(context);
+        return;
+    }
+
+    // Query device properties
+    int num_sms = 0;
+    int warp_size = 0;
+    if (cuDeviceGetAttribute(&num_sms, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device) != CUDA_SUCCESS ||
+        cuDeviceGetAttribute(&warp_size, CU_DEVICE_ATTRIBUTE_WARP_SIZE, device) != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to query device properties.");
+        cuCtxDestroy(context);
+        return;
+    }
+
+    // Set kernel launch configuration
+    dim3 grid_dim(num_sms);
+    dim3 block_dim(warp_size);
+    void *kernel_args[] = {nullptr};
+
+    for (auto _ : state) {
+        CUresult launch_result = cuLaunchKernel(   //
+            kernel,                                //
+            grid_dim.x, grid_dim.y, grid_dim.z,    //
+            block_dim.x, block_dim.y, block_dim.z, //
+            0, nullptr, kernel_args, nullptr);
+        if (launch_result != CUDA_SUCCESS) {
+            char const *error_string;
+            cuGetErrorString(launch_result, &error_string);
+            state.SkipWithError("Kernel launch failed: " + std::string(error_string));
+            break;
+        }
+        cuCtxSynchronize();
+    }
+
+    std::size_t const tops_per_cycle = m * n * k * 2;
+    state.counters["TOP"] = benchmark::Counter(tops_per_cycle * state.iterations(), benchmark::Counter::kIsRate);
+
+    // Clean up
+    cuModuleUnload(module_);
+    cuCtxDestroy(context);
+}
+// Benchmark configurations with explicit compute capability requirements
+BENCHMARK_CAPTURE(theoretic_tops_ptx, f16_tc_sm70, "tops_f16_tc_ptx_kernel_sm70", 16, 8, 8, 70)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops_ptx, bf16_tc_sm80, "tops_bf16_tc_ptx_kernel_sm80", 16, 8, 8, 80)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops_ptx, f8_tc_sm90, "tops_f8_tc_ptx_kernel_sm90", 16, 8, 8, 90)->MinTime(10);
 
 #endif
+
 #pragma endregion // GPGPU Programming
 
 #pragma endregion // - Numerics

@@ -267,7 +267,6 @@ if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" OR CMAKE_CUDA_COMPILER_ID STREQUAL "
   target_compile_options(less_slow PRIVATE
     -Wfatal-errors # Stop on first error
     -fopenmp # OpenMP support, also requires linking
-    --expt-relaxed-constexpr # Relax `constexpr` restrictions
     -w # Suppress warnings, we can't resolve all warning across all compilers
   )
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -323,7 +322,7 @@ if(USE_NVIDIA_CCCL)
   # For CUB/Thrust, rely on CUDA Toolkit's bundled versions
   # These are automatically included when you include the CUDA Toolkit directories.
   target_include_directories(less_slow PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-  target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas)
+  target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas CUDA::cuda_driver)
 
   # Copy the PTX Intermediate Representation file to the runtime directory
   set_source_files_properties(less_slow_ptx.ptx PROPERTIES LANGUAGE "")
