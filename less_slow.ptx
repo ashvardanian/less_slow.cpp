@@ -1,0 +1,54 @@
+// ----------------------------------------------------------------------------
+// less_slow.ptx
+// Micro-kernels for building a performance-first mindset for CUDA-capable GPUs
+// using PTX intermediate representation for different generations of Streaming
+// Multiprocessors (SMs) and Tensor Cores (TCs).
+// ----------------------------------------------------------------------------
+
+.version 7.0
+.target sm_70
+.address_size 64
+
+// Kernel for SM 7.0: FP16 Tensor Core MMA
+.visible .entry tops_f16_tc_ptx_kernel_sm70() {
+    .reg .f16 a<8>, b<8>, c<8>, d<8>; // FP16 registers
+
+    mma.sync.aligned.m16n8k8.row.col.f16.f16.f16.f16 
+        {a0, a1, a2, a3, a4, a5, a6, a7},
+        {b0, b1, b2, b3, b4, b5, b6, b7},
+        {c0, c1, c2, c3, c4, c5, c6, c7},
+        {d0, d1, d2, d3, d4, d5, d6, d7};
+    ret;
+}
+
+.version 7.0
+.target sm_80
+.address_size 64
+
+// Kernel for SM 8.0: BF16 Tensor Core MMA
+.visible .entry tops_bf16_tc_ptx_kernel_sm80() {
+    .reg .b16 a<8>, b<8>, c<8>, d<8>; // BF16 registers
+
+    mma.sync.aligned.m16n8k8.row.col.bf16.bf16.f32.f32 
+        {a0, a1, a2, a3, a4, a5, a6, a7},
+        {b0, b1, b2, b3, b4, b5, b6, b7},
+        {c0, c1, c2, c3, c4, c5, c6, c7},
+        {d0, d1, d2, d3, d4, d5, d6, d7};
+    ret;
+}
+
+.version 7.0
+.target sm_90
+.address_size 64
+
+// Kernel for SM 9.0: FP8 Tensor Core MMA
+.visible .entry tops_fp8_tc_ptx_kernel_sm90() {
+    .reg .f8 a<8>, b<8>, c<8>, d<8>; // FP8 registers
+
+    mma.sync.aligned.m16n8k8.row.col.f8.f8.f32.f32 
+        {a0, a1, a2, a3, a4, a5, a6, a7},
+        {b0, b1, b2, b3, b4, b5, b6, b7},
+        {c0, c1, c2, c3, c4, c5, c6, c7},
+        {d0, d1, d2, d3, d4, d5, d6, d7};
+    ret;
+}

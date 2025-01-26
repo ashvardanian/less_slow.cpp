@@ -37,6 +37,10 @@
 
 namespace bm = benchmark;
 
+#include "less_slow.cuh"
+
+namespace ls = ashvardanian::less_slow;
+
 #pragma region - Basics
 
 #pragma region How to Benchmark and Randomness
@@ -1945,6 +1949,12 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
  */
 
 #pragma endregion // Port Interleaving and Latency Hiding
+
+#pragma region GPGPU Programming
+#if defined(__CUDA__) || defined(__HIP__)
+
+#endif
+#pragma endregion // GPGPU Programming
 
 #pragma endregion // - Numerics
 

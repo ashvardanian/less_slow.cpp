@@ -324,6 +324,13 @@ if(USE_NVIDIA_CCCL)
   # These are automatically included when you include the CUDA Toolkit directories.
   target_include_directories(less_slow PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas)
+
+  # Add the PTX file as a CUDA source
+  target_sources(less_slow PRIVATE less_slow.ptx)
+  set_source_files_properties(less_slow.ptx PROPERTIES
+    LANGUAGE CUDA
+    CUDA_PTX_COMPILATION ON
+  )
 endif()
 
 if(OpenMP_FOUND)
