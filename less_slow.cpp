@@ -4354,6 +4354,12 @@ struct edge_t {
     vertex_id_t from;
     vertex_id_t to;
     edge_weight_t weight;
+
+    //! NVCC's `std::construct_at` requires those default constructors
+    constexpr edge_t() noexcept = default;
+    constexpr edge_t(edge_t const &) noexcept = default;
+    constexpr edge_t(vertex_id_t from, vertex_id_t to, edge_weight_t weight) noexcept
+        : from(from), to(to), weight(weight) {}
 };
 
 static_assert( //
