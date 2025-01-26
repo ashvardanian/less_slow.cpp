@@ -5532,23 +5532,30 @@ BENCHMARK_CAPTURE(rpc_libc, public, networking_route_t::public_k, //
 #include <liburing.h> // `io_uring`
 
 /**
+ *  @brief  Wraps the `rpc_buffer_t` with metadata about the client address.
+ *
+ *  It's a common pattern in async systems to store request metadata next
+ *  to the buffer to locate both with a single pointer.
+ */
+struct alignas(64) addressed_buffer_t {
+    enum class message_status_t {
+        pending_k,
+        sending_k,
+        receiving_k,
+    };
+    rpc_buffer_t buffer;                             //? Put first to improve alignment
+    struct iovec io_vec;                             //? Point to `buffer` 🙃
+    struct msghdr header;                            //? Point to the `io_vec` 🙃🙃
+    sockaddr_in partner_address;                     //? Where is the packet coming from?
+    message_status_t status;                         //? For our simple state machine
+    std::chrono::steady_clock::time_point timestamp; //? Optional
+};
+
+/**
  *  @brief  A minimal RPC @b server using @b `io_uring` functionality
  *          to setup the UDP socket, and process many requests concurrently.
  */
 class rpc_uring_server {
-
-    /**
-     *  @brief  Wraps the `rpc_buffer_t` with metadata about the client address.
-     *
-     *  It's a common pattern in async systems to store request metadata next
-     *  to the buffer to locate both with a single pointer.
-     */
-    struct alignas(64) addressed_buffer_t {
-        rpc_buffer_t buffer;  //? Put first to improve alignment
-        struct iovec io_vec;  //? Point to `buffer` 🙃
-        struct msghdr header; //? Point to the `io_vec` 🙃🙃
-        sockaddr_in client_address;
-    };
 
     int socket_descriptor_;
     sockaddr_in server_address_;
@@ -5557,35 +5564,24 @@ class rpc_uring_server {
 
     // Pre-allocated resources
     std::vector<addressed_buffer_t> addressed_buffers_;
+    std::size_t max_concurrency_;
 
   public:
-    rpc_uring_server(std::string const &address, std::uint16_t port, std::size_t max_concurrency)
-        : should_stop_(false), addressed_buffers_(max_concurrency) {
+    rpc_uring_server(std::string const &server_address_str, std::uint16_t port, std::size_t max_concurrency)
+        : should_stop_(false), addressed_buffers_(max_concurrency * 2), max_concurrency_(max_concurrency) {
 
-        // Initialize socket
-        socket_descriptor_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (socket_descriptor_ < 0) raise_system_error("Failed to create socket");
+        auto [socket_descriptor, server_address] = rpc_server_socket(port, server_address_str);
+        socket_descriptor_ = socket_descriptor;
+        server_address_ = server_address;
 
-        // Allow port reuse
-        int const socket_option = 1;
-        if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_REUSEADDR, &socket_option, sizeof(socket_option)) < 0)
-            raise_system_error("Failed to set SO_REUSEADDR");
-
-        // Bind to address and port
-        server_address_.sin_family = AF_INET;
-        server_address_.sin_addr.s_addr = inet_addr(address.c_str());
-        server_address_.sin_port = htons(port);
-        if (bind(socket_descriptor_, reinterpret_cast<sockaddr *>(&server_address_), sizeof(server_address_)) < 0)
-            raise_system_error("Failed to bind socket");
-
-        // Initialize io_uring with one slot for each receive/send operation
+        // Initialize `io_uring` with one slot for each receive/send operation
         if (io_uring_queue_init(max_concurrency * 2, &ring_, 0) < 0)
             raise_system_error("Failed to initialize io_uring");
 
         // Initialize message resources
         for (addressed_buffer_t &addressed_buffer : addressed_buffers_) {
             memset(&addressed_buffer.header, 0, sizeof(addressed_buffer.header));
-            addressed_buffer.header.msg_name = &addressed_buffer.client_address;
+            addressed_buffer.header.msg_name = &addressed_buffer.partner_address;
             addressed_buffer.header.msg_namelen = sizeof(sockaddr_in);
             // Each message will be made of just one buffer
             addressed_buffer.header.msg_iov = &addressed_buffer.io_vec;
@@ -5593,6 +5589,7 @@ class rpc_uring_server {
             // ... and that buffer is a member of our `addressed_buffer`
             addressed_buffer.io_vec.iov_base = addressed_buffer.buffer.data();
             addressed_buffer.io_vec.iov_len = addressed_buffer.buffer.size();
+            addressed_buffer.status = addressed_buffer_t::message_status_t::pending_k;
         }
     }
 
@@ -5606,6 +5603,8 @@ class rpc_uring_server {
     void operator()() noexcept {
         // Submit initial receive operations
         for (addressed_buffer_t &addressed_buffer : addressed_buffers_) {
+            addressed_buffer.status = addressed_buffer_t::message_status_t::receiving_k;
+            memset(&addressed_buffer.partner_address, 0, sizeof(sockaddr_in));
             struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
             io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &addressed_buffer.header, 0);
             io_uring_sqe_set_data(receive_entry, &addressed_buffer);
@@ -5618,18 +5617,23 @@ class rpc_uring_server {
             bool completed_something = io_uring_wait_cqe(&ring_, &completed_entry) == 0;
             if (!completed_something) continue;
 
-            int received_length = completed_entry->res; //? Should contain the number of bytes received
+            int transmitted_length = completed_entry->res;
             addressed_buffer_t &addressed_buffer =
                 *static_cast<addressed_buffer_t *>(io_uring_cqe_get_data(completed_entry));
-            if (received_length > 0) { // Successful receive
-                // Prepare send operation
+
+            // If we've received some content, submit a reply
+            if (addressed_buffer.status == addressed_buffer_t::message_status_t::receiving_k) {
                 struct io_uring_sqe *send_entry = io_uring_get_sqe(&ring_);
+                addressed_buffer.status = addressed_buffer_t::message_status_t::sending_k;
                 io_uring_prep_sendmsg(send_entry, socket_descriptor_, &addressed_buffer.header, 0);
                 io_uring_sqe_set_data(send_entry, &addressed_buffer);
-                io_uring_sqe_set_flags(send_entry, IOSQE_IO_LINK); // Don't receive next before we send :)
+            }
 
-                // Prepare next receive
+            // Prepare next receive operation
+            else if (addressed_buffer.status == addressed_buffer_t::message_status_t::sending_k) {
                 struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
+                addressed_buffer.status = addressed_buffer_t::message_status_t::receiving_k;
+                memset(&addressed_buffer.partner_address, 0, sizeof(sockaddr_in));
                 io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &addressed_buffer.header, 0);
                 io_uring_sqe_set_data(receive_entry, &addressed_buffer);
             }
@@ -5640,19 +5644,11 @@ class rpc_uring_server {
     }
 };
 
+/**
+ *  @brief  A minimal RPC @b client using @b `io_uring` functionality
+ *          to setup the UDP socket, and process many requests in batches.
+ */
 class rpc_uring_client {
-    enum class message_status_t {
-        pending,
-        sent,
-        received,
-    };
-    struct addressed_buffer_t {
-        struct msghdr header;
-        struct iovec io_vec;
-        rpc_buffer_t buffer;
-        std::chrono::steady_clock::time_point send_time;
-        message_status_t status = message_status_t::pending;
-    };
 
     int socket_descriptor_;
     sockaddr_in server_address_;
@@ -5692,7 +5688,7 @@ class rpc_uring_client {
             addressed_buffer.io_vec.iov_len = addressed_buffer.buffer.size();
             // Initialize the buffer with some data
             addressed_buffer.buffer.fill('X');
-            addressed_buffer.status = message_status_t::pending;
+            addressed_buffer.status = addressed_buffer_t::message_status_t::pending_k;
         }
     }
 
@@ -5728,8 +5724,8 @@ class rpc_uring_client {
             io_uring_prep_sendmsg(submitted_entry, socket_descriptor_, &res.header, 0);
             io_uring_sqe_set_data(submitted_entry, &res);
             io_uring_sqe_set_flags(submitted_entry, IOSQE_IO_LINK); // Don't receive before sending :)
-            res.send_time = std::chrono::steady_clock::now();
-            res.status = message_status_t::pending;
+            res.timestamp = std::chrono::steady_clock::now();
+            res.status = addressed_buffer_t::message_status_t::sending_k;
 
             // Prepare receive operation
             submitted_entry = io_uring_get_sqe(&ring_);
@@ -5766,12 +5762,12 @@ class rpc_uring_client {
             else if (&addressed_buffer == &batch_timeout_handle_) { break; } // Time to exit!
             else if (completion_code < 0) { failed_packets++; }              // Failed operation
             else {                                                           // Successful operation
-                if (addressed_buffer.status == message_status_t::pending) {
-                    addressed_buffer.status = message_status_t::sent;
+                if (addressed_buffer.status == addressed_buffer_t::message_status_t::sending_k) {
+                    addressed_buffer.status = addressed_buffer_t::message_status_t::receiving_k;
                 }
                 else { // Received a reply:
                     auto now = std::chrono::steady_clock::now();
-                    auto diff = now - addressed_buffer.send_time;
+                    auto diff = now - addressed_buffer.timestamp;
                     result.batch_latency += diff;
                     result.max_packet_latency = std::max(result.max_packet_latency, diff);
                     result.received_packets++;
