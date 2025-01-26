@@ -1,0 +1,12 @@
+{
+    "recommendations": [
+        "ms-vscode.cmake-tools", // For CMake
+        "ms-vscode.cpptools-extension-pack", // For C++
+        "13xforever.language-x86-64-assembly", // x86-64 Assembly 
+        "streetsidesoftware.code-spell-checker", // Avoid typos
+        "aaron-bond.better-comments", // Color-coded comments
+        "gkarlos.vscode-ptx-syntax", // PTX Assembly
+        "dan-c-underwood.arm", // Arm Assembly
+        "xaver.clang-format", // C++ code formatting
+    ]
+}
