@@ -20,6 +20,7 @@
     "constexpr",
     "coro",
     "cppcoro",
+    "cstddef",
     "CTRE",
     "CUDA",
     "denormal",

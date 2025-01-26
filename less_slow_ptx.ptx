@@ -1,12 +1,12 @@
 // ----------------------------------------------------------------------------
-// less_slow.ptx
+// less_slow_ptx.ptx
 // Micro-kernels for building a performance-first mindset for CUDA-capable GPUs
 // using PTX intermediate representation for different generations of Streaming
 // Multiprocessors (SMs) and Tensor Cores (TCs).
 // ----------------------------------------------------------------------------
 
 .version 7.0
-.target sm_70
+.target sm_70 // Volta (SM 7.0)
 .address_size 64
 
 // Kernel for SM 7.0: FP16 Tensor Core MMA
@@ -22,7 +22,7 @@
 }
 
 .version 7.0
-.target sm_80
+.target sm_80 // Ampere (SM 8.0)
 .address_size 64
 
 // Kernel for SM 8.0: BF16 Tensor Core MMA
@@ -38,7 +38,7 @@
 }
 
 .version 7.0
-.target sm_90
+.target sm_90 // Hopper (SM 9.0)
 .address_size 64
 
 // Kernel for SM 9.0: FP8 Tensor Core MMA

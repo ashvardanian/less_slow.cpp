@@ -31,6 +31,7 @@ Some of the highlights include:
 - __How many packets is [UDP](https://www.cloudflare.com/learning/ddos/glossary/user-datagram-protocol-udp/) dropping__ and how to serve web requests in [`io_uring`](https://en.wikipedia.org/wiki/Io_uring) from user-space?
 - __Scatter and Gather__ for 50% faster vectorized disjoint memory operations.
 - __How to choose between intrinsics, inline Assembly, and separate Assembly files__ for your performance-critical code?
+- __CUDA, PTX, and SASS__, and how do they differ from CPU code?
 - __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.

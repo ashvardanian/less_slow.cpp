@@ -325,11 +325,11 @@ if(USE_NVIDIA_CCCL)
   target_include_directories(less_slow PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas)
 
-  # Add the PTX file as a CUDA source
-  target_sources(less_slow PRIVATE less_slow.ptx)
-  set_source_files_properties(less_slow.ptx PROPERTIES
-    LANGUAGE CUDA
-    CUDA_PTX_COMPILATION ON
+  # Copy the PTX Intermediate Representation file to the runtime directory
+  set_source_files_properties(less_slow_ptx.ptx PROPERTIES LANGUAGE "")
+  add_custom_command(
+    TARGET less_slow POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/less_slow_ptx.ptx ${CMAKE_CURRENT_BINARY_DIR}/less_slow_ptx.ptx
   )
 endif()
 
