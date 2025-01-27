@@ -263,7 +263,7 @@ endif()
 if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" OR CMAKE_CUDA_COMPILER_ID STREQUAL "NVHPC")
   set_property(SOURCE less_slow.cpp PROPERTY LANGUAGE CUDA)
   set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  set_target_properties(less_slow PROPERTIES CUDA_ARCHITECTURES "86")
+  set_target_properties(less_slow PROPERTIES CUDA_ARCHITECTURES "70;75;80;89;90")
   target_compile_options(less_slow PRIVATE
     -Wfatal-errors # Stop on first error
     -fopenmp # OpenMP support, also requires linking
