@@ -14,12 +14,27 @@
  *  - How to schedule advanced computational graphs on GPUs?
  *    A.k.a. CUDA streams vs Graph Node API vs Cooperative Groups?
  *
- *  To compile this file, dump the SASS code, and check for Tensor Cores usage:
+ *  To compile this file, dump the SASS code, and check for Tensor Cores usage
+ *  on Volta SM70 GPUs, use the following commands:
  *
- *      nvcc -arch=sm_70 -Xptxas -v -lineinfo --extra-device-vectorization-info -cubin -o less_slow.cubin less_slow.cu
+ *      nvcc -arch=sm_70 -Xptxas -v -lineinfo -cubin -o less_slow.cubin less_slow.cu
  *      cuobjdump -sass less_slow.cubin | grep -i mma
+ *
+ *  Keep in mind the following TC generations:
+ *
+ *  - Volta SM70: 1st generation of TCs, server V100 cards.
+ *  - Turing SM75: 2nd generation of TCs, consumer RTX 30 cards.
+ *  - Ampere SM80: 3rd generation of TCs, server A100 cards.
+ *  - Ada Lovelace SM89: 4th generation of TCs, consumer RTX 40 cards.
+ *  - Hopper SM90: 5th generation of TCs, server H100 cards.
  */
+#include <cstdint> // `std::uint8_t`
+#if (__CUDA_ARCH__ >= 700)
 #include <cuda_fp16.h> // `half` type
+#endif
+#if (__CUDA_ARCH__ >= 750)
+#include <cuda_bf16.h> // `__nv_bfloat16` type
+#endif
 
 template <typename scalar_type_, std::size_t side_>
 struct small_square_matrix {
@@ -62,12 +77,12 @@ small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda( //
  *  level! It's done at the SASS level, so the PTX output for this kernel will
  *  still contain lines like:
  *
- *      wmma.mma.sync.aligned.row.col.m16n16k16.f32.f32 {}, {}, {}, {};
+ *!     wmma.mma.sync.aligned.row.col.m16n16k16.f32.f32 {}, {}, {}, {};
  *
  *  That will be lowered to the right SASS instructions by the PTXAS assembler,
  *  and on Volta SM70 GPUs, will use the only supported size of 8x8x4:
  *
- *      HMMA.884.F32.F32.STEP2 R8, R2.reuse.ROW, R2.reuse.COL, R8
+ *!     HMMA.884.F32.F32.STEP2 R8, R2.reuse.ROW, R2.reuse.COL, R8
  *
  *  Unpacking it:
  *  - HMMA stands for Half-precision Matrix Multiply & Accumulate.
@@ -82,23 +97,84 @@ small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda( //
  *  - Ensure your matrix dimensions are multiples of the tile size (8x8x4 on Volta).
  *  - Use shared memory efficiently to reduce global memory accesses.
  *  - Properly align input and output matrices in memory (128-byte alignment).
+ *
+ *  @see Supported numeric types until Ampere SM80:
+ *       https://docs.nvidia.com/cuda/ampere-tuning-guide/index.html#improved-tensor-core-operations
+ *  @see "Benchmarking and Dissecting the Nvidia Hopper GPU Architecture" paper
+ *       from HKSTU: https://arxiv.org/pdf/2402.13499v1
+ *
  */
 #include <mma.h> // `mma::` intrinsics
 
-__global__ void tops_f16_sm70tc_cuda_kernel() {
+template <typename input_type_, typename output_type_, int m_, int n_, int k_, int repetitions_>
+__device__ inline void tops_tc_cuda_kernel() {
     using namespace nvcuda;
-    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::col_major> b_frag;
-    wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag;
+    wmma::fragment<wmma::matrix_a, m_, n_, k_, input_type_, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, m_, n_, k_, input_type_, wmma::col_major> b_frag;
+    wmma::fragment<wmma::accumulator, m_, n_, k_, output_type_> c_frag;
 
     // To initialize, we can call:
-    wmma::fill_fragment(a_frag, __float2half_rn(1.0f));
-    wmma::fill_fragment(b_frag, __float2half_rn(1.0f));
-    wmma::fill_fragment(c_frag, 0.0f);
-
+    //
+    //      wmma::fill_fragment(a_frag, 1);
+    //      wmma::fill_fragment(b_frag, 1);
+    //      wmma::fill_fragment(c_frag, 0);
+    //
     // To better saturate the ALU, we could unroll a few iterations:
-    for (int i = 0; i != 128; ++i) wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+    for (int i = 0; i != repetitions_; ++i) wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
 
     // Impossible condition to prevent optimization
-    if (threadIdx.x == -1) wmma::store_matrix_sync(nullptr, c_frag, 16, wmma::mem_row_major);
+    if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_frag, 16, wmma::mem_row_major);
 }
+
+#pragma region Volta
+
+__global__ void tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
+    tops_tc_cuda_kernel<half, half, 16, 16, 16, 1024>();
+#endif
+}
+__global__ void tops_f16f32_sm70tc_16x16x16_1024unroll_cuda_kernel() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
+    tops_tc_cuda_kernel<half, float, 16, 16, 16, 1024>();
+#endif
+}
+
+#pragma endregion
+
+#pragma region Turing
+
+__global__ void tops_u8i32_sm75tc_16x16x16_1024unroll_cuda_kernel() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750)
+    tops_tc_cuda_kernel<std::uint8_t, int32_t, 16, 16, 16, 1024>();
+#endif
+}
+__global__ void tops_u4i32_sm75tc_8x8x32_1024unroll_cuda_kernel() {
+    //! The native instruction on Turing is 8x8x32.
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750)
+    tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::u4, int32_t, 8, 8, 32, 1024>();
+#endif
+}
+
+#pragma endregion
+
+#pragma region Ampere
+
+__global__ void tops_bf16f32_sm80tc_16x16x16_1024unroll_cuda_kernel() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+    tops_tc_cuda_kernel<__nv_bfloat16, float, 16, 16, 16, 1024>();
+#endif
+}
+__global__ void tops_tf32f32_sm80tc_16x16x8_1024unroll_cuda_kernel() {
+    //! The native instruction on Ampere is 16x8x4, but we can use 16x16x8.
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+    tops_tc_cuda_kernel<nvcuda::wmma::precision::tf32, float, 16, 16, 8, 1024>();
+#endif
+}
+__global__ void tops_f64f64_sm80tc_8x8x4_1024unroll_cuda_kernel() {
+    //! The native instruction on Ampere is 8x8x4.
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+    tops_tc_cuda_kernel<double, double, 8, 8, 4, 1024>();
+#endif
+}
+
+#pragma endregion

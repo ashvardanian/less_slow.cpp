@@ -1951,11 +1951,9 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 #if defined(__CUDACC__)
 #include <cuda.h>
 
-extern __global__ void tops_f16_sm70tc_cuda_kernel();
-
-static void theoretic_tops_cuda(                 //
-    bm::State &state, void (*kernel)(void),      //
-    std::size_t m, std::size_t n, std::size_t k, //
+static void theoretic_tops_cuda(                   //
+    bm::State &state, __global__ void (*kernel)(), //
+    std::size_t m, std::size_t n, std::size_t k,   //
     std::size_t repetitions, int required_capability) {
 
     cudaDeviceProp prop;
@@ -1973,7 +1971,42 @@ static void theoretic_tops_cuda(                 //
     state.counters["TOP"] = benchmark::Counter(tops_per_gpu * state.iterations(), benchmark::Counter::kIsRate);
 }
 
-BENCHMARK_CAPTURE(theoretic_tops_cuda, f16_sm70tc, tops_f16_sm70tc_cuda_kernel, 16, 16, 16, 10, 70)->MinTime(10);
+extern __global__ void tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel();
+extern __global__ void tops_f16f32_sm70tc_16x16x16_1024unroll_cuda_kernel();
+extern __global__ void tops_u8i32_sm75tc_16x16x16_1024unroll_cuda_kernel();
+extern __global__ void tops_u4i32_sm75tc_8x8x32_1024unroll_cuda_kernel();
+extern __global__ void tops_bf16f32_sm80tc_16x16x16_1024unroll_cuda_kernel();
+extern __global__ void tops_tf32f32_sm80tc_16x16x8_1024unroll_cuda_kernel();
+extern __global__ void tops_f64f64_sm80tc_8x8x4_1024unroll_cuda_kernel();
+
+BENCHMARK_CAPTURE(                                                                       //
+    theoretic_tops_cuda, f16_sm70tc, tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel, //
+    16, 16, 16, 1024, 70)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                          //
+    theoretic_tops_cuda, f16f32_sm70tc, tops_f16f32_sm70tc_16x16x16_1024unroll_cuda_kernel, //
+    16, 16, 16, 1024, 70)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                        //
+    theoretic_tops_cuda, u8i32_sm75tc, tops_u8i32_sm75tc_16x16x16_1024unroll_cuda_kernel, //
+    16, 16, 16, 1024, 75)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                      //
+    theoretic_tops_cuda, u4i32_sm75tc, tops_u4i32_sm75tc_8x8x32_1024unroll_cuda_kernel, //
+    8, 8, 32, 1024, 75)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                            //
+    theoretic_tops_cuda, bf16f32_sm80tc, tops_bf16f32_sm80tc_16x16x16_1024unroll_cuda_kernel, //
+    16, 16, 16, 1024, 80)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                           //
+    theoretic_tops_cuda, tf32f32_sm80tc, tops_tf32f32_sm80tc_16x16x8_1024unroll_cuda_kernel, //
+    16, 16, 8, 1024, 80)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                       //
+    theoretic_tops_cuda, f64f64_sm80tc, tops_f64f64_sm80tc_8x8x4_1024unroll_cuda_kernel, //
+    8, 8, 4, 1024, 80)
+    ->MinTime(10);
 
 #include <filesystem>
 
@@ -2674,31 +2707,35 @@ static void cublas_tops(bm::State &state) {
     for (auto _ : state) {
         if constexpr (std::is_same_v<scalar_type_, float>) {
             scalar_type_ alpha = 1, beta = 0;
-            cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
-                        &alpha, a.begin(), lda, b.begin(), ldb,    //
-                        &beta, c.begin(), ldc);
+            cublasSgemm(                                   //
+                handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
+                &alpha, a.begin(), lda, b.begin(), ldb,    //
+                &beta, c.begin(), ldc);
         }
         else if constexpr (std::is_same_v<scalar_type_, double>) {
             scalar_type_ alpha = 1, beta = 0;
-            cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
-                        &alpha, a.begin(), lda, b.begin(), ldb,    //
-                        &beta, c.begin(), ldc);
+            cublasDgemm(                                   //
+                handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
+                &alpha, a.begin(), lda, b.begin(), ldb,    //
+                &beta, c.begin(), ldc);
         }
         else if constexpr (std::is_same_v<scalar_type_, __half>) {
             scalar_type_ alpha = 1, beta = 0;
-            cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
-                        &alpha, a.begin(), lda, b.begin(), ldb,    //
-                        &beta, c.begin(), ldc);
+            cublasHgemm(                                   //
+                handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
+                &alpha, a.begin(), lda, b.begin(), ldb,    //
+                &beta, c.begin(), ldc);
         }
         else if constexpr (std::is_same_v<scalar_type_, int8_t>) {
             // Scaling factors must correspond to the accumulator type
             // https://docs.nvidia.com/cuda/cublas/#cublasgemmex
             int32_t alpha_int = 1, beta_int = 0;
-            cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
-                         &alpha_int, a.begin(), CUDA_R_8I, lda,     //
-                         b.begin(), CUDA_R_8I, ldb,                 //
-                         &beta_int, c.begin(), CUDA_R_32I, ldc,     //
-                         CUDA_R_32I, CUBLAS_GEMM_DEFAULT);
+            cublasGemmEx(                                  //
+                handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
+                &alpha_int, a.begin(), CUDA_R_8I, lda,     //
+                b.begin(), CUDA_R_8I, ldb,                 //
+                &beta_int, c.begin(), CUDA_R_32I, ldc,     //
+                CUDA_R_32I, CUBLAS_GEMM_DEFAULT);
         }
     }
 
@@ -2711,10 +2748,10 @@ static void cublas_tops(bm::State &state) {
 }
 
 // Register benchmarks
-BENCHMARK(cublas_tops<float>)->RangeMultiplier(2)->Range(8, 8192)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublas_tops<double>)->RangeMultiplier(2)->Range(8, 8192)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublas_tops<__half>)->RangeMultiplier(2)->Range(8, 8192)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublas_tops<int8_t>)->RangeMultiplier(2)->Range(8, 8192)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<float>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<double>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<__half>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<int8_t>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
 #endif // defined(__CUDACC__)
 
 #pragma endregion // Memory Bound Linear Algebra

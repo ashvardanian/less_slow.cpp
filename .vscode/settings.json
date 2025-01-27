@@ -6,6 +6,7 @@
     "Andreas",
     "ashvardanian",
     "asynchrony",
+    "bfloat",
     "bioinformatics",
     "BLAS",
     "Boccara",
@@ -22,6 +23,7 @@
     "cppcoro",
     "cstddef",
     "CTRE",
+    "cublas",
     "CUDA",
     "denormal",
     "DOTPROD",
@@ -39,6 +41,8 @@
     "grandkids",
     "GTEST",
     "Hana",
+    "HKSTU",
+    "HMMA",
     "Ibireme",
     "JeanHeyd",
     "jemalloc",
@@ -60,6 +64,7 @@
     "Niels",
     "nlohmann",
     "noexcept",
+    "nullptr",
     "NVCC",
     "nvcuda",
     "openmp",
@@ -70,9 +75,11 @@
     "popcountll",
     "prefetcher",
     "pthread",
+    "PTXAS",
     "RDMA",
     "reorderable",
     "simdjson",
+    "sinf",
     "SLEEF",
     "spdlog",
     "STREQUAL",
@@ -230,6 +237,7 @@
     "hash_map": "cpp",
     "future": "cpp",
     "scoped_allocator": "cpp",
-    "typeindex": "cpp"
+    "typeindex": "cpp",
+    "*.inc": "cpp"
   }
 }
