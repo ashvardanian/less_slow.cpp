@@ -2613,6 +2613,110 @@ BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity
  *  but for some applications dealing with 8-bit integers, Eigen can be good
  *  enough.
  */
+
+#if defined(__CUDACC__)
+#include <cublas_v2.h>
+
+/**
+ *  @brief  A minimalistic replacement for `std::vector`, wrapping a "Unified
+ *          Memory" allocation managed by @b `cudaMallocManaged`.
+ *
+ *  "Unified Memory" is a single memory space accessible by both the host (CPU)
+ *  and some external device (like a GPU). It simplifies memory management by
+ *  outsourcing memory migration to the system, but can introduce performance
+ *  considerations due to page migrations. Those can be mitigated by using
+ *  `cudaMemAdvise` and `cudaMemPrefetchAsync` to control memory placement,
+ *  but are more relevant for linear-complexity problems.
+ *
+ *  Nvidia's NVLink is just one of the examples of underlying technologies used
+ *  in HPC. Compute Express Link @b (CXL) is another emerging standard that has
+ *  the potential to provide shared memory across CPUs, GPUs, and accelerators.
+ */
+template <typename type_>
+class unified_array {
+    type_ *data_ = nullptr;
+    std::size_t size_ = 0;
+
+  public:
+    unified_array(std::size_t size) : size_(size) {
+        if (cudaMallocManaged(&data_, sizeof(type_) * size_) != cudaSuccess) throw std::bad_alloc();
+    }
+
+    ~unified_array() noexcept { cudaFree(data_); }
+
+    type_ *begin() const noexcept { return data_; }
+    type_ *end() const noexcept { return data_ + size_; }
+    type_ &operator[](std::size_t index) noexcept { return data_[index]; }
+    type_ operator[](std::size_t index) const noexcept { return data_[index]; }
+    std::size_t size() const noexcept { return size_; }
+};
+
+template <typename scalar_type_>
+static void cublas_tops(bm::State &state) {
+    // Matrix size and leading dimensions
+    std::size_t n = static_cast<std::size_t>(state.range(0));
+    int lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
+
+    // Unified memory for large matrices
+    unified_array<scalar_type_> a(n * n), b(n * n), c(n * n);
+
+    // With unified memory, we don't even need Thrust to initialize the data
+    std::iota(a.begin(), a.end(), 0);
+    std::iota(b.begin(), b.end(), 0);
+    std::fill(c.begin(), c.end(), 0);
+
+    // cuBLAS handle
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+    // Perform the GEMM operation
+    // https://docs.nvidia.com/cuda/cublas/#cublas-t-gemm
+    for (auto _ : state) {
+        if constexpr (std::is_same_v<scalar_type_, float>) {
+            scalar_type_ alpha = 1, beta = 0;
+            cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
+                        &alpha, a.begin(), lda, b.begin(), ldb,    //
+                        &beta, c.begin(), ldc);
+        }
+        else if constexpr (std::is_same_v<scalar_type_, double>) {
+            scalar_type_ alpha = 1, beta = 0;
+            cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
+                        &alpha, a.begin(), lda, b.begin(), ldb,    //
+                        &beta, c.begin(), ldc);
+        }
+        else if constexpr (std::is_same_v<scalar_type_, __half>) {
+            scalar_type_ alpha = 1, beta = 0;
+            cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
+                        &alpha, a.begin(), lda, b.begin(), ldb,    //
+                        &beta, c.begin(), ldc);
+        }
+        else if constexpr (std::is_same_v<scalar_type_, int8_t>) {
+            // Scaling factors must correspond to the accumulator type
+            // https://docs.nvidia.com/cuda/cublas/#cublasgemmex
+            int32_t alpha_int = 1, beta_int = 0;
+            cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
+                         &alpha_int, a.begin(), CUDA_R_8I, lda,     //
+                         b.begin(), CUDA_R_8I, ldb,                 //
+                         &beta_int, c.begin(), CUDA_R_32I, ldc,     //
+                         CUDA_R_32I, CUBLAS_GEMM_DEFAULT);
+        }
+    }
+
+    std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.SetComplexityN(n);
+
+    // Cleanup
+    cublasDestroy(handle);
+}
+
+// Register benchmarks
+BENCHMARK(cublas_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<__half>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<int8_t>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+#endif // defined(__CUDA__)
+
 #pragma endregion // Memory Bound Linear Algebra
 
 #pragma endregion // - Memory
