@@ -289,30 +289,25 @@ std::size_t physical_cores() {
     // span across multiple processor groups.
     // GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) can return all logical cores;
     // However, in order to get physical cores, we have to dive deeper.
-    DWORD bufferSize = 0;
-    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &bufferSize);
-    if (bufferSize == 0) {
-        return 0; // Error occurred
+    DWORD buffer_size = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &buffer_size);
+    if (buffer_size == 0) throw std::runtime_error("`GetLogicalProcessorInformationEx` failed");
+
+    std::vector<BYTE> buffer(buffer_size);
+    using core_info_t = SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
+    auto core_infos = reinterpret_cast<core_info_t>(buffer.data());
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, core_infos, &buffer_size))
+        throw std::runtime_error("`GetLogicalProcessorInformationEx` failed");
+
+    std::size_t core_count = 0;
+    DWORD byte_offset = 0;
+    while (byte_offset < buffer_size) {
+        if (core_infos->Relationship == RelationProcessorCore) ++core_count;
+        byte_offset += core_infos->Size;
+        core_infos = reinterpret_cast<core_info_t>(reinterpret_cast<BYTE *>(core_infos) + core_infos->Size);
     }
 
-    std::vector<BYTE> buffer(bufferSize);
-    if (!GetLogicalProcessorInformationEx(RelationProcessorCore,
-                                          reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()),
-                                          &bufferSize)) {
-        return 0; // Error occurred
-    }
-
-    std::size_t coreCount = 0;
-    PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX ptr =
-        reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data());
-    DWORD byteOffset = 0;
-    while (byteOffset < bufferSize) {
-        if (ptr->Relationship == RelationProcessorCore) { ++coreCount; }
-        byteOffset += ptr->Size;
-        ptr = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(reinterpret_cast<BYTE *>(ptr) + ptr->Size);
-    }
-
-    return coreCount;
+    return core_count;
 #else
     return std::thread::hardware_concurrency();
 #endif
