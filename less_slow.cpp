@@ -5342,6 +5342,10 @@ std::string raise_system_error(std::string const &message) {
     throw std::runtime_error(error_message);
 }
 
+/**
+ *  @brief Fetches the public IP address of the default networking
+ *         interface on the current machine.
+ */
 std::string fetch_public_ip() {
 #if defined(__linux__)
     // Try Linux approach
@@ -5649,7 +5653,18 @@ BENCHMARK_CAPTURE(rpc_libc, public, networking_route_t::public_k, //
  *  @see Supported operations: https://man7.org/linux/man-pages/man2/io_uring_enter2.2.html
  *  @see Kernel versions in Ubuntu: https://ubuntu.com/security/livepatch/docs/livepatch/reference/kernels
  */
-#include <liburing.h> // `io_uring`
+#if defined(__linux__)
+#include <liburing.h>    // `io_uring`
+#include <sys/utsname.h> // `uname`
+
+std::pair<int, int> fetch_linux_kernel_version() {
+    struct utsname buffer;
+    if (uname(&buffer) < 0) throw std::runtime_error("Failed to fetch Linux kernel version");
+    int major = 0, minor = 0;
+    // Attempt to parse something like "5.19.0-38-generic" into major=5, minor=19
+    std::sscanf(buffer.release, "%d.%d", &major, &minor);
+    return {major, minor};
+}
 
 /**
  *  @brief  Wraps the `rpc_buffer_t` with metadata about the client address.
@@ -5828,12 +5843,12 @@ class rpc_uring55_client {
 
         auto const batch_start_time = std::chrono::steady_clock::now();
         auto const billion = 1'000'000'000;
-        struct __kernel_timespec batch_timeout;
-        {
-            auto const batch_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(rpc_batch_timeout_k);
-            batch_timeout.tv_sec = static_cast<__s64>(batch_ns.count() / billion);
-            batch_timeout.tv_nsec = static_cast<__s64>(batch_ns.count() % billion);
-        }
+        // For a batch-wide timeout, we could use:
+        //
+        //      struct __kernel_timespec batch_timeout;
+        //      auto const batch_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(rpc_batch_timeout_k);
+        //      batch_timeout.tv_sec = static_cast<__s64>(batch_ns.count() / billion);
+        //      batch_timeout.tv_nsec = static_cast<__s64>(batch_ns.count() % billion);
         struct __kernel_timespec packet_timeout;
         {
             auto const packet_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(rpc_packet_timeout_k);
@@ -5922,6 +5937,12 @@ class rpc_uring55_client {
 };
 
 static void rpc_uring55(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+    auto [major, minor] = fetch_linux_kernel_version();
+    if (major < 5 || (major == 5 && minor < 5)) {
+        std::string message = std::format("Kernel version {}.{} too old for io_uring", major, minor);
+        state.SkipWithError(message.c_str());
+        return;
+    }
     return rpc<rpc_uring55_server, rpc_uring55_client>(state, route, batch_size, packet_size);
 }
 
@@ -5937,6 +5958,7 @@ BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* mess
     ->UseManualTime()
     ->Unit(benchmark::kMicrosecond);
 
+#endif            // defined(__linux__)
 #pragma endregion // IO Uring
 
 #pragma region ASIO
@@ -6122,6 +6144,12 @@ int main(int argc, char **argv) {
     std::string const public_ip = fetch_public_ip();
     std::printf("Cache line width: %zu bytes\n", cache_line_width);
     std::printf("Public IP address: %s\n", public_ip.c_str());
+
+// On Linux we can print more metadata:
+#if defined(__linux__)
+    auto [major, minor] = fetch_linux_kernel_version();
+    std::printf("Linux kernel version: %d.%d\n", major, minor);
+#endif
 
     // Make sure the defaults are set correctly:
     char arg0_default[] = "benchmark";
