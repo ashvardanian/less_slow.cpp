@@ -17,8 +17,8 @@
  *  To compile this file, dump the SASS code, and check for Tensor Cores usage
  *  on Volta SM70 GPUs, use the following commands:
  *
- *      nvcc -arch=sm_70 -Xptxas -v -lineinfo -cubin -o less_slow.cubin less_slow.cu
- *      cuobjdump -sass less_slow.cubin | grep -i mma
+ *      nvcc -arch=sm_70 -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
+ *      cuobjdump -sass less_slow_from_cu.cubin | grep -i mma
  *
  *  Keep in mind the following TC generations:
  *
@@ -27,6 +27,27 @@
  *  - Ampere SM80: 3rd generation of TCs, server A100 cards.
  *  - Ada Lovelace SM89: 4th generation of TCs, consumer RTX 40 cards.
  *  - Hopper SM90: 5th generation of TCs, server H100 cards.
+ *
+ *  Looking at server-side V100, A100, and H100 GPUs, most features are
+ *  identical, except for @b shared-memory size and TCs:
+ *
+ *    Feature                              | V100     | A100     | H100
+ *    -------------------------------------|----------|----------|----------
+ *    Compute Capability                   | 7.0      | 8.0      | 9.0
+ *    Threads / Warp                       | 32       | 32       | 32
+ *    Max Warps / SM                       | 64       | 64       | 64
+ *    Max Threads / SM                     | 2048     | 2048     | 2048
+ *    Max Thread Blocks (CTAs) / SM        | 32       | 32       | 32
+ *    Max Thread Blocks / Thread Block Cl. | NA       | NA       | 16
+ *    Max 32-bit Registers / SM            | 65536    | 65536    | 65536
+ *    Max Registers / Thread Block (CTA)   | 65536    | 65536    | 65536
+ *    Max Registers / Thread               | 255      | 255      | 255
+ *    Max Thread Block Size (# of threads) | 1024     | 1024     | 1024
+ *    FP32 Cores / SM                      | 64       | 64       | 128
+ *    Ratio of SM Registers to FP32 Cores  | 1024     | 1024     | 512
+ *    Shared Memory Size / SM              | ≤ 96 KB  | ≤ 164 KB | ≤ 228 KB
+ *    Tensor Core Generation               | 1st      | 3rd      | 5th
+ *
  */
 #include <cstdint> // `std::uint8_t`
 #if (__CUDA_ARCH__ >= 700)
@@ -106,6 +127,10 @@ small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda( //
  */
 #include <mma.h> // `mma::` intrinsics
 
+/**
+ *  @brief  A CUDA kernel that @b repeatedly computes the product of two small
+ *          matrices of size MxN and NxK using Tensor Cores.
+ */
 template <typename input_type_, typename output_type_, int m_, int n_, int k_, int repetitions_>
 __device__ inline void tops_tc_cuda_kernel() {
     using namespace nvcuda;
@@ -126,14 +151,38 @@ __device__ inline void tops_tc_cuda_kernel() {
     if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_frag, 16, wmma::mem_row_major);
 }
 
+/**
+ *  To process binary matrices we can't rely on addition and multiplication.
+ *  A different set of mathematical operations is required, such as XOR and POPCOUNT.
+ *  The identifiers of those operations are passed as extra arguments to the
+ *  `bmma_sync` function.
+ *  @see Docs: https://docs.nvidia.com/cuda/cuda-c-programming-guide/#sub-byte-operations
+ */
+template <typename input_type_, typename output_type_, int m_, int n_, int k_, int repetitions_>
+__device__ inline void binary_tops_tc_cuda_kernel( //
+    nvcuda::wmma::experimental::bmmaBitOp bit_op, nvcuda::wmma::experimental::bmmaAccumulateOp acc_op) {
+    using namespace nvcuda;
+    wmma::fragment<wmma::matrix_a, m_, n_, k_, input_type_, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, m_, n_, k_, input_type_, wmma::col_major> b_frag;
+    wmma::fragment<wmma::accumulator, m_, n_, k_, output_type_> c_frag;
+    for (int i = 0; i != repetitions_; ++i) wmma::bmma_sync(c_frag, a_frag, b_frag, c_frag, bit_op, acc_op);
+    if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_frag, 16, wmma::mem_row_major);
+}
+
 #pragma region Volta
 
 __global__ void tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel() {
+    //? On Volta: 8x8x4.
+    //? On Turing: 8x8x4 / 16x8x8 / 16x8x16.
+    //? On Ampere: 16x8x8 / 16x8x16.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
     tops_tc_cuda_kernel<half, half, 16, 16, 16, 1024>();
 #endif
 }
 __global__ void tops_f16f32_sm70tc_16x16x16_1024unroll_cuda_kernel() {
+    //? On Volta: 8x8x4.
+    //? On Turing: 8x8x4 / 16x8x8 / 16x8x16.
+    //? On Ampere: 16x8x8 / 16x8x16.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
     tops_tc_cuda_kernel<half, float, 16, 16, 16, 1024>();
 #endif
@@ -144,14 +193,28 @@ __global__ void tops_f16f32_sm70tc_16x16x16_1024unroll_cuda_kernel() {
 #pragma region Turing
 
 __global__ void tops_u8i32_sm75tc_16x16x16_1024unroll_cuda_kernel() {
+    //? On Turing: 8x8x16.
+    //? On Ampere: 8x8x16 / 16x8x16 / 16x8x32.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750)
     tops_tc_cuda_kernel<std::uint8_t, int32_t, 16, 16, 16, 1024>();
 #endif
 }
 __global__ void tops_u4i32_sm75tc_8x8x32_1024unroll_cuda_kernel() {
-    //! The native instruction on Turing is 8x8x32.
+    //! The 16x16x16 won't compile, 8x8x32 will.
+    //? On Turing: 8x8x32.
+    //? On Ampere: 8x8x32 / 16x8x32 / 16x8x64.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750)
     tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::u4, int32_t, 8, 8, 32, 1024>();
+#endif
+}
+__global__ void tops_b1i32xor_sm75tc_8x8x128_1024unroll_cuda_kernel() {
+    //! The 16x16x16 won't compile, 8x8x128 will.
+    //? On Turing: 8x8x128.
+    //? On Ampere: 8x8x128 / 16x8x128 / 16x8x256.
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750)
+    binary_tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::b1, int32_t, 8, 8, 128, 1024>(
+        nvcuda::wmma::experimental::bmmaBitOp::bmmaBitOpXOR,
+        nvcuda::wmma::experimental::bmmaAccumulateOp::bmmaAccumulateOpPOPC);
 #endif
 }
 
@@ -160,21 +223,33 @@ __global__ void tops_u4i32_sm75tc_8x8x32_1024unroll_cuda_kernel() {
 #pragma region Ampere
 
 __global__ void tops_bf16f32_sm80tc_16x16x16_1024unroll_cuda_kernel() {
+    //? On Ampere: 16x8x8 / 16x8x16.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
     tops_tc_cuda_kernel<__nv_bfloat16, float, 16, 16, 16, 1024>();
 #endif
 }
 __global__ void tops_tf32f32_sm80tc_16x16x8_1024unroll_cuda_kernel() {
-    //! The native instruction on Ampere is 16x8x4, but we can use 16x16x8.
+    //! The 16x16x16 won't compile, 16x16x8 will.
+    //? On Ampere: 16x8x4.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
     tops_tc_cuda_kernel<nvcuda::wmma::precision::tf32, float, 16, 16, 8, 1024>();
 #endif
 }
 __global__ void tops_f64f64_sm80tc_8x8x4_1024unroll_cuda_kernel() {
-    //! The native instruction on Ampere is 8x8x4.
+    //! The 16x16x16 won't compile, 8x8x4 will.
+    //? On Ampere: 8x8x4.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
     tops_tc_cuda_kernel<double, double, 8, 8, 4, 1024>();
 #endif
 }
 
+__global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
+    //! The 16x16x16 won't compile, 8x8x128 will.
+    //? On Ampere: 8x8x128 / 16x8x128 / 16x8x256.
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+    binary_tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::b1, int32_t, 8, 8, 128, 1024>(
+        nvcuda::wmma::experimental::bmmaBitOp::bmmaBitOpAND,
+        nvcuda::wmma::experimental::bmmaAccumulateOp::bmmaAccumulateOpPOPC);
+#endif
+}
 #pragma endregion

@@ -1973,11 +1973,15 @@ static void theoretic_tops_cuda(                   //
 
 extern __global__ void tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel();
 extern __global__ void tops_f16f32_sm70tc_16x16x16_1024unroll_cuda_kernel();
+
 extern __global__ void tops_u8i32_sm75tc_16x16x16_1024unroll_cuda_kernel();
 extern __global__ void tops_u4i32_sm75tc_8x8x32_1024unroll_cuda_kernel();
+extern __global__ void tops_b1i32xor_sm75tc_8x8x128_1024unroll_cuda_kernel();
+
 extern __global__ void tops_bf16f32_sm80tc_16x16x16_1024unroll_cuda_kernel();
 extern __global__ void tops_tf32f32_sm80tc_16x16x8_1024unroll_cuda_kernel();
 extern __global__ void tops_f64f64_sm80tc_8x8x4_1024unroll_cuda_kernel();
+extern __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel();
 
 BENCHMARK_CAPTURE(                                                                       //
     theoretic_tops_cuda, f16_sm70tc, tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel, //
@@ -1995,6 +1999,10 @@ BENCHMARK_CAPTURE(                                                              
     theoretic_tops_cuda, u4i32_sm75tc, tops_u4i32_sm75tc_8x8x32_1024unroll_cuda_kernel, //
     8, 8, 32, 1024, 75)
     ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                             //
+    theoretic_tops_cuda, b1i32xor_sm75tc, tops_b1i32xor_sm75tc_8x8x128_1024unroll_cuda_kernel, //
+    8, 8, 128, 1024, 75)
+    ->MinTime(10);
 BENCHMARK_CAPTURE(                                                                            //
     theoretic_tops_cuda, bf16f32_sm80tc, tops_bf16f32_sm80tc_16x16x16_1024unroll_cuda_kernel, //
     16, 16, 16, 1024, 80)
@@ -2006,6 +2014,10 @@ BENCHMARK_CAPTURE(                                                              
 BENCHMARK_CAPTURE(                                                                       //
     theoretic_tops_cuda, f64f64_sm80tc, tops_f64f64_sm80tc_8x8x4_1024unroll_cuda_kernel, //
     8, 8, 4, 1024, 80)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                             //
+    theoretic_tops_cuda, b1i32and_sm80tc, tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel, //
+    8, 8, 128, 1024, 80)
     ->MinTime(10);
 
 #include <filesystem>
