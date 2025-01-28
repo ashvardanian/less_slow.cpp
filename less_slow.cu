@@ -98,12 +98,12 @@ small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda( //
  *  level! It's done at the SASS level, so the PTX output for this kernel will
  *  still contain lines like:
  *
- *!     wmma.mma.sync.aligned.row.col.m16n16k16.f32.f32 {}, {}, {}, {};
+ *  ! wmma.mma.sync.aligned.row.col.m16n16k16.f32.f32 {}, {}, {}, {};
  *
  *  That will be lowered to the right SASS instructions by the PTXAS assembler,
  *  and on Volta SM70 GPUs, will use the only supported size of 8x8x4:
  *
- *!     HMMA.884.F32.F32.STEP2 R8, R2.reuse.ROW, R2.reuse.COL, R8
+ *  ! HMMA.884.F32.F32.STEP2 R8, R2.reuse.ROW, R2.reuse.COL, R8
  *
  *  Unpacking it:
  *  - HMMA stands for Half-precision Matrix Multiply & Accumulate.
@@ -153,9 +153,10 @@ __device__ inline void tops_tc_cuda_kernel() {
 
 /**
  *  To process binary matrices we can't rely on addition and multiplication.
- *  A different set of mathematical operations is required, such as XOR and POPCOUNT.
- *  The identifiers of those operations are passed as extra arguments to the
- *  `bmma_sync` function.
+ *  A different set of mathematical operations is required, such as @b XOR or
+ *  @b AND as multiplication and @b POPCOUNT as accumulation. The names of
+ *  those operations are passed as extra arguments to the @b `bmma_sync`.
+ *
  *  @see Docs: https://docs.nvidia.com/cuda/cuda-c-programming-guide/#sub-byte-operations
  */
 template <typename input_type_, typename output_type_, int m_, int n_, int k_, int repetitions_>
@@ -252,4 +253,33 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
         nvcuda::wmma::experimental::bmmaAccumulateOp::bmmaAccumulateOpPOPC);
 #endif
 }
+
 #pragma endregion
+
+/**
+ *  MMA is not the only family of tensor core instructions:
+ *
+ *  - MMA for dense-dense synchronous matrix multiplication.
+ *  - Sparse MMA for synchronous sparse-dense matrix multiplication with
+ *    a known @b structured sparsity pattern. Those are handy when you have
+ *    a portion X of Y consecutive cells equal to zero. X and Y are generally
+ *    set to 2 and 4, respectively, for a "2:4" pattern.
+ *  - @b WGMMA or Warp-Group MMA operates on 4 contiguous warps, forming 128
+ *    contiguous threads, generalizing the original MMA in 2 ways:
+ *
+ *    1. They can be asynchronous, for more flexible scheduling.
+ *    2. They can avoid accumulation, a.k.a $C = A * B$, not $C += A * B$.
+ *
+ *  The later are vastly more complex. Just compare our old MMA signature:
+ *  ! {wmma.mma.sync.aligned}.{row.col}.{m16n16k16}.{f32.f32} { ........ }
+ *  ? {        header       }.{ layout}.{  shape  }.{ types } { operands }
+ *
+ *  To the new WGMMA signature:
+ *  ! {wgmma.mm_async.sync.aligned}.{m64n64k16}.{f32.f16.f16} { ........ },{ .... }
+ *  ? {     much longer header    }.{  shape  }.{   types   } { operands },{ args }
+ *
+ *  @see "Fast Matrix-Multiplication with WGMMA on NVIDIA Hopper GPUs" by Colfax:
+ *       https://research.colfax-intl.com/cutlass-tutorial-wgmma-hopper/
+ *  @see "Outperforming cuBLAS on H100: a Worklog" by Pranjal Shankhdhar:
+ *      https://cudaforfun.substack.com/p/outperforming-cublas-on-h100-a-worklog
+ */
