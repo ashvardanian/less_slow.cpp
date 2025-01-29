@@ -30,6 +30,7 @@ Some of the highlights include:
 - __Is the pointer size really 64 bits__ and how to exploit [pointer-tagging](https://en.wikipedia.org/wiki/Tagged_pointer)?
 - __How many packets is [UDP](https://www.cloudflare.com/learning/ddos/glossary/user-datagram-protocol-udp/) dropping__ and how to serve web requests in [`io_uring`](https://en.wikipedia.org/wiki/Io_uring) from user-space?
 - __Scatter and Gather__ for 50% faster vectorized disjoint memory operations.
+- __CUDA C++, [PTX](https://en.wikipedia.org/wiki/Parallel_Thread_Execution) Intermediate Representations, and SASS__, and how do they differ from CPU code?
 - __How to choose between intrinsics, inline Assembly, and separate `.S` files__ for your performance-critical code?
 - __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜
 
@@ -68,6 +69,7 @@ The build will pull and compile several third-party dependencies from the source
 - Yaoyuan Guo's [yyjson](https://github.com/ibireme/yyjson) for faster JSON processing.
 - Google's [Abseil](https://github.com/abseil/abseil-cpp) replaces STL's associative containers.
 - Lewis Baker's [cppcoro](https://github.com/lewissbaker/cppcoro) implements C++20 coroutines.
+- Nvidia's [CCCL](https://github.com/nvidia/cccl) for GPU-accelerated computations.
 
 To control the output or run specific benchmarks, use the following flags:
 

@@ -1,5 +1,8 @@
-# Let's used CMake 3.16+ for native sanitizers support
-cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
+# 3.16+ for native sanitizers support
+# 3.17+ for `FindCUDAToolkit`
+# 3.25.2 for CUDA20 support
+# The good news is that Ubuntu 24.04 comes with 3.28!
+cmake_minimum_required(VERSION 3.25.2 FATAL_ERROR)
 
 # ------------------------------------------------------------------------------
 # Project Setup
@@ -14,6 +17,8 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_CXX_EXTENSIONS NO)
+set(CMAKE_CUDA_STANDARD 20)
+set(CMAKE_CUDA_STANDARD_REQUIRED YES)
 
 # Some extra logging for the user:
 message(STATUS "----------------------------------------")
@@ -28,28 +33,52 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # ------------------------------------------------------------------------------
+# Detect CUDA Support
+# ------------------------------------------------------------------------------
+set(ENABLE_CUDA OFF)
+include(CheckLanguage)
+check_language(CUDA)
+
+if(CMAKE_CUDA_COMPILER)
+  enable_language(CUDA)
+  set(ENABLE_CUDA ON)
+  message(STATUS "CUDA detected! Using compiler: ${CMAKE_CUDA_COMPILER}")
+else()
+  message(STATUS "CUDA not detected. Skipping CUDA-specific builds.")
+endif()
+
+# ------------------------------------------------------------------------------
+# Options
+# ------------------------------------------------------------------------------
+option(USE_INTEL_TBB "Use Intel TBB for parallel STL algorithms" ON)
+option(USE_NVIDIA_CCCL "Use Nvidia CCCL for CUDA acceleration" ON)
+
+# Enable or disable options based on system and CUDA support
+if(ENABLE_CUDA)
+  set(USE_NVIDIA_CCCL ON)
+  set(USE_INTEL_TBB OFF) # Prioritize CUDA acceleration
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(USE_INTEL_TBB ON) # Default to TBB on Linux without CUDA
+endif()
+
+message(STATUS "USE_INTEL_TBB: ${USE_INTEL_TBB}")
+message(STATUS "USE_NVIDIA_CCCL: ${USE_NVIDIA_CCCL}")
+
+# ------------------------------------------------------------------------------
 # Dependencies
 # ------------------------------------------------------------------------------
 find_package(Threads REQUIRED)
-find_package(OpenMP REQUIRED)
+find_package(OpenMP QUIET)
+find_package(BLAS QUIET)
+
+if(BLAS_FOUND)
+  message(STATUS "BLAS found: ${BLAS_LIBRARIES}")
+else()
+  message(FATAL_ERROR "BLAS not found")
+endif()
 
 set(FETCHCONTENT_QUIET OFF)
 include(FetchContent)
-
-# Fetch and build OpenBLAS
-FetchContent_Declare(
-  OpenBLAS
-  GIT_REPOSITORY https://github.com/xianyi/OpenBLAS.git
-  GIT_TAG v0.3.29
-)
-
-# Set OpenBLAS build options
-set(NOFORTRAN ON CACHE BOOL "Disable Fortran" FORCE)
-set(BUILD_WITHOUT_LAPACK OFF CACHE BOOL "Build without LAPACK" FORCE)
-set(USE_THREAD ON CACHE BOOL "Use threading" FORCE)
-
-# Make OpenBLAS available
-FetchContent_MakeAvailable(OpenBLAS)
 
 # GTest (required by Google Benchmark)
 FetchContent_Declare(
@@ -86,27 +115,42 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
   target_compile_definitions(benchmark PRIVATE NDEBUG)
 endif()
 
-# Intel TBB for parallel STL algorithms
+# Intel TBB for "Parallel STL" algorithms
 # https://github.com/oneapi-src/oneTBB/tree/onetbb_2021
-FetchContent_Declare(
-  IntelTBB
-  GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB.git
-  GIT_TAG master
-)
+if(USE_INTEL_TBB)
+  FetchContent_Declare(
+    IntelTBB
+    GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB.git
+    GIT_TAG master
+  )
 
-# Suppress TBB’s own tests:
-set(TBB_TEST OFF CACHE BOOL "Do not build TBB tests" FORCE)
-FetchContent_MakeAvailable(IntelTBB)
+  # Suppress TBB's own tests:
+  set(TBB_TEST OFF CACHE BOOL "Do not build TBB tests" FORCE)
+  FetchContent_MakeAvailable(IntelTBB)
 
-# ------------------------------------------------------------------------------
-# TBB fix for -Wstringop-overflow warnings treated as errors
-# ------------------------------------------------------------------------------
-# The TBB library target is typically called "tbb". We can explicitly disable
-# the `stringop-overflow` warning for TBB only:
-if(TARGET tbb)
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(tbb PRIVATE -Wno-stringop-overflow)
+  # ------------------------------------------------------------------------------
+  # TBB fix for -Wstringop-overflow warnings treated as errors
+  # ------------------------------------------------------------------------------
+  # The TBB library target is typically called "tbb". We can explicitly disable
+  # the `stringop-overflow` warning for TBB only:
+  if(TARGET tbb)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      target_compile_options(tbb PRIVATE -Wno-stringop-overflow)
+    endif()
   endif()
+endif()
+
+# Nvidia's CUDA Core Compute Libraries for GPU acceleration
+if(USE_NVIDIA_CCCL)
+  # CUB, Thrust, and other libraries of interest are now included into the
+  # CUDA Toolkit, so we don't need this anymore:
+  #
+  # FetchContent_Declare(NvidiaCCCL GIT_REPOSITORY https://github.com/nvidia/cccl.git)
+  # FetchContent_MakeAvailable(NvidiaCCCL)
+  find_package(CUDAToolkit REQUIRED)
+  message(STATUS "CUDA Toolkit Version: ${CUDAToolkit_VERSION}")
+  message(STATUS "CUDA Toolkit Include Path: ${CUDAToolkit_INCLUDE_DIRS}")
+  message(STATUS "CUDA Toolkit Libraries Path: ${CUDAToolkit_LIBRARY_DIR}")
 endif()
 
 # FMT for logging, as `std::format` has limited functionality
@@ -217,7 +261,18 @@ else()
   target_compile_options(less_slow PRIVATE -march=native)
 endif()
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+# List of all possible compiler IDs:
+# https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_COMPILER_ID.html
+if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" OR CMAKE_CUDA_COMPILER_ID STREQUAL "NVHPC")
+  set_property(SOURCE less_slow.cpp PROPERTY LANGUAGE CUDA)
+  set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  set_target_properties(less_slow PROPERTIES CUDA_ARCHITECTURES "70;75;80;89;90")
+  target_compile_options(less_slow PRIVATE
+    -Wfatal-errors # Stop on first error
+    -fopenmp # OpenMP support, also requires linking
+    -w # Suppress warnings, we can't resolve all warning across all compilers
+  )
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   # A few useful options for GCC:
   target_compile_options(less_slow PRIVATE
     -Wno-error
@@ -265,14 +320,6 @@ endif()
 # ------------------------------------------------------------------------------
 # Link Libraries
 # ------------------------------------------------------------------------------
-# Add OpenBLAS include directory manually
-if(openblas_POPULATED)
-  target_include_directories(less_slow PRIVATE ${openblas_SOURCE_DIR})
-
-  # For config.h
-  target_include_directories(less_slow PRIVATE ${openblas_BINARY_DIR})
-endif()
-
 target_link_libraries(less_slow
   PRIVATE
   Threads::Threads
@@ -284,13 +331,35 @@ target_link_libraries(less_slow
   stringzilla
   yyjson
   ctre
-  openblas
 
   # There is no `absl` shortcut:
   # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
   absl::flat_hash_map
   nlohmann_json::nlohmann_json
   Eigen3::Eigen
-  $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:TBB::tbb>
-  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
 )
+
+if(USE_INTEL_TBB)
+  target_link_libraries(less_slow PRIVATE TBB::tbb)
+endif()
+
+if(USE_NVIDIA_CCCL)
+  # For CUB/Thrust, rely on CUDA Toolkit's bundled versions
+  # These are automatically included when you include the CUDA Toolkit directories.
+  target_include_directories(less_slow PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+  target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas CUDA::cuda_driver)
+  target_sources(less_slow PRIVATE less_slow.cu)
+
+  # Copy the PTX Intermediate Representation file to the runtime directory
+  set_source_files_properties(less_slow.ptx PROPERTIES LANGUAGE "")
+  add_custom_command(
+    TARGET less_slow POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/less_slow.ptx ${CMAKE_CURRENT_BINARY_DIR}/less_slow.ptx
+  )
+endif()
+
+if(OpenMP_FOUND)
+  target_compile_options(less_slow PRIVATE ${OpenMP_CXX_FLAGS})
+  target_link_libraries(less_slow PRIVATE OpenMP::OpenMP_CXX)
+endif()
