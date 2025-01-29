@@ -80,21 +80,6 @@ endif()
 set(FETCHCONTENT_QUIET OFF)
 include(FetchContent)
 
-# Fetch and build OpenBLAS
-FetchContent_Declare(
-  OpenBLAS
-  GIT_REPOSITORY https://github.com/xianyi/OpenBLAS.git
-  GIT_TAG v0.3.29
-)
-
-# Set OpenBLAS build options
-set(NOFORTRAN ON CACHE BOOL "Disable Fortran" FORCE)
-set(BUILD_WITHOUT_LAPACK OFF CACHE BOOL "Build without LAPACK" FORCE)
-set(USE_THREAD ON CACHE BOOL "Use threading" FORCE)
-
-# Make OpenBLAS available
-FetchContent_MakeAvailable(OpenBLAS)
-
 # GTest (required by Google Benchmark)
 FetchContent_Declare(
   GoogleTest
@@ -335,14 +320,6 @@ endif()
 # ------------------------------------------------------------------------------
 # Link Libraries
 # ------------------------------------------------------------------------------
-# Add OpenBLAS include directory manually
-if(openblas_POPULATED)
-  target_include_directories(less_slow PRIVATE ${openblas_SOURCE_DIR})
-
-  # For config.h
-  target_include_directories(less_slow PRIVATE ${openblas_BINARY_DIR})
-endif()
-
 target_link_libraries(less_slow
   PRIVATE
   Threads::Threads
