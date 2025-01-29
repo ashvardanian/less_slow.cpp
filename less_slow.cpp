@@ -1983,8 +1983,8 @@ extern __global__ void tops_tf32f32_sm80tc_16x16x8_1024unroll_cuda_kernel();
 extern __global__ void tops_f64f64_sm80tc_8x8x4_1024unroll_cuda_kernel();
 extern __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel();
 
-BENCHMARK_CAPTURE(                                                                       //
-    theoretic_tops_cuda, f16_sm70tc, tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel, //
+BENCHMARK_CAPTURE(                                                                          //
+    theoretic_tops_cuda, f16f16_sm70tc, tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel, //
     16, 16, 16, 1024, 70)
     ->MinTime(10);
 BENCHMARK_CAPTURE(                                                                          //
@@ -2026,10 +2026,10 @@ static void theoretic_tops_ptx(                  //
     bm::State &state,                            //
     std::string kernel_name,                     //
     std::size_t m, std::size_t n, std::size_t k, //
-    int required_capability = 70) {
+    std::size_t repetitions, int required_capability) {
 
     // Resolve the absolute path to the PTX file
-    std::string ptx_file = "less_slow_ptx.ptx";
+    std::string ptx_file = "less_slow.ptx";
     std::filesystem::path ptx_path = std::filesystem::absolute(ptx_file);
     if (!std::filesystem::exists(ptx_path)) {
         state.SkipWithError("Failed to find PTX file.");
@@ -2126,17 +2126,18 @@ static void theoretic_tops_ptx(                  //
         cuCtxSynchronize();
     }
 
-    std::size_t const tops_per_cycle = m * n * k * 2;
-    state.counters["TOP"] = benchmark::Counter(tops_per_cycle * state.iterations(), benchmark::Counter::kIsRate);
+    std::size_t const tops_per_cycle = m * n * k * 2 * repetitions;
+    std::size_t const tops_per_gpu = tops_per_cycle * num_sms; //? Warps compute each tile product collectively!
+    state.counters["TOP"] = benchmark::Counter(tops_per_gpu * state.iterations(), benchmark::Counter::kIsRate);
 
     // Clean up
     cuModuleUnload(module_);
     cuCtxDestroy(context);
 }
 // Benchmark configurations with explicit compute capability requirements
-BENCHMARK_CAPTURE(theoretic_tops_ptx, f16_tc_sm70, "tops_f16_sm70tc_ptx_kernel", 16, 8, 8, 70)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops_ptx, bf16_tc_sm80, "tops_bf16_tc_ptx_kernel_sm80", 16, 8, 8, 80)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops_ptx, f8_tc_sm90, "tops_f8_tc_ptx_kernel_sm90", 16, 8, 8, 90)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops_ptx, f16f32_sm70tc, "tops_f16f32_sm70tc_16x16x16_1024loop_ptx_kernel", 16, 16, 16,
+                  1024, 70)
+    ->MinTime(10);
 
 #endif
 

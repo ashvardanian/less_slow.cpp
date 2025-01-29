@@ -326,10 +326,10 @@ if(USE_NVIDIA_CCCL)
   target_sources(less_slow PRIVATE less_slow.cu)
 
   # Copy the PTX Intermediate Representation file to the runtime directory
-  set_source_files_properties(less_slow_ptx.ptx PROPERTIES LANGUAGE "")
+  set_source_files_properties(less_slow.ptx PROPERTIES LANGUAGE "")
   add_custom_command(
     TARGET less_slow POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/less_slow_ptx.ptx ${CMAKE_CURRENT_BINARY_DIR}/less_slow_ptx.ptx
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/less_slow.ptx ${CMAKE_CURRENT_BINARY_DIR}/less_slow.ptx
   )
 endif()
 

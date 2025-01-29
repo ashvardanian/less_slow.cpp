@@ -6,19 +6,22 @@
  *  The contents of this file complement the contents of the `less_slow.cpp`
  *  file with GPGPU kernels showcasing:
  *
- *  - How to coordinate CUDA cores within a single block or warp?
+ *  - How to use Tensor Cores for matrix multiplications?
+ *    What's the difference between `mma` and `wgmma` on Hopper?
+ *  - TODO: How to coordinate CUDA cores within a single block or warp?
  *    A.k.a. how to use shared memory, warp shuffle intrinsics, and reductions?
- *  - What are CUDA math intrinsics and how much faster are they?
+ *  - TODO: What are CUDA math intrinsics and how much faster are they?
  *    A.k.a. when to use `__sinf` over `sinf` or `__fdividef` over `a / b`?
- *  - What's the Physical Page Caching behavior on GPUs?
- *  - How to schedule advanced computational graphs on GPUs?
+ *  - TODO: What's the Physical Page Caching behavior on GPUs?
+ *  - TODO: How to schedule advanced computational graphs on GPUs?
  *    A.k.a. CUDA streams vs Graph Node API vs Cooperative Groups?
  *
  *  To compile this file, dump the SASS code, and check for Tensor Cores usage
  *  on Volta SM70 GPUs, use the following commands:
  *
- *      nvcc -arch=sm_70 -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
- *      cuobjdump -sass less_slow_from_cu.cubin | grep -i mma
+ *  $ nvcc -arch=sm_70 -Xptxas -v -lineinfo -ptx -o less_slow_from_cu.ptx less_slow.cu
+ *  $ nvcc -arch=sm_70 -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
+ *  $ cuobjdump -sass less_slow_from_cu.cubin | grep -i mma
  *
  *  Keep in mind the following TC generations:
  *
@@ -34,6 +37,9 @@
  *    Feature                              | V100     | A100     | H100
  *    -------------------------------------|----------|----------|----------
  *    Compute Capability                   | 7.0      | 8.0      | 9.0
+ *    PTX Version                          | 6+       | 7+       | 8+
+ *    CUDA Releases                        | 9-10     | 11+      | 12+
+ *    -------------------------------------|----------|----------|----------
  *    Threads / Warp                       | 32       | 32       | 32
  *    Max Warps / SM                       | 64       | 64       | 64
  *    Max Threads / SM                     | 2048     | 2048     | 2048
@@ -43,7 +49,7 @@
  *    Max Registers / Thread Block (CTA)   | 65536    | 65536    | 65536
  *    Max Registers / Thread               | 255      | 255      | 255
  *    Max Thread Block Size (# of threads) | 1024     | 1024     | 1024
- *    FP32 Cores / SM                      | 64       | 64       | 128
+ *    -------------------------------------|----------|----------|----------
  *    Ratio of SM Registers to FP32 Cores  | 1024     | 1024     | 512
  *    Shared Memory Size / SM              | ≤ 96 KB  | ≤ 164 KB | ≤ 228 KB
  *    Tensor Core Generation               | 1st      | 3rd      | 5th
@@ -151,6 +157,8 @@ __device__ inline void tops_tc_cuda_kernel() {
     if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_frag, 16, wmma::mem_row_major);
 }
 
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) //? Binary Matrices require SM75 or higher
+
 /**
  *  To process binary matrices we can't rely on addition and multiplication.
  *  A different set of mathematical operations is required, such as @b XOR or
@@ -169,6 +177,8 @@ __device__ inline void binary_tops_tc_cuda_kernel( //
     for (int i = 0; i != repetitions_; ++i) wmma::bmma_sync(c_frag, a_frag, b_frag, c_frag, bit_op, acc_op);
     if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_frag, 16, wmma::mem_row_major);
 }
+
+#endif
 
 #pragma region Volta
 
@@ -281,5 +291,5 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
  *  @see "Fast Matrix-Multiplication with WGMMA on NVIDIA Hopper GPUs" by Colfax:
  *       https://research.colfax-intl.com/cutlass-tutorial-wgmma-hopper/
  *  @see "Outperforming cuBLAS on H100: a Worklog" by Pranjal Shankhdhar:
- *      https://cudaforfun.substack.com/p/outperforming-cublas-on-h100-a-worklog
+ *       https://cudaforfun.substack.com/p/outperforming-cublas-on-h100-a-worklog
  */
