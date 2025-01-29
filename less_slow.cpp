@@ -2134,8 +2134,8 @@ static void theoretic_tops_ptx(                  //
     cuModuleUnload(module_);
     cuCtxDestroy(context);
 }
-// Benchmark configurations with explicit compute capability requirements
-BENCHMARK_CAPTURE(theoretic_tops_ptx, f16f32_sm70tc, "tops_f16f32_sm70tc_16x16x16_1024loop_ptx_kernel", 16, 16, 16,
+
+BENCHMARK_CAPTURE(theoretic_tops_ptx, f16f16_sm70tc, "tops_f16f16_sm70tc_16x16x16_1024loop_ptx_kernel", 16, 16, 16,
                   1024, 70)
     ->MinTime(10);
 

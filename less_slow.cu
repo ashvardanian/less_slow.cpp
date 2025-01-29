@@ -19,8 +19,8 @@
  *  To compile this file, dump the SASS code, and check for Tensor Cores usage
  *  on Volta SM70 GPUs, use the following commands:
  *
- *  $ nvcc -arch=sm_70 -Xptxas -v -lineinfo -ptx -o less_slow_from_cu.ptx less_slow.cu
- *  $ nvcc -arch=sm_70 -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
+ *  $ nvcc -arch=sm_90 -Xptxas -v -lineinfo -ptx -o less_slow_from_cu.ptx less_slow.cu
+ *  $ nvcc -arch=sm_90 -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
  *  $ cuobjdump -sass less_slow_from_cu.cubin | grep -i mma
  *
  *  Keep in mind the following TC generations:
