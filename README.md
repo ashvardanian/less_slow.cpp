@@ -30,6 +30,8 @@ Some of the highlights include:
 - __Is the pointer size really 64 bits__ and how to exploit [pointer-tagging](https://en.wikipedia.org/wiki/Tagged_pointer)?
 - __How many packets is [UDP](https://www.cloudflare.com/learning/ddos/glossary/user-datagram-protocol-udp/) dropping__ and how to serve web requests in [`io_uring`](https://en.wikipedia.org/wiki/Io_uring) from user-space?
 - __Scatter and Gather__ for 50% faster vectorized disjoint memory operations.
+- __Intel's oneAPI vs Nvidia's CCCL?__ What's so special about `<thrust>` and `<cub>`?
+- __CUDA C++, [PTX](https://en.wikipedia.org/wiki/Parallel_Thread_Execution) Intermediate Representations, and SASS__, and how do they differ from CPU code?
 - __How to choose between intrinsics, inline Assembly, and separate `.S` files__ for your performance-critical code?
 - __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜
 
@@ -74,6 +76,7 @@ The build will pull and compile several third-party dependencies from the source
 - Lewis Baker's [cppcoro](https://github.com/lewissbaker/cppcoro) implements C++20 coroutines.
 - Jens Axboe's [liburing](https://github.com/axboe/liburing) to simplify Linux kernel-bypass.
 - Chris Kohlhoff's [ASIO](https://github.com/chriskohlhoff/asio) as a [networking TS](https://en.cppreference.com/w/cpp/experimental/networking) extension.
+- Nvidia's [CCCL](https://github.com/nvidia/cccl) for GPU-accelerated computations.
 
 To control the output or run specific benchmarks, use the following flags:
 
