@@ -301,32 +301,25 @@ std::size_t physical_cores() {
     // return at most 64 cores, as limited by a single windows processor group.
     // However, starting with newer versions of Windows, applications can seamlessly
     // span across multiple processor groups.
-    // GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) can return all logical cores;
-    // However, in order to get physical cores, we have to dive deeper.
-    DWORD bufferSize = 0;
-    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &bufferSize);
-    if (bufferSize == 0) {
-        return 0; // Error occurred
+    DWORD buffer_size = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &buffer_size);
+    if (buffer_size == 0) throw std::runtime_error("GetLogicalProcessorInformationEx failed to get buffer size");
+
+    using core_info_t = PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
+    std::vector<BYTE> buffer(buffer_size);
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<core_info_t>(buffer.data()),
+                                          &buffer_size))
+        throw std::runtime_error("GetLogicalProcessorInformationEx failed to get core info");
+
+    std::size_t core_count = 0;
+
+    for (DWORD buffer_progress = 0; buffer_progress < buffer_size;) {
+        core_info_t ptr = reinterpret_cast<core_info_t>(buffer.data() + buffer_progress);
+        if (ptr->Relationship == RelationProcessorCore) ++core_count;
+        buffer_progress += ptr->Size;
     }
 
-    std::vector<BYTE> buffer(bufferSize);
-    if (!GetLogicalProcessorInformationEx(RelationProcessorCore,
-                                          reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()),
-                                          &bufferSize)) {
-        return 0; // Error occurred
-    }
-
-    std::size_t coreCount = 0;
-    PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX ptr =
-        reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data());
-    DWORD byteOffset = 0;
-    while (byteOffset < bufferSize) {
-        if (ptr->Relationship == RelationProcessorCore) { ++coreCount; }
-        byteOffset += ptr->Size;
-        ptr = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(reinterpret_cast<BYTE *>(ptr) + ptr->Size);
-    }
-
-    return coreCount;
+    return core_count;
 #else
     return std::thread::hardware_concurrency();
 #endif
