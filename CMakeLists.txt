@@ -71,7 +71,7 @@ find_package(Threads REQUIRED)
 find_package(OpenMP QUIET)
 
 set(FETCHCONTENT_QUIET OFF)
-include(FetchContent) # For CMake-friendly dependencies
+include(FetchContent)
 
 # Disable warnings for dependencies
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
