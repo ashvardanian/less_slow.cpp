@@ -2,7 +2,7 @@
 # 3.17+ for `FindCUDAToolkit`
 # 3.25.2 for CUDA20 support
 # The good news is that Ubuntu 24.04 comes with 3.28!
-cmake_minimum_required(VERSION 0.6.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.25.2 FATAL_ERROR)
 
 # ------------------------------------------------------------------------------
 # Project Setup
