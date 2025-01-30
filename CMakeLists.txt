@@ -51,7 +51,7 @@ endif()
 # Options
 # ------------------------------------------------------------------------------
 option(USE_INTEL_TBB "Use Intel TBB for parallel STL algorithms" ON)
-option(USE_NVIDIA_CCCL "Use Nvidia CCCL for CUDA acceleration" ON)
+option(USE_NVIDIA_CCCL "Use Nvidia CCCL for CUDA acceleration" OFF)
 
 # Enable or disable options based on system and CUDA support
 if(ENABLE_CUDA)
