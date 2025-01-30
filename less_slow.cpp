@@ -53,11 +53,15 @@ namespace bm = benchmark;
  *  or little-endian.
  */
 #include <cstdint> // `std::int32_t` and other sized integers
+#include <cstdlib> // `std::rand`
 
 static void i32_addition(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
+    std::int32_t a = std::rand(), b = std::rand(), c = 0;
     for (auto _ : state) c = a + b;
-    (void)c; // Silence "variable `c` set but not used" warning
+
+    // In some categories of projects, benchmarks are easier to convert
+    // into tests, than the other way around :)
+    if (c != a + b) state.SkipWithError("Incorrect sum!");
 }
 
 BENCHMARK(i32_addition);
@@ -87,17 +91,21 @@ static void i32_addition_inline_asm(bm::State &state) {
     //   and pointers will be 4 bytes wide.
     // - For 64-bit targets (`__x86_64__`): Registers like `eax`, `r8d` will
     //   be used for 32-bit values, while pointers will be 8 bytes wide.
-    std::int32_t a = 0, b = 0, c = 0;
+    std::int32_t a = std::rand(), b = std::rand(), c = 0;
     for (auto _ : state) {
-        asm volatile(                  //
-            "addl %[b], %[a]\n\t"      // Sum `a + b` into `a`; `l` means 32-bit operation.
-            "movl %[a], %[c]\n\t"      // Move result to `c`, again using the `l` suffix.
-            : [c] "=r"(c), [a] "+r"(a) // Outputs: `c` and `a` (read-write)
-            : [b] "r"(b)               // Input: `b`
-            : "cc"                     // Clobbered: condition codes
-        );
+        asm volatile(
+            // Perform a 32-bit addition of `b` into `a`.
+            "addl %[b], %[a]\n\t"
+            // `[a] "=r"(c)` means treat `c` as the output for the result.
+            // `"0"(a)` means reuse the same register allocated to the first output operand for `a`.
+            // `[b] "r"(b)` means that `b` is a read-only operand that must reside in a register.
+            : [a] "=r"(c)
+            : "0"(a), [b] "r"(b)
+            // Tell the compiler that this code modifies the condition codes (CPU flags),
+            // so it cannot assume those flags are still valid after this assembly block.
+            : "cc");
     }
-    (void)c; // Silence "variable `c` set but not used" warning
+    if (c != a + b) state.SkipWithError("Incorrect sum!");
 }
 
 BENCHMARK(i32_addition_inline_asm);
@@ -105,17 +113,25 @@ BENCHMARK(i32_addition_inline_asm);
 #elif defined(__aarch64__) //? The following kernel is just for the 64-bit Arm
 
 static void i32_addition_inline_asm(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
+    // In inline assembly for AArch64 we use `%w` registers for 32-bit operations.
+    // That means `add %w[a], %w[a], %w[b]` will add the 32-bit subregisters
+    // of these named operands. Pointers remain 8 bytes wide, but here we only
+    // deal with 32-bit integers.
+    std::int32_t a = std::rand(), b = std::rand(), c = 0;
     for (auto _ : state) {
-        asm volatile(                     //
-            "add %w[a], %w[b], %w[a]\n\t" // Sum `a + b` into `a`
-            "mov %w[c], %w[a]\n\t"        // Move result to `c`
-            : [c] "=r"(c), [a] "+r"(a)    // Outputs: `c` and `a` (read-write)
-            : [b] "r"(b)                  // Input: `b`
-            : "cc"                        // Clobbered: condition codes
-        );
+        asm volatile(
+            // Perform a 32-bit addition of `b` into `a`: `%w[a] := %w[a] + %w[b]`.
+            "add %w[a], %w[a], %w[b]\n\t"
+            // `[a] "=r"(c)` means treat `c` as the output for the result of the operation.
+            // `"0"(a)` says to reuse the same register allocated to the first output operand for `a`.
+            // `[b] "r"(b)` means that `b` is a read-only operand that must reside in a register.
+            : [a] "=r"(c)
+            : "0"(a), [b] "r"(b)
+            // Tell the compiler that this assembly modifies the condition flags (CPU flags),
+            // so it cannot rely on them remaining unaltered after this assembly block.
+            : "cc");
     }
-    (void)c; // Silence "variable `c` set but not used" warning
+    if (c != a + b) state.SkipWithError("Incorrect sum!");
 }
 BENCHMARK(i32_addition_inline_asm);
 
@@ -154,9 +170,9 @@ BENCHMARK(i32_addition_inline_asm);
 extern "C" std::int32_t i32_add_asm_kernel(std::int32_t a, std::int32_t b);
 
 static void i32_addition_asm(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
+    std::int32_t a = std::rand(), b = std::rand(), c = 0;
     for (auto _ : state) c = i32_add_asm_kernel(a, b);
-    (void)c; // Silence "variable `c` set but not used" warning
+    if (c != a + b) state.SkipWithError("Incorrect sum!");
 }
 
 BENCHMARK(i32_addition_asm);
@@ -178,12 +194,10 @@ BENCHMARK(i32_addition_asm);
  *  @b `std::rand()`, one of the most controversial operations in the
  *  C standard library.
  */
-#include <cstdlib> // `std::rand`
-
 static void i32_addition_random(bm::State &state) {
-    std::int32_t c = 0;
+    std::int32_t c;
     for (auto _ : state) c = std::rand() + std::rand();
-    (void)c; // Silence "variable `c` set but not used" warning
+    (void)c; //? Silence "variable `c` set but not used" warning
 }
 
 BENCHMARK(i32_addition_random);
@@ -203,7 +217,7 @@ BENCHMARK(i32_addition_random);
  */
 
 static void i32_addition_paused(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
+    std::int32_t a, b, c;
     for (auto _ : state) {
         state.PauseTiming();
         a = std::rand(), b = std::rand();
