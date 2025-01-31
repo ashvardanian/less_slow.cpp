@@ -6109,12 +6109,14 @@ BENCHMARK_CAPTURE(rpc_libc, public, networking_route_t::public_k, //
  *  - `IORING_OP_RECVMSG` and `IORING_OP_SENDMSG` - since 5.3
  *  - `IORING_OP_LINK_TIMEOUT` - since 5.5
  *  - `IORING_OP_TIMEOUT` - since 5.4
+ *  - `IORING_REGISTER_BUFFERS` - since 5.1
  *
  *  @see Supported operations: https://man7.org/linux/man-pages/man2/io_uring_enter2.2.html
  *  @see Kernel versions in Ubuntu: https://ubuntu.com/security/livepatch/docs/livepatch/reference/kernels
  */
 #include <liburing.h>    // `io_uring`
 #include <sys/utsname.h> // `uname`
+#include <sys/mman.h>    // `mmap`, `munmap`
 
 std::pair<int, int> fetch_linux_kernel_version() {
     struct utsname buffer;
@@ -6124,6 +6126,49 @@ std::pair<int, int> fetch_linux_kernel_version() {
     std::sscanf(buffer.release, "%d.%d", &major, &minor);
     return {major, minor};
 }
+
+/**
+ *  @brief  Memory allocator, sharing the same memory region between the kernel and user-space.
+ *  @note   This is essential for `IORING_REGISTER_BUFFERS`.
+ */
+template <typename type_>
+class mmap_array {
+    type_ *data_ = nullptr;
+    std::size_t size_ = 0;
+
+  public:
+    mmap_array(std::size_t count) : size_(count) {
+        // The basic mmap call, creating an anonymous region:
+        void *addr = ::mmap(            //
+            nullptr,                    // no specific address
+            size_ * sizeof(type_),      // length in bytes
+            PROT_READ | PROT_WRITE,     // read/write allowed
+            MAP_SHARED | MAP_ANONYMOUS, // not backed by a file
+            -1,                         // no file descriptor
+            0                           // offset
+        );
+        if (addr == MAP_FAILED) throw std::bad_alloc();
+
+        // Ensure the pages are locked in memory:
+        if (mlock(addr, size_ * sizeof(type_)) != 0) {
+            ::munmap(addr, size_ * sizeof(type_));
+            throw std::runtime_error("`mlock` failed");
+        }
+
+        data_ = static_cast<type_ *>(addr);
+    }
+
+    ~mmap_array() noexcept {
+        ::munlock(data_, size_ * sizeof(type_));
+        ::munmap(data_, size_ * sizeof(type_));
+    }
+
+    type_ *begin() const noexcept { return data_; }
+    type_ *end() const noexcept { return data_ + size_; }
+    type_ &operator[](std::size_t idx) noexcept { return data_[idx]; }
+    type_ operator[](std::size_t idx) const noexcept { return data_[idx]; }
+    std::size_t size() const noexcept { return size_; }
+};
 
 /**
  *  @brief  Wraps the `rpc_buffer_t` with metadata about the client address.
@@ -6157,7 +6202,7 @@ class rpc_uring55_server {
     io_uring ring_;
 
     // Pre-allocated resources
-    std::vector<message_t> messages_;
+    mmap_array<message_t> messages_;
     std::size_t max_concurrency_;
 
   public:
@@ -6172,7 +6217,9 @@ class rpc_uring55_server {
 
         // Initialize `io_uring` with one slot for each receive/send operation
         if (io_uring_queue_init(max_concurrency * 2, &ring_, 0) < 0)
-            raise_system_error("Failed to initialize io_uring");
+            raise_system_error("Failed to initialize io_uring 5.5 server");
+        if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
+            raise_system_error("Failed to register file descriptor with io_uring 5.5 server");
 
         // Initialize message resources
         for (message_t &message : messages_) {
@@ -6187,6 +6234,12 @@ class rpc_uring55_server {
             message.io_vec.iov_len = message.buffer.size();
             message.status = status_t::pending_k;
         }
+
+        // Let's register all of those with `IORING_REGISTER_BUFFERS`
+        std::vector<struct iovec> iovecs_to_register;
+        for (message_t &message : messages_) iovecs_to_register.push_back(message.io_vec);
+        if (io_uring_register_buffers(&ring_, iovecs_to_register.data(), iovecs_to_register.size()) < 0)
+            raise_system_error("Failed to register buffers with io_uring 5.5 server");
     }
 
     ~rpc_uring55_server() noexcept {}
@@ -6251,7 +6304,7 @@ class rpc_uring55_client {
     io_uring ring_;
 
     // Pre-allocated resources
-    std::vector<message_t> messages_;
+    mmap_array<message_t> messages_;
     message_t packet_timeout_handle_;
     message_t batch_timeout_handle_;
 
@@ -6273,7 +6326,9 @@ class rpc_uring55_client {
         // as well as a batch-level timeout operation and a cancel operation for the
         // batch-level timeout.
         if (io_uring_queue_init(concurrency * 3 + 1 + 1, &ring_, 0) < 0)
-            raise_system_error("Failed to initialize io_uring");
+            raise_system_error("Failed to initialize io_uring 5.5 client");
+        if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
+            raise_system_error("Failed to register file descriptor with io_uring 5.5 client");
 
         // Initialize message resources
         for (message_t &message : messages_) {
@@ -6290,6 +6345,12 @@ class rpc_uring55_client {
             message.buffer.fill('X');
             message.status = status_t::pending_k;
         }
+
+        // Let's register all of those with `IORING_REGISTER_BUFFERS`
+        std::vector<struct iovec> iovecs_to_register;
+        for (message_t &message : messages_) iovecs_to_register.push_back(message.io_vec);
+        if (io_uring_register_buffers(&ring_, iovecs_to_register.data(), iovecs_to_register.size()) < 0)
+            raise_system_error("Failed to register buffers with io_uring 5.5 client");
     }
 
     ~rpc_uring55_client() noexcept {
@@ -6427,7 +6488,6 @@ BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* mess
  *
  *  But our previous version is still quite basic, and doesn't use:
  *
- *  - `IORING_REGISTER_BUFFERS` - since 5.1
  *  - `IORING_RECV_MULTISHOT` or `io_uring_prep_recvmsg_multishot` - since 6.0
  *  - `IORING_OP_SEND_ZC` or `io_uring_prep_sendmsg_zc` - since 6.0
  *  - `IORING_SETUP_SQPOLL` - with `IORING_FEAT_SQPOLL_NONFIXED` after 5.11
@@ -6437,56 +6497,11 @@ BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* mess
  *
  *  Let's add all of those!
  *
- *  - `IORING_REGISTER_BUFFERS` adds 10%
  *  - `IORING_SETUP_COOP_TASKRUN` doesn't work
  *  - `IORING_SETUP_SINGLE_ISSUER` doesn't help
  *  - `IORING_SETUP_SUBMIT_ALL` - core dumped :O
  *  - `IORING_OP_SEND_ZC` - core dumped :O
  */
-#include <sys/mman.h> // `mmap`, `munmap`
-
-/**
- *  @brief  Memory allocator, sharing the same memory region between the kernel and user-space.
- *  @note   This is essential for `IORING_REGISTER_BUFFERS` and `IORING_OP_SEND_ZC`.
- */
-template <typename type_>
-class mmap_array {
-    type_ *data_ = nullptr;
-    std::size_t size_ = 0;
-
-  public:
-    mmap_array(std::size_t count) : size_(count) {
-        // The basic mmap call, creating an anonymous region:
-        void *addr = ::mmap(            //
-            nullptr,                    // no specific address
-            size_ * sizeof(type_),      // length in bytes
-            PROT_READ | PROT_WRITE,     // read/write allowed
-            MAP_SHARED | MAP_ANONYMOUS, // not backed by a file
-            -1,                         // no file descriptor
-            0                           // offset
-        );
-        if (addr == MAP_FAILED) throw std::bad_alloc();
-
-        // Ensure the pages are locked in memory:
-        if (mlock(addr, size_ * sizeof(type_)) != 0) {
-            ::munmap(addr, size_ * sizeof(type_));
-            throw std::runtime_error("`mlock` failed");
-        }
-
-        data_ = static_cast<type_ *>(addr);
-    }
-
-    ~mmap_array() noexcept {
-        ::munlock(data_, size_ * sizeof(type_));
-        ::munmap(data_, size_ * sizeof(type_));
-    }
-
-    type_ *begin() const noexcept { return data_; }
-    type_ *end() const noexcept { return data_ + size_; }
-    type_ &operator[](std::size_t idx) noexcept { return data_[idx]; }
-    type_ operator[](std::size_t idx) const noexcept { return data_[idx]; }
-    std::size_t size() const noexcept { return size_; }
-};
 
 #pragma region IO Uring for Linux Kernel 6.0
 
