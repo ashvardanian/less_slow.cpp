@@ -343,25 +343,32 @@ endif()
 
 # Release vs. Debug flags via generator expressions
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  target_compile_options(less_slow PRIVATE
-    $<$<CONFIG:Release>:-O3>
-    $<$<CONFIG:Release>:-Wno-unused-but-set-variable>
-    $<$<CONFIG:Release>:-falign-functions=32>
-    $<$<CONFIG:Debug>:-g>
-  )
-  set_property(TARGET less_slow PROPERTY SANITIZE_ADDRESS TRUE)
-  set_property(TARGET less_slow PROPERTY SANITIZE_UNDEFINED TRUE)
+  if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    target_compile_options(less_slow PRIVATE
+      -O3
+      -Wno-unused-but-set-variable
+      -falign-functions=32
+    )
+  endif()
+
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    target_compile_options(less_slow PRIVATE -g)
+  endif()
+
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set_property(TARGET less_slow PROPERTY SANITIZE_ADDRESS TRUE)
+    set_property(TARGET less_slow PROPERTY SANITIZE_UNDEFINED TRUE)
+  endif()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-  target_compile_options(less_slow PRIVATE
-    $<$<CONFIG:Release>:/O2>
-    $<$<CONFIG:Release>:/Ob2>
-    $<$<CONFIG:Release>:/Oi>
-    $<$<CONFIG:Release>:/Ot>
-    $<$<CONFIG:Release>:/GL>
-  )
-  target_link_options(less_slow PRIVATE
-    $<$<CONFIG:Release>:/LTCG:incremental>
-  )
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_options(less_slow PRIVATE "/O2" "/Ob2" "/Oi" "/Ot" "/GL")
+    target_link_options(less_slow PRIVATE "/LTCG:incremental")
+  elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(less_slow PRIVATE "/Od" "/Zi")
+  elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    target_compile_options(less_slow PRIVATE "/O2" "/Ob2" "/Oi" "/Ot" "/GL" "/Zi")
+    target_link_options(less_slow PRIVATE "/LTCG:incremental")
+  endif()
 endif()
 
 # ------------------------------------------------------------------------------
