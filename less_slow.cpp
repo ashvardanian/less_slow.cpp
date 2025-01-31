@@ -6530,11 +6530,18 @@ class rpc_uring60_server {
         socket_descriptor_ = socket_descriptor;
         server_address_ = server_address;
 
+        // Zero copy operations would require more socket options
+        int const one = 1;
+        if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_ZEROCOPY, &one, sizeof(one)) < 0)
+            raise_system_error("Failed to enable zero-copy on socket");
+
         // Initialize `io_uring` with one slot for each receive/send operation
-        // IORING_SETUP_SQPOLL | IORING_SETUP_COOP_TASKRUN | IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_SUBMIT_ALL
+        // TODO: |= IORING_SETUP_COOP_TASKRUN | IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_SUBMIT_ALL
         auto io_uring_setup_flags = IORING_SETUP_SQPOLL;
         if (io_uring_queue_init(max_concurrency * 2, &ring_, io_uring_setup_flags) < 0)
             raise_system_error("Failed to initialize io_uring 6.0 server");
+        if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
+            raise_system_error("Failed to register file descriptor with io_uring 6.0 server");
 
         // Initialize message resources
         for (message_t &message : messages_) {
@@ -6571,6 +6578,9 @@ class rpc_uring60_server {
             message.status = status_t::receiving_k;
             memset(&message.peer_address, 0, sizeof(sockaddr_in));
             struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
+            // TODO: Switch to multishot:
+            // io_uring_prep_recvmsg_multishot(receive_entry, socket_descriptor_, &message.header,
+            //                                 IOSQE_BUFFER_SELECT | IOSQE_FIXED_FILE);
             io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &message.header, 0);
             io_uring_sqe_set_data(receive_entry, &message);
         }
@@ -6589,7 +6599,7 @@ class rpc_uring60_server {
             if (message.status == status_t::receiving_k) {
                 struct io_uring_sqe *send_entry = io_uring_get_sqe(&ring_);
                 message.status = status_t::sending_k;
-                io_uring_prep_sendmsg(send_entry, socket_descriptor_, &message.header, 0);
+                io_uring_prep_sendmsg_zc(send_entry, socket_descriptor_, &message.header, 0);
                 io_uring_sqe_set_data(send_entry, &message);
             }
 
@@ -6632,6 +6642,11 @@ class rpc_uring60_client {
         socket_descriptor_ = socket(AF_INET, SOCK_DGRAM, 0);
         if (socket_descriptor_ < 0) raise_system_error("Failed to create socket");
 
+        // Zero copy operations would require more socket options
+        int const one = 1;
+        if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_ZEROCOPY, &one, sizeof(one)) < 0)
+            raise_system_error("Failed to enable zero-copy on socket");
+
         // Resolve server address
         server_address_.sin_family = AF_INET;
         server_address_.sin_addr.s_addr = inet_addr(server_addr.c_str());
@@ -6643,6 +6658,8 @@ class rpc_uring60_client {
         auto io_uring_setup_flags = IORING_SETUP_SQPOLL;
         if (io_uring_queue_init(concurrency * 3 + 1 + 1, &ring_, io_uring_setup_flags) < 0)
             raise_system_error("Failed to initialize io_uring 6.0 client");
+        if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
+            raise_system_error("Failed to register file descriptor with io_uring 6.0 client");
 
         // Initialize message resources
         for (message_t &message : messages_) {
@@ -6696,7 +6713,7 @@ class rpc_uring60_client {
 
             // Prepare send operation
             auto *submitted_entry = io_uring_get_sqe(&ring_);
-            io_uring_prep_sendmsg(submitted_entry, socket_descriptor_, &message.header, 0);
+            io_uring_prep_sendmsg_zc(submitted_entry, socket_descriptor_, &message.header, MSG_WAITALL);
             io_uring_sqe_set_data(submitted_entry, &message);
             //? We could also use `IOSQE_CQE_SKIP_SUCCESS` here.
             //? In that case the State Machine below would be simpler,
