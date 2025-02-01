@@ -4233,13 +4233,14 @@ yyjson_alc yyjson_wrap_arena_prepend(arena_t &arena) noexcept {
  */
 
 #if defined(__x86_64__) && defined(__linux__)
-#include <asm/prctl.h>   // `ARCH_ENABLE_TAGGED_ADDR`
 #include <sys/syscall.h> // `SYS_arch_prctl`
 static bool enable_pointer_tagging(unsigned long bits = 1) noexcept {
     // The argument is required number of tag bits.
     // It is rounded up to the nearest LAM mode that can provide it.
     // For now only LAM_U57 is supported, with 6 tag bits.
-    return syscall(SYS_arch_prctl, ARCH_ENABLE_TAGGED_ADDR, bits) == 0;
+    // ! This requires kernel 6.2 or newer.
+    int _ARCH_ENABLE_TAGGED_ADDR = 0x4002;
+    return syscall(SYS_arch_prctl, _ARCH_ENABLE_TAGGED_ADDR, bits) == 0;
 }
 #else
 static bool enable_pointer_tagging(unsigned long = 0) noexcept { return false; }
