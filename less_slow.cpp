@@ -6464,7 +6464,8 @@ class rpc_uring55_client {
 static void rpc_uring55(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
     auto [major, minor] = fetch_linux_kernel_version();
     if (major < 5 || (major == 5 && minor < 5)) {
-        std::string message = std::format("Kernel version {}.{} too old for io_uring 5.0 variant", major, minor);
+        std::string message = "Kernel version "s + std::to_string(major) + "."s + std::to_string(minor) +
+                              " too old for io_uring 5.5 variant"s;
         state.SkipWithError(message.c_str());
         return;
     }
@@ -6795,7 +6796,8 @@ class rpc_uring60_client {
 static void rpc_uring60(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
     auto [major, minor] = fetch_linux_kernel_version();
     if (major < 6) {
-        std::string message = std::format("Kernel version {}.{} too old for io_uring 6.0 variant", major, minor);
+        std::string message = "Kernel version "s + std::to_string(major) + "."s + std::to_string(minor) +
+                              " too old for io_uring 6.0 variant"s;
         state.SkipWithError(message.c_str());
         return;
     }
