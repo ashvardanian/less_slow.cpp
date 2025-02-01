@@ -2634,14 +2634,18 @@ std::size_t parse_size_string(std::string const &str) {
 #pragma region Memory Bound Linear Algebra
 #include <cblas.h>
 /**
- *! OpenBLAS defines a `SIZE` macro for internal use, which conflicts with `fmt`
- *! and other code trying to use that name for variable names, so we must undefine it.
+ *  ! OpenBLAS defines a `SIZE` macro for internal use, which conflicts with `fmt`
+ *  ! and other code trying to use that name for variable names, so we must undefine it.
  */
 #undef SIZE
 
 template <typename scalar_type_>
 static void cblas_tops(bm::State &state) {
+    // ! Not all versions of OpenBLAS define the `openblas_set_num_threads`
+    // ! symbol, so we use CMake's `CheckFunctionExists` for that.
+#if defined(LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
     openblas_set_num_threads(physical_cores());
+#endif
 
     // BLAS expects leading dimensions: `lda` = `ldb` = `ldc` = `n` for square inputs.
     std::size_t n = static_cast<std::size_t>(state.range(0));
