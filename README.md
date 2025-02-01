@@ -55,6 +55,7 @@ cd less_slow.cpp                                            # Change the directo
 
 sudo apt-get install build-essential cmake g++              # Install default build tools
 sudo apt-get install pkg-config liburing-dev                # Install liburing for kernel-bypass
+sudo apt-get install libblas-dev                            # Install numerics libraries
 
 cmake -B build_release -D CMAKE_BUILD_TYPE=Release          # Generate the build files
 cmake --build build_release --config Release                # Build the project
