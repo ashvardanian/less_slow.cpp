@@ -2809,14 +2809,16 @@ class unified_array {
     std::size_t size() const noexcept { return size_; }
 };
 
-template <typename scalar_type_>
+template <typename input_scalar_type_, typename output_scalar_type_ = input_scalar_type_>
 static void cublas_tops(bm::State &state) {
     // Matrix size and leading dimensions
     std::size_t n = static_cast<std::size_t>(state.range(0));
     int lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
+    constexpr bool same_type = std::is_same_v<input_scalar_type_, output_scalar_type_>;
 
     // Unified memory for large matrices
-    unified_array<scalar_type_> a(n * n), b(n * n), c(n * n);
+    unified_array<input_scalar_type_> a(n * n), b(n * n);
+    unified_array<output_scalar_type_> c(n * n);
 
     // With unified memory, we don't even need Thrust to initialize the data
     std::iota(a.begin(), a.end(), 0);
@@ -2830,28 +2832,28 @@ static void cublas_tops(bm::State &state) {
     // Perform the GEMM operation
     // https://docs.nvidia.com/cuda/cublas/#cublas-t-gemm
     for (auto _ : state) {
-        if constexpr (std::is_same_v<scalar_type_, float>) {
-            scalar_type_ alpha = 1, beta = 0;
+        if constexpr (std::is_same_v<input_scalar_type_, float> && same_type) {
+            input_scalar_type_ alpha = 1, beta = 0;
             cublasSgemm(                                   //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
                 &beta, c.begin(), ldc);
         }
-        else if constexpr (std::is_same_v<scalar_type_, double>) {
-            scalar_type_ alpha = 1, beta = 0;
+        else if constexpr (std::is_same_v<input_scalar_type_, double> && same_type) {
+            input_scalar_type_ alpha = 1, beta = 0;
             cublasDgemm(                                   //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
                 &beta, c.begin(), ldc);
         }
-        else if constexpr (std::is_same_v<scalar_type_, __half>) {
-            scalar_type_ alpha = 1, beta = 0;
+        else if constexpr (std::is_same_v<input_scalar_type_, __half> && same_type) {
+            input_scalar_type_ alpha = 1, beta = 0;
             cublasHgemm(                                   //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
                 &beta, c.begin(), ldc);
         }
-        else if constexpr (std::is_same_v<scalar_type_, int8_t>) {
+        else if constexpr (std::is_same_v<input_scalar_type_, int8_t> && std::is_same_v<output_scalar_type_, int32_t>) {
             // Scaling factors must correspond to the accumulator type
             // https://docs.nvidia.com/cuda/cublas/#cublasgemmex
             int32_t alpha_int = 1, beta_int = 0;
@@ -2873,10 +2875,10 @@ static void cublas_tops(bm::State &state) {
 }
 
 // Register benchmarks
-BENCHMARK(cublas_tops<float>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublas_tops<double>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublas_tops<__half>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublas_tops<int8_t>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<__half>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 #endif // defined(__CUDACC__)
 
 #pragma endregion // Memory Bound Linear Algebra
