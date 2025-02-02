@@ -2813,6 +2813,9 @@ class unified_array {
     std::size_t size() const noexcept { return size_; }
 };
 
+template <typename>
+struct dependent_false : std::false_type {};
+
 template <typename input_scalar_type_, typename output_scalar_type_ = input_scalar_type_>
 static void cublas_tops(bm::State &state) {
     // Matrix size and leading dimensions
@@ -2868,6 +2871,15 @@ static void cublas_tops(bm::State &state) {
                 &beta_int, c.begin(), CUDA_R_32I, ldc,     //
                 CUDA_R_32I, CUBLAS_GEMM_DEFAULT);
         }
+        // Trigger a compile-time error for unsupported type combinations
+        else {
+            static_assert(dependent_false<input_scalar_type_>::value,
+                          "Unsupported combination of input and output types for cuBLAS");
+        }
+
+        // Synchronize to ensure that the GEMM call completes before timing stops.
+        // Otherwise 10'000 calls will be scheduled and we will block forever until all complete!
+        cudaDeviceSynchronize();
     }
 
     std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
