@@ -2735,8 +2735,12 @@ BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(b
 #endif
 
 #if defined(__AVX512FP16__)
+#if !defined(__CUDACC__)
 #include <immintrin.h>
 BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+#else
+BENCHMARK(eigen_tops<half>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+#endif
 #endif
 
 /**
