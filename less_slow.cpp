@@ -2672,8 +2672,8 @@ static void cblas_tops(bm::State &state) {
     state.SetComplexityN(n);
 }
 
-BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
-BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 
 /**
  *  Eigen is a high-level C++ library for linear algebra that provides a
@@ -2711,10 +2711,10 @@ static void eigen_tops(bm::State &state) {
     state.SetComplexityN(n);
 }
 
-BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
-BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
-BENCHMARK(eigen_tops<std::int16_t>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
-BENCHMARK(eigen_tops<std::int8_t>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<std::int16_t>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<std::int8_t>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 
 /**
  *  Arm provides C language extensions for half-precision numbers, like
@@ -2726,17 +2726,17 @@ BENCHMARK(eigen_tops<std::int8_t>)->RangeMultiplier(2)->Range(8, 65536)->Complex
  */
 #if defined(__ARM_FEATURE_FP16_FML) && defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC)
 #include <arm_fp16.h>
-BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 #endif
 
 #if defined(__ARM_FEATURE_BF16) //! May not be defined even if `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC` is!
 #include <arm_bf16.h>
-BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 #endif
 
 #if defined(__AVX512FP16__)
 #include <immintrin.h>
-BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 #endif
 
 /**
