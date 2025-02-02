@@ -16,8 +16,8 @@
  *  - TODO: How to schedule advanced computational graphs on GPUs?
  *    A.k.a. CUDA streams vs Graph Node API vs Cooperative Groups?
  *
- *  To compile this file, dump the SASS code, and check for Tensor Cores usage
- *  on Volta SM70 GPUs, use the following commands:
+ *  To compile this file, dump the SASS code, and check for Tensor Cores
+ *  usage on Volta SM70 GPUs, use the following commands:
  *
  *  $ nvcc -arch=sm_90 -Xptxas -v -lineinfo -ptx -o less_slow_from_cu.ptx less_slow.cu
  *  $ nvcc -arch=sm_90 -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
@@ -28,11 +28,11 @@
  *  - Volta SM70: 1st generation of TCs, server V100 cards.
  *  - Turing SM75: 2nd generation of TCs, consumer RTX 30 cards.
  *  - Ampere SM80: 3rd generation of TCs, server A100 cards.
- *  - Ada Lovelace SM89: 4th generation of TCs, consumer RTX 40 cards.
- *  - Hopper SM90: 5th generation of TCs, server H100 cards.
+ *  - Hopper SM90: 4th generation of TCs, server H100 cards.
+ *  - Blackwell SM100: 5th generations of TCs, server B200 cards.
  *
- *  Looking at server-side V100, A100, and H100 GPUs, most features are
- *  identical, except for @b shared-memory size and TCs:
+ *  Looking at server-side V100, A100, and H100 GPUs, most features
+ *  are identical, except for @b shared-memory size and TCs:
  *
  *    Feature                              | V100     | A100     | H100
  *    -------------------------------------|----------|----------|----------
@@ -274,8 +274,7 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
  *    a known @b structured sparsity pattern. Those are handy when you have
  *    a portion X of Y consecutive cells equal to zero. X and Y are generally
  *    set to 2 and 4, respectively, for a "2:4" pattern.
- *  - @b WGMMA or Warp-Group MMA operates on 4 contiguous warps, forming 128
- *    contiguous threads, generalizing the original MMA in 2 ways:
+ *  - @b WGMMA or Warp-Group MMA generalizes the original MMA in 2 ways:
  *
  *    1. They can be asynchronous, for more flexible scheduling.
  *    2. They can avoid accumulation, a.k.a $C = A * B$, not $C += A * B$.
@@ -288,8 +287,21 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
  *  ! {wgmma.mm_async.sync.aligned}.{m64n64k16}.{f32.f16.f16} { ........ },{ .... }
  *  ? {     much longer header    }.{  shape  }.{   types   } { operands },{ args }
  *
+ *  Not only the signature and "fragment" sizes differ, but also the scheduling
+ *  approach has changed between Ampere and Hopper once again:
+ *
+ *  1. Pre-Volta fast kernels would individually invoke FMA instructions.
+ *  2. Volta's HMMA instruction synchronizes a group of @b 8 threads called
+ *     a @b "quadpair" (QP) to share data and perform an 8x8x4.
+ *  3. Ampere synchronizes all the threads in the warp, typically @b 32.
+ *  4. Hopper synchronizes 4 continuous warps, typically @b 128 threads.
+ *
+ *  To simplify the logic of higher-level Linear Algebra libraries, wrapper
+ *  templates from @b CUTLASS can be used.
+ *
  *  @see "Fast Matrix-Multiplication with WGMMA on NVIDIA Hopper GPUs" by Colfax:
  *       https://research.colfax-intl.com/cutlass-tutorial-wgmma-hopper/
  *  @see "Outperforming cuBLAS on H100: a Worklog" by Pranjal Shankhdhar:
  *       https://cudaforfun.substack.com/p/outperforming-cublas-on-h100-a-worklog
+ *  @see CUTLASS updates: https://github.com/NVIDIA/cutlass/blob/main/CHANGELOG.md
  */
