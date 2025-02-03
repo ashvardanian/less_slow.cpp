@@ -1,36 +1,37 @@
-// ----------------------------------------------------------------------------
-// less_slow_ptx.ptx
-// Micro-kernels for building a performance-first mindset for CUDA-capable
-// GPUs using Parallel Thread eXecution (PTX) Intermediate Representation (IR) 
-// for different generations of Streaming Multiprocessors (SMs) and Tensor
-// Cores (TCs).
-//
-// ? You should start at `less_slow.cu` before reading this file.
-// ? Also read intro to PTX: https://docs.nvidia.com/cuda/parallel-thread-execution/
-// ? Check the PTX ISA: https://docs.nvidia.com/cuda/pdf/ptx_isa_8.5.pdf
-// 
-// ! PTX is higher-level than SASS, but still very similar to typical CPU 
-// ! assembly languages. It has slightly different syntax and semantics for
-// ! predicates and memory access, but still don't have `for` loops :(
-// ! As for emojis, we can only use ASCII... CUDA can't JIT-compile UTF-8.
-//
-// You can validate this file by asking the Nvidia PTX Assembler to compile it
-// to `.cubin` for some target architecture:
-//
-// $ ptxas -o less_slow_from_ptx.cubin -arch=sm_90 less_slow.ptx
-// $ cuobjdump -sass less_slow_from_ptx.cubin | grep -i mma
-//
-// ## Register File
-//
-// GPU code manages registers differently. Hopper tuning guide suggests that
-// the register file size is 64K 32-bit registers per Streaming Multiprocessor.
-// The maximum number of registers per thread is 255.
-//
-// PTX provides read-only variables visible a special registers like `%tid` for
-// thread ID, `%ctaid` for block ID, and `%aggr_smem_size` for shared memory,
-// or `%current_graph_exec` to access the ID of the current graph execution.
-// To read from them, simple use the `mov` instruction.
-// ----------------------------------------------------------------------------
+/**
+ *  less_slow_sm70.ptx
+ *
+ *  Micro-kernels for building a performance-first mindset for CUDA-capable
+ *  GPUs using Parallel Thread eXecution (PTX) Intermediate Representation (IR) 
+ *  for different generations of Streaming Multiprocessors (SMs) and Tensor
+ *  Cores (TCs) for Volta-generation Nvidia GPUs.
+ * 
+ *  ? You should start at `less_slow.cu` before reading this file.
+ *  ? Also read intro to PTX: https://docs.nvidia.com/cuda/parallel-thread-execution/
+ *  ? Check the PTX ISA: https://docs.nvidia.com/cuda/pdf/ptx_isa_8.5.pdf
+ *  
+ *  ! PTX is higher-level than SASS, but still very similar to typical CPU 
+ *  ! assembly languages. It has slightly different syntax and semantics for
+ *  ! predicates and memory access, but still don't have `for` loops :(
+ *  ! As for emojis, we can only use ASCII... CUDA can't JIT-compile UTF-8.
+ * 
+ *  You can validate this file by asking the Nvidia PTX Assembler to compile it
+ *  to `.cubin` for some target architecture:
+ * 
+ *  $ ptxas -o less_slow_from_ptx.cubin -arch=sm_90 less_slow.ptx
+ *  $ cuobjdump -sass less_slow_from_ptx.cubin | grep -i mma
+ * 
+ *  @section Register File
+ * 
+ *  GPU code manages registers differently. Hopper tuning guide suggests that
+ *  the register file size is 64K 32-bit registers per Streaming Multiprocessor.
+ *  The maximum number of registers per thread is 255.
+ * 
+ *  PTX provides read-only variables visible a special registers like `%tid` for
+ *  thread ID, `%ctaid` for block ID, and `%aggr_smem_size` for shared memory,
+ *  or `%current_graph_exec` to access the ID of the current graph execution.
+ *  To read from them, simple use the `mov` instruction.
+ */
 
 .version 6.5                          // PTX version 6.5 is enough for Volta GPUs
 .target sm_70                         // Target architecture (SM 7.0 - Volta GPUs)
@@ -79,3 +80,22 @@ loop_start:
 loop_exit:
     ret;                              // Return from kernel
 }
+
+/**
+ *  Here are some potentially counterintuitive facts about PTX and SASS:
+ *
+ *  - NVCC unrolls loops more aggressively than any other mainstream compiler.
+ *
+ *  - If you are coming from CPU side, you shouldn't expect instructions to be
+ *    forward-compatible or to have better or equal performance on the next
+ *    generation! Entire instruction families may live for just one generation
+ *    and be completely abandoned in a couple of years.
+ *
+ *  - Some instructions, like Tensor Core Gen 4 and 5 operations can't work
+ *    with both multiplication operands in GPU registers. At least one of them
+ *    has to be in the shared memory. Moreover, they may work up to 10% faster
+ *    with both arguments in shared memory!
+ *
+ *  Because only one `.version` directive can be placed in each file, for newer
+ *  kernels, go to `less_slow_sm90a.ptx`.
+ */
