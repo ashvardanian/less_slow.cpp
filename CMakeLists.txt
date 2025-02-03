@@ -160,18 +160,28 @@ if(USE_INTEL_TBB)
   endif()
 endif()
 
-# Nvidia's CUDA Core Compute Libraries for GPU acceleration
+# Nvidia's CUDA Core Compute Libraries for GPU-accelerated algorithms
 if(USE_NVIDIA_CCCL)
   # CUB, Thrust, and other libraries of interest are now included into the
-  # CUDA Toolkit, so we don't need this anymore:
-  #
-  # FetchContent_Declare(NvidiaCCCL GIT_REPOSITORY https://github.com/nvidia/cccl.git)
-  # FetchContent_MakeAvailable(NvidiaCCCL)
+  # CUDA Toolkit:
   find_package(CUDAToolkit REQUIRED)
   message(STATUS "CUDA Toolkit Version: ${CUDAToolkit_VERSION}")
   message(STATUS "CUDA Toolkit Include Path: ${CUDAToolkit_INCLUDE_DIRS}")
   message(STATUS "CUDA Toolkit Libraries Path: ${CUDAToolkit_LIBRARY_DIR}")
 endif()
+
+# Nvidia's CUTLASS for GPU-accelerated linear algebra
+set(CUTLASS_ENABLE_HEADERS_ONLY ON FORCE)
+set(CUTLASS_ENABLE_LIBRARY OFF FORCE)
+set(CUTLASS_ENABLE_EXAMPLES OFF FORCE)
+set(CUTLASS_ENABLE_TESTS OFF FORCE)
+set(CUTLASS_ENABLE_TOOLS OFF FORCE)
+FetchContent_Declare(
+  NvidiaCUTLASS 
+  GIT_REPOSITORY https://github.com/nvidia/cutlass.git
+  GIT_TAG v3.7.0
+)
+FetchContent_MakeAvailable(NvidiaCUTLASS)
 
 # FMT for logging, as `std::format` has limited functionality
 FetchContent_Declare(
@@ -415,6 +425,7 @@ if(USE_NVIDIA_CCCL)
   # These are automatically included when you include the CUDA Toolkit directories.
   target_include_directories(less_slow PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas CUDA::cuda_driver)
+  target_link_libraries(less_slow PRIVATE nvidia::cutlass::cutlass)
   target_sources(less_slow PRIVATE less_slow.cu)
 
   # Copy the PTX Intermediate Representation file to the runtime directory
