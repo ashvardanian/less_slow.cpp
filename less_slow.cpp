@@ -2895,6 +2895,34 @@ BENCHMARK(cublas_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(b
 BENCHMARK(cublas_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 BENCHMARK(cublas_tops<__half>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+
+/**
+ *  Here are the numbers one can expect on a Nvidia H200 GPUs:
+ *
+ *                    Datasheet    MMA kernels  cuBLAS
+ *
+ *  - `f64`           @b 67 T      @b 3.3 T     @b 60 T
+ *  - `f32`           @b 67 T      @b 51 T      @b 49 T
+ *  - `tf32`          @b 500 T     @b 21 T      -
+ *  - `bf16`          @b 1'000 T   @b 51 T      -
+ *  - `f16`           @b 1'000 T   -            @b 764 T
+ *  - `i8` & `u8`     @b 2'000 T   -            @b 122 T
+ *  - `b1` XOR-based  -            @b 39 T      -
+ *  - `b1` AND-based  -            @b 143 T     -
+ *
+ *  For comparison, on AMD MI 300X accelerators:
+ *  - 80 T arithmetic and 160 T matrix multiplications for `f64`.
+ *  - 160 T arithmetic and matrix multiplications for `f32`.
+ *  - 1.3 P matrix multiplications for `bf16` & `f16` into `f32`.
+ *  - 2.6 P matrix multiplications for `i8` & `f8`.
+ *
+ *  On Nvidia GB200 super-chip with 1 Grace CPU and 2 Blackwell GPUs:
+ *  - 90 T for `f64` matrix multiplications.
+ *  - 90 T for `f64` arithmetic and 180 T for `f32` arithmetic.
+ *  - 5 P for 19-bit `tf32` matrix multiplications into `f32`.
+ *  - 10 P for `i8` matrix multiplications into `i32`.
+ */
+
 #endif // defined(__CUDACC__)
 
 #pragma endregion // Memory Bound Linear Algebra
