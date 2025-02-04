@@ -56,11 +56,15 @@
  *
  */
 #include <cstdint> // `std::uint8_t`
+
 #if (__CUDA_ARCH__ >= 700)
 #include <cuda_fp16.h> // `half` type
 #endif
 #if (__CUDA_ARCH__ >= 750)
 #include <cuda_bf16.h> // `__nv_bfloat16` type
+#endif
+#if (__CUDA_ARCH__ >= 900)
+#include <cuda_fp8.h> // `__nv_fp8*` types
 #endif
 
 template <typename scalar_type_, std::size_t side_>
@@ -112,18 +116,18 @@ small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda( //
  *  ! HMMA.884.F32.F32.STEP2 R8, R2.reuse.ROW, R2.reuse.COL, R8
  *
  *  Unpacking it:
- *  - HMMA stands for Half-precision Matrix Multiply & Accumulate.
- *  - 884 stands for the 8x8x4 shape of the matrix multiplication.
- *  - F32.F32 defines the multiplication and accumulation precision.
- *  - STEPx denotes the stage of the computation for a specific tile, where
+ *  - @b HMMA stands for Half-precision Matrix Multiply & Accumulate.
+ *  - @b 884 stands for the 8x8x4 shape of the matrix multiplication.
+ *  - @b F32.F32 defines the multiplication and accumulation precision.
+ *  - @b STEPx denotes the stage of the computation for a specific tile, where
  *    each HMMA instruction contributes to completing a part of the final
  *    result. In our case we will get 4 STEPs, repeated 4 times, for a
  *    total of 16x HMMA instructions per WMMA intrinsic.
  *
  *  For optimal usage of Tensor Cores:
- *  - Ensure your matrix dimensions are multiples of the tile size (8x8x4 on Volta).
+ *  - Ensure your matrix dimensions are multiples of the tile size .
  *  - Use shared memory efficiently to reduce global memory accesses.
- *  - Properly align input and output matrices in memory (128-byte alignment).
+ *  - Properly align input and output matrices in memory to 128 bytes.
  *
  *  @see Supported numeric types until Ampere SM80:
  *       https://docs.nvidia.com/cuda/ampere-tuning-guide/index.html#improved-tensor-core-operations
@@ -157,7 +161,7 @@ __device__ inline void tops_tc_cuda_kernel() {
     if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_frag, 16, wmma::mem_row_major);
 }
 
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) //? Binary Matrices require SM75 or higher
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) //? Binary matrices require SM75 or higher
 
 /**
  *  To process binary matrices we can't rely on addition and multiplication.
@@ -296,12 +300,49 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
  *  3. Ampere synchronizes all the threads in the warp, typically @b 32.
  *  4. Hopper synchronizes 4 continuous warps, typically @b 128 threads.
  *
+ *  Moreover, unlike the CPU, on the GPU, we can't expect the old instructions
+ *  to perform well - there can be a significant performance penalty if you
+ *  don't upgrade your PTX!
+ *
  *  To simplify the logic of higher-level Linear Algebra libraries, wrapper
- *  templates from @b CUTLASS can be used.
+ *  templates from @b CUTLASS can be used. It has a smaller component called
+ *  @b CuTe, that wraps different kinds of MMA "atoms" - primitive kernel
+ *  templates. Just for Hopper alone, there is @b 10'000 lines of different
+ *  supported shape instantiations in @b `mma_sm90.hpp`.
+ *
+ *  We can use CuTe to abstract away the right instructions, by defining small
+ *  shared memory matrices and performing such repeated "atom" instantiations.
  *
  *  @see "Fast Matrix-Multiplication with WGMMA on NVIDIA Hopper GPUs" by Colfax:
  *       https://research.colfax-intl.com/cutlass-tutorial-wgmma-hopper/
  *  @see "Outperforming cuBLAS on H100: a Worklog" by Pranjal Shankhdhar:
  *       https://cudaforfun.substack.com/p/outperforming-cublas-on-h100-a-worklog
  *  @see CUTLASS updates: https://github.com/NVIDIA/cutlass/blob/main/CHANGELOG.md
+ *  @see CUTLASS GEMM API: https://github.com/NVIDIA/cutlass/blob/main/media/docs/gemm_api.md
+ */
+
+#pragma region CuTe
+#include <cutlass/cutlass.h>
+#include <cutlass/gemm/device/gemm.h>
+#include <cutlass/gemm/threadblock/threadblock_swizzle.h>
+#include <cutlass/epilogue/thread/linear_combination.h>
+
+__global__ void tops_f16f16_256x256x256_1024unroll_cute_kernel() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
+
+#endif
+}
+
+#pragma endregion // CuTe
+
+/**
+ *  @see Deep Dive on CUTLASS Ping-Pong GEMM Kernel
+ *       https://pytorch.org/blog/cutlass-ping-pong-gemm-kernel/
+ *  @see Minimal SM90 WGMMA + TMA GEMM example in 100 lines in CUTLASS 3.5.1:
+ *       https://github.com/NVIDIA/cutlass/blob/main/examples/cute/tutorial/wgmma_sm90.cu
+ */
+
+/**
+ *  Blackwell introduces a new mechanism for dynamic scheduling called
+ *  Cluster Launch Control @b (CLC)
  */
