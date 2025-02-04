@@ -428,12 +428,20 @@ if(USE_NVIDIA_CCCL)
   target_link_libraries(less_slow PRIVATE nvidia::cutlass::cutlass)
   target_sources(less_slow PRIVATE less_slow.cu)
 
-  # Copy the PTX Intermediate Representation file to the runtime directory
-  set_source_files_properties(less_slow.ptx PROPERTIES LANGUAGE "")
-  add_custom_command(
-    TARGET less_slow POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/less_slow.ptx ${CMAKE_CURRENT_BINARY_DIR}/less_slow.ptx
-  )
+  # List the PTX files you want to copy
+  set(PTX_FILES less_slow_sm70.ptx less_slow_sm90a.ptx)
+
+  # Loop over each PTX file and add a custom command to copy it
+  foreach(PTX ${PTX_FILES})
+    # Make sure CMake doesn’t try to compile this file as source code
+    set_source_files_properties(${PTX} PROPERTIES LANGUAGE "")
+    add_custom_command(
+      TARGET less_slow POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy
+              ${CMAKE_CURRENT_SOURCE_DIR}/${PTX}
+              ${CMAKE_CURRENT_BINARY_DIR}/${PTX}
+    )
+  endforeach()
 endif()
 
 if(OpenMP_FOUND)

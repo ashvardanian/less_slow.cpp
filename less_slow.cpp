@@ -2088,12 +2088,13 @@ BENCHMARK_CAPTURE(                                                              
 
 static void theoretic_tops_ptx(                  //
     bm::State &state,                            //
+    std::string file_name,                       //
     std::string kernel_name,                     //
     std::size_t m, std::size_t n, std::size_t k, //
     std::size_t repetitions, int required_capability) {
 
     // Resolve the absolute path to the PTX file
-    std::string ptx_file = "less_slow.ptx";
+    std::string ptx_file = file_name;
     std::filesystem::path ptx_path = std::filesystem::absolute(ptx_file);
     if (!std::filesystem::exists(ptx_path)) {
         state.SkipWithError("Failed to find PTX file.");
@@ -2199,8 +2200,16 @@ static void theoretic_tops_ptx(                  //
     cuCtxDestroy(context);
 }
 
-BENCHMARK_CAPTURE(theoretic_tops_ptx, f16f16_sm70tc, "tops_f16f16_sm70tc_16x16x16_1024loop_ptx_kernel", 16, 16, 16,
-                  1024, 70)
+BENCHMARK_CAPTURE(                                                           //
+    theoretic_tops_ptx, f16f16_sm70tc,                                       //
+    "less_slow_sm70.ptx", "tops_f16f16_sm70tc_16x16x16_1024loop_ptx_kernel", //
+    16, 16, 16, 1024, 70)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                           //
+    theoretic_tops_ptx, f16f16_sm90tc,                                       //
+    "less_slow_sm90a.ptx", "tops_f16f16_sm90tc_64x8x16_1024loop_ptx_kernel", //
+    64, 8, 16, 1024, 90)
     ->MinTime(10);
 
 #endif

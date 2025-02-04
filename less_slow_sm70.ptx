@@ -18,7 +18,7 @@
  *  You can validate this file by asking the Nvidia PTX Assembler to compile it
  *  to `.cubin` for some target architecture:
  * 
- *  $ ptxas -o less_slow_from_ptx.cubin -arch=sm_90 less_slow.ptx
+ *  $ ptxas -o less_slow_from_ptx.cubin -arch=sm_90 less_slow_sm70.ptx
  *  $ cuobjdump -sass less_slow_from_ptx.cubin | grep -i mma
  * 
  *  @section Register File
@@ -56,7 +56,7 @@
     mov.f32    %f2, 0.0;              // Initialize %f2 to zero
     mov.f32    %f3, 0.0;              // Initialize %f3 to zero
 
-    // Packed matrix inputs (example placeholders)
+    // Packed matrix inputs
     mov.b32    %r2, 0x00010001;       // Packed 16-bit values (placeholder for matrix A and B)
 
     // Loop start
@@ -98,4 +98,6 @@ loop_exit:
  *
  *  Because only one `.version` directive can be placed in each file, for newer
  *  kernels, go to `less_slow_sm90a.ptx`.
+ *
+ *  @see PTX module directives: https://docs.nvidia.com/cuda/parallel-thread-execution/#ptx-module-directives
  */
