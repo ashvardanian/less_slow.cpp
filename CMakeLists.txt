@@ -327,7 +327,6 @@ endif()
 # List of all possible compiler IDs:
 # https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_COMPILER_ID.html
 if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" OR CMAKE_CUDA_COMPILER_ID STREQUAL "NVHPC")
-  set_property(SOURCE less_slow.cpp PROPERTY LANGUAGE CUDA)
   set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
   set_target_properties(less_slow PROPERTIES CUDA_ARCHITECTURES "70;75;80;89;90")
   target_compile_options(less_slow PRIVATE
@@ -423,10 +422,10 @@ endif()
 if(USE_NVIDIA_CCCL)
   # For CUB/Thrust, rely on CUDA Toolkit's bundled versions
   # These are automatically included when you include the CUDA Toolkit directories.
+  target_sources(less_slow PRIVATE less_slow.cu)
   target_include_directories(less_slow PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas CUDA::cuda_driver)
   target_link_libraries(less_slow PRIVATE nvidia::cutlass::cutlass)
-  target_sources(less_slow PRIVATE less_slow.cu)
 
   # List the PTX files you want to copy
   set(PTX_FILES less_slow_sm70.ptx less_slow_sm90a.ptx)

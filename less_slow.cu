@@ -88,6 +88,46 @@ small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda( //
     return c;
 }
 
+#include <thrust/sort.h> // `thrust::sort`
+
+void reverse_and_sort_with_thrust(std::uint32_t *device_pointer, std::size_t array_length) {
+    // Assuming we don't use the `thrust::device_vector` iterators, we need to pass
+    // the execution policy separately to enforce the GPU backend over the CPU.
+    thrust::reverse(thrust::device, device_pointer, device_pointer + array_length);
+    thrust::sort(thrust::device, device_pointer, device_pointer + array_length);
+}
+
+#include <cub/cub.cuh> // `cub::DeviceRadixSort`
+
+std::size_t reverse_and_sort_with_cub_space(std::uint32_t *device_pointer, std::size_t array_length) {
+    std::size_t temporary_bytes = 0;
+    cub::DeviceRadixSort::SortKeys(     //
+        NULL, temporary_bytes,          // temporary memory and its size
+        device_pointer, device_pointer, // "in" and "out" arrays
+        array_length                    // number of elements and optional parameters
+    );
+    return temporary_bytes;
+}
+
+void reverse_and_sort_with_cub(std::uint32_t *device_pointer, std::size_t array_length, void *temporary_pointer,
+                               std::size_t temporary_bytes, cudaStream_t stream) {
+    // CUB has no reversal kernel. So to schedule the Thrust and CUB operations
+    // on the same CUDA `stream`, we need to wrap it into a "policy" object.
+    cudaStreamCreate(&stream);
+    auto policy = thrust::cuda::par.on(stream);
+
+    thrust::reverse(policy, device_pointer, device_pointer + array_length);
+    cub::DeviceRadixSort::SortKeys(          //
+        temporary_pointer, temporary_bytes,  // temporary memory and its size
+        device_pointer, device_pointer,      // "in" and "out" arrays pin to same memory
+        array_length,                        // number of elements
+        0, sizeof(std::uint32_t) * CHAR_BIT, // begin and end bit positions
+        stream                               // CUDA stream
+    );
+}
+
+#pragma region Numerics
+
 /**
  *  Starting with Nvidia Volta GPUs, specialized "Tensor Cores" @b (TC) are
  *  added for faster matrix multiplications. These Tensor Cores are much faster
@@ -346,3 +386,5 @@ __global__ void tops_f16f16_256x256x256_1024unroll_cute_kernel() {
  *  Blackwell introduces a new mechanism for dynamic scheduling called
  *  Cluster Launch Control @b (CLC)
  */
+
+#pragma endregion // Numerics

@@ -628,16 +628,24 @@ BENCHMARK(sorting_with_openmp)
 
 /**
  *  Unlike STL, Thrust provides some very handy abstractions for sorting
- *  one array by values in another.
+ *  one array by values in another. We are not going to use them here!
+ *  And we will also avoid instantiating any CUDA @b `<algorithm>`-like
+ *  templates in this translation unit to better separate the host-side
+ *  code and device-side and keep compilation time sane!
  *
  *  @see Sorting in Thrust: https://nvidia.github.io/cccl/thrust/api_docs/algorithms/sorting
  */
 #include <cuda_runtime.h>         // `cudaError_t`
 #include <thrust/device_vector.h> // `thrust::device_vector`
 #include <thrust/host_vector.h>   // `thrust::host_vector`
-#include <thrust/sort.h>          // `thrust::sort`
 
-using namespace std::string_literals;
+using namespace std::string_literals; // For `""s` literals
+
+/**
+ *  @brief  Reverses the array and sorts it with Nvidia's Thrust from CCCL.
+ *  @see    Declared in `less_slow.cpp`, but defined in @b `less_slow.cu`!
+ */
+extern void reverse_and_sort_with_thrust(std::uint32_t *device_pointer, std::size_t array_length);
 
 static void sorting_with_thrust(benchmark::State &state) {
     const auto count = static_cast<std::size_t>(state.range(0));
@@ -682,7 +690,11 @@ BENCHMARK(sorting_with_thrust)
  *  pre-allocate temporary memory for CUB's sorting algorithm, and will use
  *  device-side timers for more accurate measurements.
  */
-#include <cub/cub.cuh>
+extern std::size_t reverse_and_sort_with_cub_space(std::uint32_t *device_pointer, std::size_t array_length);
+extern void reverse_and_sort_with_cub(                       //
+    std::uint32_t *device_pointer, std::size_t array_length, // Task
+    void *temporary_pointer, std::size_t temporary_length,   // Space
+    cudaStream_t stream);                                    // Order
 
 static void sorting_with_cub(bm::State &state) {
     auto count = static_cast<std::size_t>(state.range(0));
@@ -695,12 +707,7 @@ static void sorting_with_cub(bm::State &state) {
     //
     // Another one is the naming of the operations - `SortKeys` instead of `Sort`.
     // There is also `SortPairs` and `SortPairsDescending` in for key-value pairs.
-    std::size_t temporary_bytes = 0;
-    cub::DeviceRadixSort::SortKeys(                           //
-        NULL, temporary_bytes,                                // temporary memory and its size
-        device_array.data().get(), device_array.data().get(), // "in" and "out" arrays
-        count                                                 // number of elements and optional parameters
-    );
+    std::size_t temporary_bytes = reverse_and_sort_with_cub_space(device_array.data().get(), count);
     temporary.resize(temporary_bytes);
 
     // To schedule the Thrust and CUB operations on the same CUDA stream,
@@ -719,14 +726,11 @@ static void sorting_with_cub(bm::State &state) {
         // Record the start event
         cudaEventRecord(start_event, sorting_stream);
 
-        thrust::reverse(policy, device_array.begin(), device_array.end());
-        cub::DeviceRadixSort::SortKeys(                           //
-            temporary.data().get(), temporary_bytes,              // temporary memory and its size
-            device_array.data().get(), device_array.data().get(), // "in" and "out" arrays pin to same memory
-            count,                                                // number of elements
-            0, sizeof(std::uint32_t) * CHAR_BIT,                  // begin and end bit positions
-            sorting_stream                                        // CUDA stream
-        );
+        // Run the kernels
+        reverse_and_sort_with_cub_space(             //
+            device_array.data().get(), count,        // Task
+            temporary.data().get(), temporary_bytes, // Space
+            sorting_stream);                         // Order
 
         // Record the stop event
         cudaEventRecord(stop_event, sorting_stream);
