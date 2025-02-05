@@ -362,14 +362,34 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
  */
 
 #pragma region CuTe
-#include <cutlass/cutlass.h>
-#include <cutlass/gemm/device/gemm.h>
-#include <cutlass/gemm/threadblock/threadblock_swizzle.h>
-#include <cutlass/epilogue/thread/linear_combination.h>
+#include <cute/tensor.hpp>
+#include <cute/arch/mma.hpp>
 
-__global__ void tops_f16f16_256x256x256_1024unroll_cute_kernel() {
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
+__global__ void cute_example() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+    using namespace cute;
 
+    // Create tensors with appropriate layouts
+    auto A = make_tensor<half>(Shape<_16, _8> {});  // 16x8 matrix
+    auto B = make_tensor<half>(Shape<_8, _8> {});   // 8x8 matrix
+    auto C = make_tensor<float>(Shape<_16, _8> {}); // 16x8 matrix for accumulation
+    auto D = make_tensor<float>(Shape<_16, _8> {}); // Output tensor
+
+    // Define MMA traits for fp16 input, fp32 output
+    using MMA = SM90_16x8x8_F32F16F16F32_TT; // TN means A is transposed, B is not
+    auto mma = make_tiled_mma(MMA {});
+
+    // Create a thread-specific MMA slice
+    auto thread_mma = mma.get_slice(threadIdx.x);
+
+    // Get partitioned fragments for this thread
+    auto frag_A = thread_mma.partition_fragment_A(A);
+    auto frag_B = thread_mma.partition_fragment_B(B);
+    auto frag_C = thread_mma.partition_fragment_C(C);
+    auto frag_D = thread_mma.partition_fragment_C(D);
+
+    // Execute MMA operation
+    thread_mma(frag_D, frag_A, frag_B, frag_C);
 #endif
 }
 

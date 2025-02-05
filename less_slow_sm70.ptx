@@ -99,5 +99,6 @@ loop_exit:
  *  Because only one `.version` directive can be placed in each file, for newer
  *  kernels, go to `less_slow_sm90a.ptx`.
  *
- *  @see PTX module directives: https://docs.nvidia.com/cuda/parallel-thread-execution/#ptx-module-directives
+ *  @see PTX module-level directives:
+ *  https://docs.nvidia.com/cuda/parallel-thread-execution/#ptx-module-directives
  */
