@@ -32,6 +32,11 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Set a default parallel build level if the user hasn't specified one.
+if(NOT DEFINED CMAKE_BUILD_PARALLEL_LEVEL)
+  set(CMAKE_BUILD_PARALLEL_LEVEL 16 CACHE STRING "Default parallel build level" FORCE)
+endif()
+
 # ------------------------------------------------------------------------------
 # Detect CUDA Support
 # ------------------------------------------------------------------------------
