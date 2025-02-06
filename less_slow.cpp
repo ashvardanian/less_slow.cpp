@@ -624,7 +624,26 @@ BENCHMARK(sorting_with_openmp)
 
 #endif // defined(_OPENMP)
 
-#if defined(__CUDACC__)
+/**
+ *  Detecting CUDA availability isn't trivial. NVIDIA's CUDA toolchain defines:
+ *  - __NVCC__: Set only when using the NVCC compiler.
+ *  - __CUDACC__: Set when NVCC compiles CUDA code (host or device).
+ *  - __CUDA_ARCH__: Informs the CUDA version for compiling device (GPU) code.
+ *
+ *  Since host compilers may not define these macros, we use @b `__has_include`
+ *  to check for `<cuda_runtime.h>` as an indicator that CUDA is available.
+ *
+ *  @see NVCC Identification Macros docs:
+ *       https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/#nvcc-identification-macro
+ */
+#define _LESS_SLOW_WITH_CUDA 0
+#if defined(__has_include)
+#if __has_include(<cuda_runtime.h>)
+#define _LESS_SLOW_WITH_CUDA 1
+#endif
+#endif
+
+#if _LESS_SLOW_WITH_CUDA
 
 /**
  *  Unlike STL, Thrust provides some very handy abstractions for sorting
@@ -658,8 +677,7 @@ static void sorting_with_thrust(benchmark::State &state) {
     thrust::device_vector<std::uint32_t> device_array = host_array;
 
     for (auto _ : state) {
-        thrust::reverse(device_array.begin(), device_array.end());
-        thrust::sort(device_array.begin(), device_array.end());
+        reverse_and_sort_with_thrust(device_array.data().get(), count);
         cudaError_t error = cudaDeviceSynchronize(); //! Block until the GPU has completed all tasks
         if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: "s + cudaGetErrorString(error));
         benchmark::DoNotOptimize(device_array.data());
@@ -698,8 +716,9 @@ extern void reverse_and_sort_with_cub(                       //
 
 static void sorting_with_cub(bm::State &state) {
     auto count = static_cast<std::size_t>(state.range(0));
-    thrust::device_vector<std::uint32_t> device_array(count);
-    thrust::device_vector<std::byte> temporary;
+    thrust::host_vector<std::uint32_t> host_array(count);
+    std::iota(host_array.begin(), host_array.end(), 1u);
+    thrust::device_vector<std::uint32_t> device_array = host_array;
 
     // One of the interesting design choices of CUB is that you can call
     // the target method with `NULL` arguments to infer the required temporary
@@ -708,7 +727,15 @@ static void sorting_with_cub(bm::State &state) {
     // Another one is the naming of the operations - `SortKeys` instead of `Sort`.
     // There is also `SortPairs` and `SortPairsDescending` in for key-value pairs.
     std::size_t temporary_bytes = reverse_and_sort_with_cub_space(device_array.data().get(), count);
-    temporary.resize(temporary_bytes);
+
+    // Allocate temporary memory with `cudaMalloc` instead of using a `device_vector`,
+    // due to potential compilation issues on the host-side compiler.
+    std::byte *temporary_pointer = nullptr;
+    cudaError_t error = cudaMalloc(&temporary_pointer, temporary_bytes);
+    if (error != cudaSuccess) {
+        state.SkipWithError("Failed to allocate temporary memory: "s + cudaGetErrorString(error));
+        return;
+    }
 
     // To schedule the Thrust and CUB operations on the same CUDA stream,
     // we need to wrap it into a "policy" object.
@@ -727,10 +754,10 @@ static void sorting_with_cub(bm::State &state) {
         cudaEventRecord(start_event, sorting_stream);
 
         // Run the kernels
-        reverse_and_sort_with_cub_space(             //
-            device_array.data().get(), count,        // Task
-            temporary.data().get(), temporary_bytes, // Space
-            sorting_stream);                         // Order
+        reverse_and_sort_with_cub(              //
+            device_array.data().get(), count,   // Task
+            temporary_pointer, temporary_bytes, // Space
+            sorting_stream);                    // Order
 
         // Record the stop event
         cudaEventRecord(stop_event, sorting_stream);
@@ -751,20 +778,20 @@ BENCHMARK(sorting_with_cub)
     ->RangeMultiplier(4)
     ->Range(1l << 20, 1l << 28)
     ->MinTime(10)
-    ->Complexity(bm::oNLogN)
+    ->Complexity(benchmark::oN) // Not `oNLogN` - it's Radix Sort!
     ->UseManualTime();
 
 /**
  *  Comparing CPU to GPU performance is not straightforward, but we can compare
- *  Thrust to CUB solutions. On a consumer-grade 4060 Ada Lovelace GPU:
+ *  Thrust to CUB solutions. On NVIDIA H200 GPU, for the largest 1 GB buffer:
  *
- *  - `sorting_with_thrust` takes from ~ @b 1ms to @b 84ms
- *  - `sorting_with_cub` takes ~ @b 0.16ms to @b 51ms
+ *  - `sorting_with_thrust` takes @b 6.6 ms
+ *  - `sorting_with_cub` takes @b 6 ms
  *
- *  50% performance improvements are typical for CUB.
+ *  10% ot 50% performance improvements are typical for CUB.
  */
 
-#endif // defined(__CUDACC__)
+#endif // _LESS_SLOW_WITH_CUDA
 
 #pragma endregion // Parallelism and Computational Complexity
 
@@ -2016,7 +2043,7 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 
 #pragma region GPGPU Programming
 
-#if defined(__CUDACC__)
+#if _LESS_SLOW_WITH_CUDA
 #include <cuda.h>
 
 static void theoretic_tops_cuda(                   //
@@ -2030,7 +2057,21 @@ static void theoretic_tops_cuda(                   //
     int const threads_per_block = prop.warpSize;
 
     for (auto _ : state) {
-        kernel<<<blocks, threads_per_block>>>();
+        // A typical CUDA kernel invocation would look like this:
+        //
+        //      kernel<<<blocks, threads_per_block>>>();
+        //
+        // However, that syntactic sugar will break compilation, unless we use
+        // NVCC. Instead we can use the CUDA API directly:
+        void *kernel_args = nullptr;
+        cudaError_t error = cudaLaunchKernel( //
+            kernel,                           // kernel function pointer
+            dim3(blocks),                     // grid dimensions
+            dim3(threads_per_block),          // block dimensions
+            &kernel_args,                     // kernel arguments
+            0,                                // shared memory size
+            0);                               // default stream
+        if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: "s + cudaGetErrorString(error));
         cudaDeviceSynchronize();
     }
 
@@ -2747,13 +2788,9 @@ BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(b
 BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 #endif
 
-#if defined(__AVX512FP16__)
-#if !defined(__CUDACC__)
+#if defined(__AVX512FP16__) //! With NVCC, we have to use `half`
 #include <immintrin.h>
 BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
-#else
-BENCHMARK(eigen_tops<half>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
-#endif
 #endif
 
 /**
@@ -2789,7 +2826,7 @@ BENCHMARK(eigen_tops<half>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(ben
  *  enough.
  */
 
-#if defined(__CUDACC__)
+#if _LESS_SLOW_WITH_CUDA
 #include <cublas_v2.h>
 
 /**
@@ -2936,7 +2973,7 @@ BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Co
  *  - 10 P for `i8` matrix multiplications into `i32`.
  */
 
-#endif // defined(__CUDACC__)
+#endif // _LESS_SLOW_WITH_CUDA
 
 #pragma endregion // Memory Bound Linear Algebra
 
@@ -3056,7 +3093,7 @@ static void pipeline_cpp11_std_function(bm::State &state) {
 
 BENCHMARK(pipeline_cpp11_std_function);
 
-#if defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine) && !defined(__NVCC__)
+#if defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine)
 /**
  *  C++20 introduces @b coroutines in the language, but not in the library,
  *  so we need to provide a minimal implementation of a "generator" class.
@@ -3193,7 +3230,7 @@ BENCHMARK(pipeline_cpp20_coroutine<cppcoro_generator_t>);
 BENCHMARK(pipeline_cpp20_coroutine<cppcoro_recursive_generator_t>);
 
 #pragma endregion // Coroutines and Asynchronous Programming
-#endif            // defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine) && !defined(__NVCC__)
+#endif            // defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine)
 
 #pragma region Ranges and Iterators
 #if defined(__cpp_lib_ranges)
@@ -3740,7 +3777,6 @@ void parse_stl(bm::State &state, std::string_view config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
-#if !defined(__NVCC__)
 /**
  *  The STL's `std::ranges::views::split` won't compile with a predicate lambda,
  *  but Eric Niebler's `ranges-v3` library has a `ranges::view::split_when` that does.
@@ -3785,8 +3821,6 @@ void parse_ranges(bm::State &state, std::string_view config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
-#endif // !defined(__NVCC__)
-
 #include <stringzilla/stringzilla.hpp>
 
 void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
@@ -3821,9 +3855,7 @@ void parse_sz(bm::State &state, std::string_view config_text) {
 }
 
 BENCHMARK_CAPTURE(parse_stl, short_, short_config_text)->MinTime(2);
-#if !defined(__NVCC__)
 BENCHMARK_CAPTURE(parse_ranges, short_, short_config_text)->MinTime(2);
-#endif
 BENCHMARK_CAPTURE(parse_sz, short_, short_config_text)->MinTime(2);
 
 /**
@@ -3871,9 +3903,7 @@ monitoring_dashboard_url_for_production_insights: https://dashboard.company.com/
 )";
 
 BENCHMARK_CAPTURE(parse_stl, long_, long_config_text)->MinTime(2);
-#if !defined(__NVCC__)
 BENCHMARK_CAPTURE(parse_ranges, long_, long_config_text)->MinTime(2);
-#endif
 BENCHMARK_CAPTURE(parse_sz, long_, long_config_text)->MinTime(2);
 
 /**
