@@ -113,7 +113,6 @@ void reverse_and_sort_with_cub(std::uint32_t *device_pointer, std::size_t array_
                                std::size_t temporary_bytes, cudaStream_t stream) {
     // CUB has no reversal kernel. So to schedule the Thrust and CUB operations
     // on the same CUDA `stream`, we need to wrap it into a "policy" object.
-    cudaStreamCreate(&stream);
     auto policy = thrust::cuda::par.on(stream);
 
     thrust::reverse(policy, device_pointer, device_pointer + array_length);
