@@ -16,98 +16,223 @@
  *  $ ptxas -o less_slow_from_ptx.cubin -arch=sm_90a less_slow_sm90a.ptx
  *  $ cuobjdump -sass less_slow_from_ptx.cubin | grep -i mma
  */
-.version 8.0                          // PTX version 8.0 for Hopper GPUs
-.target sm_90a                        // Target architecture (SM_90a - Hopper GPUs)
-.address_size 64                      // 64-bit addressing
+.version 8.0             // PTX version 8.0 for Hopper GPUs
+.target sm_90a           // Target architecture (SM_90a - Hopper GPUs)
+.address_size 64         // 64-bit addressing
 
-.visible .entry tops_f16f16_sm90tc_64x8x16_1024loop_ptx_kernel()
+/**
+ *  Our previous Volta kernel should work just fine here, but we can make it
+ *  nicer by using the `<>` syntax to define variable arrays and `.f16x2` to
+ *  constrain the register to packed half-precision pairs.
+ */
+.visible .entry tops_f16f16_sm90tc_16x16x16_1024loop_ptx_kernel()
 {
-    // Register declarations
-    .reg .f32   %f<4>;               // f32 accumulators: %f0, %f1, %f2, %f3
-    .reg .f16x2 %a<4>;               // Packed matrix A inputs (each holds two f16 values)
-    .reg .b64   %d0;                 // Descriptor for matrix B (placeholder)
-    .reg .b32   %r<3>;               // Loop counter and general-purpose registers
-    .reg .pred  %p;                  // Predicate register for conditional branching
+    // Accumulator registers used for both input and output of the MMA operation
+    .reg .b32 accum<4>;
 
-    // Loop counters
-    mov.u32    %r0, 0;               // %r0 = loop counter, start at 0
-    mov.u32    %r1, 1024;            // %r1 = loop limit (1024 iterations)
+    // Registers to hold packed 16-bit data for matrix A (8 registers)
+    .reg .f16x2 matrix_a<8>;
 
-    // Zero-initialize accumulators
-    mov.f32    %f0, 0.0;             // Initialize accumulator %f0 to 0.0
-    mov.f32    %f1, 0.0;             // Initialize accumulator %f1 to 0.0
-    mov.f32    %f2, 0.0;             // Initialize accumulator %f2 to 0.0
-    mov.f32    %f3, 0.0;             // Initialize accumulator %f3 to 0.0
+    // Registers to hold packed 16-bit data for matrix B (8 registers)
+    .reg .f16x2 matrix_b<8>;
 
-    // Initialize the first matrix
-    mov.b32    %a0, 0x00010001;      // %a0 = packed f16 values for matrix A
-    mov.b32    %a1, 0x00010001;      // %a1 = packed f16 values for matrix A
-    mov.b32    %a2, 0x00010001;      // %a2 = packed f16 values for matrix A
-    mov.b32    %a3, 0x00010001;      // %a3 = packed f16 values for matrix A
+    // General-purpose registers for loop control and constant values
+    .reg .b32 loop_counter, loop_limit, packed_const;
 
-    // Initialize the second matrix
-    mov.u64    %d0, 0x0000000000000001;
+    // Predicate register for conditional branching (loop exit)
+    .reg .pred exit_predicate;
 
-    // Start the `for`-loop
+    // Set up loop counter and loop limit
+    mov.u32 loop_counter, 0;
+    mov.u32 loop_limit, 1024;
+
+    // Zero-initialize the accumulator registers
+    mov.f32 accum0, 0.0;
+    mov.f32 accum1, 0.0;
+    mov.f32 accum2, 0.0;
+    mov.f32 accum3, 0.0;
+
+    // Initialize constant for packed matrix data (placeholder)
+    mov.b32 packed_const, 0x00010001;
+
+    // Initialize matrix a registers with the packed constant
+    mov.b32 matrix_a0, packed_const;
+    mov.b32 matrix_a1, packed_const;
+    mov.b32 matrix_a2, packed_const;
+    mov.b32 matrix_a3, packed_const;
+    mov.b32 matrix_a4, packed_const;
+    mov.b32 matrix_a5, packed_const;
+    mov.b32 matrix_a6, packed_const;
+    mov.b32 matrix_a7, packed_const;
+
+    // Initialize matrix b registers with the packed constant
+    mov.b32 matrix_b0, packed_const;
+    mov.b32 matrix_b1, packed_const;
+    mov.b32 matrix_b2, packed_const;
+    mov.b32 matrix_b3, packed_const;
+    mov.b32 matrix_b4, packed_const;
+    mov.b32 matrix_b5, packed_const;
+    mov.b32 matrix_b6, packed_const;
+    mov.b32 matrix_b7, packed_const;
+
+    // The main loop will repeat for 1024 iterations
 loop_start:
-    setp.ge.u32 %p, %r0, %r1;        // Compare loop counter (%r0) with limit (%r1)
-    @%p bra    loop_exit;            // Exit loop if %r0 >= %r1
+    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
+    @exit_predicate bra loop_exit;
 
-    // Perform the MMA
-    wgmma.mma_async.sync.aligned.m64n8k16.f32.f16.f16
-         { %f0, %f1, %f2, %f3 },     // Accumulators (output)
-         { %a0, %a1, %a2, %a3 },     // Matrix A operands (packed f16 inputs)
-         %d0,                        // Matrix B descriptor
-         1, -1, -1, 1;               // Immediate scaling values
+    wmma.mma.sync.aligned.row.col.m16n16k16.f16.f16 
+         { accum0, accum1, accum2, accum3 },
+         { matrix_a0, matrix_a1, matrix_a2, matrix_a3,
+           matrix_a4, matrix_a5, matrix_a6, matrix_a7 },
+         { matrix_b0, matrix_b1, matrix_b2, matrix_b3,
+           matrix_b4, matrix_b5, matrix_b6, matrix_b7 },
+         { accum0, accum1, accum2, accum3 };
 
-    // Increment the loop counter and jump back
-    add.u32    %r0, %r0, 1;          // %r0 = %r0 + 1
-    bra        loop_start;           // Loop back
+    // Increment the loop counter
+    add.u32 loop_counter, loop_counter, 1;
+
+    // Branch back to the beginning of the loop
+    bra loop_start;
 
 loop_exit:
-    ret;                            // Return from kernel
+    ret;
 }
+
+/**
+ *  Each new generation of Tensor Cores supports a wider palette of numeric
+ *  types, "structured sparsity" modes, and asynchronous scheduling protocols.
+ *
+ *  For double-precision numbers, we can go down to a granularity as small as
+ *  just 8x8x4 for `sm_80` or higher.
+ */
 
 .visible .entry tops_f64f64_sm90tc_8x8x4_1024loop_ptx_kernel()
 {
-    // Register declarations
-    .reg .f64   %Ra, %Rb;           // Matrix A and B operand fragments (each a single f64)
-    .reg .f64   %Rc<2>, %Rd<2>;     // Matrix C (additive operand) and destination (accumulator) fragments
-    .reg .b32   %r0, %r1;           // Loop counter and loop limit
-    .reg .pred  %p;                 // Predicate register for conditional branching
+    // Registers to hold matrix A and B operands (each a single f64)
+    .reg .f64 matrix_a, matrix_b;
 
-    // Loop counters
-    mov.u32    %r0, 0;              // Start loop counter at 0
-    mov.u32    %r1, 1024;           // Loop 1024 iterations
+    // Additive bias and accumulator registers used for both input and output of the MMA operation
+    .reg .f64 bias<2>, accum<2>;
 
-    // Zero-initialize accumulators
-    mov.f64    %Rd0, 0.0;
-    mov.f64    %Rd1, 0.0;
+    // General-purpose registers for loop control
+    .reg .b32 loop_counter, loop_limit;
 
-    // Initialize both matrices to ones
-    mov.f64    %Ra, 1.0;
-    mov.f64    %Rb, 1.0;
+    // Predicate register for conditional branching (loop exit)
+    .reg .pred exit_predicate;
+
+    // Set up loop counter and loop limit
+    mov.u32 loop_counter, 0;
+    mov.u32 loop_limit, 1024;
+
+    // Zero-initialize the accumulator registers
+    mov.f64 accum0, 0.0;
+    mov.f64 accum1, 0.0;
+
+    // Initialize matrix A and B operands to one (double precision)
+    mov.f64 matrix_a, 1.0;
+    mov.f64 matrix_b, 1.0;
 
     // Initialize the additive bias to zero
-    mov.f64    %Rc0, 0.0;
-    mov.f64    %Rc1, 0.0;
+    mov.f64 bias0, 0.0;
+    mov.f64 bias1, 0.0;
 
-    // Start the `for`-loop
+    // The main loop will repeat for 1024 iterations
 loop_start:
-    setp.ge.u32 %p, %r0, %r1;       // if (%r0 >= %r1) set predicate %p to true
-    @%p bra    loop_exit;           // if predicate true, branch to loop_exit
+    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
+    @exit_predicate bra loop_exit;
 
-    // Perform the MMA
     mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64
-         { %Rd0, %Rd1 },
-         { %Ra },
-         { %Rb },
-         { %Rc0, %Rc1 };
+         { accum0, accum1 },
+         { matrix_a },
+         { matrix_b },
+         { bias0, bias1 };
 
-    // Increment the loop counter and jump back
-    add.u32    %r0, %r0, 1;
-    bra        loop_start;
+    // Increment the loop counter
+    add.u32 loop_counter, loop_counter, 1;
+
+    // Branch back to the beginning of the loop
+    bra loop_start;
 
 loop_exit:
-    ret;                          // Return from the kernel
+    ret;
+}
+
+/**
+ *  Ridiculously, there are no Warp-Group-Asynchronous double-precision
+ *  variants, but every other variant is present:
+ *
+ *  - `b1` operands wit `s32` accumulators
+ *  - `u8` and `s8` operands with `s32` accumulators
+ *  - `e4m3` and `e5m2` operands with `f16` and `f32` accumulators
+ *  - `f16` operands with `f16` and `f32` accumulators
+ *  - `bf16` operands with `f32` accumulators
+ *  - `tf32` operands with `f32` accumulators
+ *
+ *  So the highest-precision properly accelerated type is the `tf32`, which
+ *  is confusingly 19 bits wide!
+ */
+
+ .visible .entry tops_tf32tf32_sm90tc_16x16x8_1024loop_ptx_kernel()
+{
+    // Accumulator registers used for both input and output of the MMA operation
+    .reg .b32 accum<8>;
+
+    // Registers to hold packed 16-bit data for matrix A
+    .reg .b32 matrix_a<4>;
+
+    // Registers to hold packed 16-bit data for matrix B
+    .reg .b32 matrix_b<4>;
+
+    // General-purpose registers for loop control and constant values
+    .reg .b32 loop_counter, loop_limit, packed_const;
+
+    // Predicate register for conditional branching (loop exit)
+    .reg .pred exit_predicate;
+
+    // Set up loop counter and loop limit
+    mov.u32 loop_counter, 0;
+    mov.u32 loop_limit, 1024;
+
+    // Zero-initialize the accumulator registers
+    mov.f32 accum0, 0.0;
+    mov.f32 accum1, 0.0;
+    mov.f32 accum2, 0.0;
+    mov.f32 accum3, 0.0;
+    mov.f32 accum4, 0.0;
+    mov.f32 accum5, 0.0;
+    mov.f32 accum6, 0.0;
+    mov.f32 accum7, 0.0;
+
+    // Initialize constant for packed matrix data (placeholder)
+    mov.b32 packed_const, 0x00010001;
+
+    // Initialize matrix a registers with the packed constant
+    mov.b32 matrix_a0, packed_const;
+    mov.b32 matrix_a1, packed_const;
+
+    // Initialize matrix b registers with the packed constant
+    mov.b32 matrix_b0, packed_const;
+    mov.b32 matrix_b1, packed_const;
+
+    // The main loop will repeat for 1024 iterations
+loop_start:
+    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
+    @exit_predicate bra loop_exit;
+
+    wmma.mma.sync.aligned.m16n16k8.row.col.f32.tf32.tf32.f32
+         { accum0, accum1, accum2, accum3,
+           accum4, accum5, accum6, accum7 },
+         { matrix_a0, matrix_a1, matrix_a2, matrix_a3 },
+         { matrix_b0, matrix_b1, matrix_b2, matrix_b3 },
+         { accum0, accum1, accum2, accum3,
+           accum4, accum5, accum6, accum7 };
+
+    // Increment the loop counter
+    add.u32 loop_counter, loop_counter, 1;
+
+    // Branch back to the beginning of the loop
+    bra loop_start;
+
+loop_exit:
+    ret;
 }
