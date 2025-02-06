@@ -169,7 +169,7 @@ loop_exit:
  *  - `tf32` operands with `f32` accumulators
  *
  *  So the highest-precision properly accelerated type is the `tf32`, which
- *  is confusingly 19 bits wide!
+ *  is confusingly 19 bits wide! The synchronous variant would look familiar:
  */
 
  .visible .entry tops_tf32tf32_sm90tc_16x16x8_1024loop_ptx_kernel()
@@ -236,3 +236,102 @@ loop_start:
 loop_exit:
     ret;
 }
+
+/**
+ *  The instruction syntax for Warp-Group asynchronous instructions is very
+ *  different, as at least one of the operand matrices has to be in shared
+ *  memory (not registers). It's documented as in 2 variants:
+ *
+ *      wgmma.mma_async.sync.aligned.shape.dtype.tf32.tf32
+ *          d, a-desc, b-desc, scale-d, imm-scale-a, imm-scale-b;
+ *      wgmma.mma_async.sync.aligned.shape.dtype.tf32.tf32
+ *          d, a, b-desc, scale-d, imm-scale-a, imm-scale-b;
+ *
+ *  There is no "C" matrix involved at all, we are computing `D = A * B + D`.
+ *  The A and B matrix descriptors are the properties of the matrix in shared
+ *  memory. It is a 64-bit value contained with the following layout:
+ *
+ *      - 14 bits [0; 13]: start address
+ *      - 14 bits [16; 29]: leading dimension byte offset
+ *      - 14 bits [32; 45]: stride dimension byte offset
+ *      - 3 bits [49; 51]: matrix base offset, valid only for "swizzling"
+ *      - 2 bits [62; 63]: "swizzling" mode
+ *
+ *  Swizzling defines the order of the elements and can have 4 possible values:
+ *
+ *      0: no "swizzling" at all
+ *      1: a 128-byte "swizzle" with a 1024 byte offset of a repeating pattern
+ *      2: a 64-byte "swizzle" with a 512 byte offset of a repeating pattern
+ *      3: a 32-byte "swizzle" with a 256 byte offset of a repeating pattern
+ *
+ *  The list of supported shapes is exhausting:
+ *
+ *      .m64n8k8, .m64n16k8, .m64n24k8, .m64n32k8,
+ *      .m64n40k8, .m64n48k8, .m64n56k8, .m64n64k8,
+ *      .m64n72k8, .m64n80k8, .m64n88k8, .m64n96k8,
+ *      .m64n104k8, .m64n112k8, .m64n120k8, .m64n128k8,
+ *      .m64n136k8, .m64n144k8, .m64n152k8, .m64n160k8,
+ *      .m64n168k8, .m64n176k8, .m64n184k8, .m64n192k8,
+ *      .m64n200k8, .m64n208k8, .m64n216k8, .m64n224k8,
+ *      .m64n232k8, .m64n240k8, .m64n248k8, .m64n256k8
+ *
+ *  The `scale` parameters can be used to either negate the inputs, or disable
+ *  additive bias accumulation in the output.
+ */
+.visible .entry tops_tf32tf32_sm90tc_m64n16k8_1024loop_ptx_kernel()
+{
+    // Accumulator registers used for both input and output of the asynchronous MMA operation
+    .reg .f32 accum<8>;
+
+    // Descriptors for matrix A and matrix B operands
+    .reg .b64 desc_a, desc_b;
+
+    // General-purpose registers for loop control
+    .reg .b32 loop_counter, loop_limit;
+
+    // Predicate register for conditional branching (loop exit)
+    .reg .pred exit_predicate;
+
+    // Set up loop counter and loop limit
+    mov.u32 loop_counter, 0;
+    mov.u32 loop_limit, 1024;
+
+    // Zero-initialize the accumulator registers
+    mov.f32 accum0, 0.0;
+    mov.f32 accum1, 0.0;
+    mov.f32 accum2, 0.0;
+    mov.f32 accum3, 0.0;
+    mov.f32 accum4, 0.0;
+    mov.f32 accum5, 0.0;
+    mov.f32 accum6, 0.0;
+    mov.f32 accum7, 0.0;
+
+    // Initialize matrix descriptors with arbitrary placeholder values
+    mov.u64 desc_a, 0x0000000000000001;
+    mov.u64 desc_b, 0x0000000000000001;
+
+    // The main loop will repeat for 1024 iterations
+loop_start:
+    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
+    @exit_predicate bra loop_exit;
+
+    wgmma.mma_async.sync.aligned.m64n16k8.f32.tf32.tf32
+         { accum0, accum1, accum2, accum3, accum4, accum5, accum6, accum7 },
+         desc_a,
+         desc_b,
+         0, -1, -1;
+
+    // Increment the loop counter
+    add.u32 loop_counter, loop_counter, 1;
+
+    // Branch back to the beginning of the loop
+    bra loop_start;
+
+loop_exit:
+    ret;
+}
+
+/**
+ *  There are also "structured-sparse" variants of those instructions, in case
+ *  half of our entries are zeros!
+ */

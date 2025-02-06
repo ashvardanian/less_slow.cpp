@@ -2251,10 +2251,10 @@ BENCHMARK_CAPTURE(                                                           //
     16, 16, 16, 1024, 70)
     ->MinTime(10);
 
-BENCHMARK_CAPTURE(                                                           //
-    theoretic_tops_ptx, f16f16_sm90tc,                                       //
-    "less_slow_sm90a.ptx", "tops_f16f16_sm90tc_64x8x16_1024loop_ptx_kernel", //
-    64, 8, 16, 1024, 90)
+BENCHMARK_CAPTURE(                                                            //
+    theoretic_tops_ptx, f16f16_sm90tc,                                        //
+    "less_slow_sm90a.ptx", "tops_f16f16_sm90tc_16x16x16_1024loop_ptx_kernel", //
+    16, 16, 16, 1024, 90)
     ->MinTime(10);
 
 BENCHMARK_CAPTURE(                                                         //
@@ -2262,6 +2262,30 @@ BENCHMARK_CAPTURE(                                                         //
     "less_slow_sm90a.ptx", "tops_f64f64_sm90tc_8x8x4_1024loop_ptx_kernel", //
     8, 8, 4, 1024, 90)
     ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                             //
+    theoretic_tops_ptx, tf32tf32_sm90tc,                                       //
+    "less_slow_sm90a.ptx", "tops_tf32tf32_sm90tc_16x16x8_1024loop_ptx_kernel", //
+    16, 16, 8, 1024, 90)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                              //
+    theoretic_tops_ptx, tf32tf32_sm90tc_wgmma,                                  //
+    "less_slow_sm90a.ptx", "tops_tf32tf32_sm90tc_m64n16k8_1024loop_ptx_kernel", //
+    64, 8, 16, 1024, 90)
+    ->MinTime(10);
+
+/**
+ *  The results on H200 are quite interesting.
+ *
+ *  - The identical SM 70 and SM 90 will compile to the same SASS and will have
+ *    the same throughput of around 150 TOPs, or only around @b 15% of the
+ *    number recommended in the datasheet. Similar for double-precision.
+ *
+ *  - The highest-precision "properly accelerated" type - TF32, will yield only
+ *    @b 75 TOPs when using the old warp-level primitives, but will skyrocket
+ *    to @b 300 TOPS when using the Warp-Group MMA, @b 60% of the recommended.
+ */
 
 #endif
 
