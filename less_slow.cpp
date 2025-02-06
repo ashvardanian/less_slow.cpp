@@ -2257,6 +2257,12 @@ BENCHMARK_CAPTURE(                                                           //
     64, 8, 16, 1024, 90)
     ->MinTime(10);
 
+BENCHMARK_CAPTURE(                                                         //
+    theoretic_tops_ptx, f64f64_sm90tc,                                     //
+    "less_slow_sm90a.ptx", "tops_f64f64_sm90tc_8x8x4_1024loop_ptx_kernel", //
+    8, 8, 4, 1024, 90)
+    ->MinTime(10);
+
 #endif
 
 #pragma endregion // GPGPU Programming
@@ -6694,7 +6700,7 @@ class rpc_uring60_server {
             if (message.status == status_t::receiving_k) {
                 struct io_uring_sqe *send_entry = io_uring_get_sqe(&ring_);
                 message.status = status_t::sending_k;
-                io_uring_prep_sendmsg_zc(send_entry, socket_descriptor_, &message.header, 0);
+                io_uring_prep_sendmsg(send_entry, socket_descriptor_, &message.header, 0);
                 io_uring_sqe_set_data(send_entry, &message);
             }
 
@@ -6808,7 +6814,7 @@ class rpc_uring60_client {
 
             // Prepare send operation
             auto *submitted_entry = io_uring_get_sqe(&ring_);
-            io_uring_prep_sendmsg_zc(submitted_entry, socket_descriptor_, &message.header, MSG_WAITALL);
+            io_uring_prep_sendmsg(submitted_entry, socket_descriptor_, &message.header, MSG_WAITALL);
             io_uring_sqe_set_data(submitted_entry, &message);
             //? We could also use `IOSQE_CQE_SKIP_SUCCESS` here.
             //? In that case the State Machine below would be simpler,
@@ -6909,6 +6915,7 @@ BENCHMARK_CAPTURE(rpc_uring60, public, networking_route_t::public_k, 256 /* mess
 #endif            // defined(__linux__)
 
 #pragma region ASIO
+#if 0
 #include <asio.hpp>
 
 class rpc_asio_server {
@@ -7074,6 +7081,7 @@ static void rpc_asio(                             //
 
 BENCHMARK_CAPTURE(rpc_asio, local, "127.0.0.1", 32, 1024, std::chrono::microseconds(50'000))->MinTime(2)->UseRealTime();
 
+#endif
 #pragma endregion // ASIO
 
 #pragma endregion // - Networking and Databases

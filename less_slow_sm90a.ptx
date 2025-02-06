@@ -9,6 +9,12 @@
  *  ? You should start at `less_slow_sm70.ptx` before reading this file.
  *  ? Also read intro to PTX: https://docs.nvidia.com/cuda/parallel-thread-execution/
  *  ? Check the PTX ISA: https://docs.nvidia.com/cuda/pdf/ptx_isa_8.5.pdf
+ *
+ *  You can validate this file by asking the Nvidia PTX Assembler to compile it
+ *  to `.cubin` for some target architecture:
+ * 
+ *  $ ptxas -o less_slow_from_ptx.cubin -arch=sm_90a less_slow_sm90a.ptx
+ *  $ cuobjdump -sass less_slow_from_ptx.cubin | grep -i mma
  */
 .version 8.0                          // PTX version 8.0 for Hopper GPUs
 .target sm_90a                        // Target architecture (SM_90a - Hopper GPUs)
@@ -16,48 +22,92 @@
 
 .visible .entry tops_f16f16_sm90tc_64x8x16_1024loop_ptx_kernel()
 {
-    // Register Declarations
+    // Register declarations
     .reg .f32   %f<4>;               // f32 accumulators: %f0, %f1, %f2, %f3
     .reg .f16x2 %a<4>;               // Packed matrix A inputs (each holds two f16 values)
     .reg .b64   %d0;                 // Descriptor for matrix B (placeholder)
     .reg .b32   %r<3>;               // Loop counter and general-purpose registers
     .reg .pred  %p;                  // Predicate register for conditional branching
 
-    // Loop Counter Initialization
+    // Loop counters
     mov.u32    %r0, 0;               // %r0 = loop counter, start at 0
     mov.u32    %r1, 1024;            // %r1 = loop limit (1024 iterations)
 
-    // Zero-Initialize Accumulators
+    // Zero-initialize accumulators
     mov.f32    %f0, 0.0;             // Initialize accumulator %f0 to 0.0
     mov.f32    %f1, 0.0;             // Initialize accumulator %f1 to 0.0
     mov.f32    %f2, 0.0;             // Initialize accumulator %f2 to 0.0
     mov.f32    %f3, 0.0;             // Initialize accumulator %f3 to 0.0
 
-    // Initialize Packed Matrix Inputs for Matrix A
+    // Initialize the first matrix
     mov.b32    %a0, 0x00010001;      // %a0 = packed f16 values for matrix A
     mov.b32    %a1, 0x00010001;      // %a1 = packed f16 values for matrix A
     mov.b32    %a2, 0x00010001;      // %a2 = packed f16 values for matrix A
     mov.b32    %a3, 0x00010001;      // %a3 = packed f16 values for matrix A
 
-    // Initialize Descriptor for Matrix B
+    // Initialize the second matrix
     mov.u64    %d0, 0x0000000000000001;
 
-    // Loop Start
+    // Start the `for`-loop
 loop_start:
     setp.ge.u32 %p, %r0, %r1;        // Compare loop counter (%r0) with limit (%r1)
     @%p bra    loop_exit;            // Exit loop if %r0 >= %r1
 
-    // Tensor Core MMA Operation Using WGMMA m64n8k16 Variant
+    // Perform the MMA
     wgmma.mma_async.sync.aligned.m64n8k16.f32.f16.f16
          { %f0, %f1, %f2, %f3 },     // Accumulators (output)
          { %a0, %a1, %a2, %a3 },     // Matrix A operands (packed f16 inputs)
          %d0,                        // Matrix B descriptor
          1, -1, -1, 1;               // Immediate scaling values
 
-    // Increment Loop Counter and Branch Back
+    // Increment the loop counter and jump back
     add.u32    %r0, %r0, 1;          // %r0 = %r0 + 1
     bra        loop_start;           // Loop back
 
 loop_exit:
     ret;                            // Return from kernel
+}
+
+.visible .entry tops_f64f64_sm90tc_8x8x4_1024loop_ptx_kernel()
+{
+    // Register declarations
+    .reg .f64   %Ra, %Rb;           // Matrix A and B operand fragments (each a single f64)
+    .reg .f64   %Rc<2>, %Rd<2>;     // Matrix C (additive operand) and destination (accumulator) fragments
+    .reg .b32   %r0, %r1;           // Loop counter and loop limit
+    .reg .pred  %p;                 // Predicate register for conditional branching
+
+    // Loop counters
+    mov.u32    %r0, 0;              // Start loop counter at 0
+    mov.u32    %r1, 1024;           // Loop 1024 iterations
+
+    // Zero-initialize accumulators
+    mov.f64    %Rd0, 0.0;
+    mov.f64    %Rd1, 0.0;
+
+    // Initialize both matrices to ones
+    mov.f64    %Ra, 1.0;
+    mov.f64    %Rb, 1.0;
+
+    // Initialize the additive bias to zero
+    mov.f64    %Rc0, 0.0;
+    mov.f64    %Rc1, 0.0;
+
+    // Start the `for`-loop
+loop_start:
+    setp.ge.u32 %p, %r0, %r1;       // if (%r0 >= %r1) set predicate %p to true
+    @%p bra    loop_exit;           // if predicate true, branch to loop_exit
+
+    // Perform the MMA
+    mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64
+         { %Rd0, %Rd1 },
+         { %Ra },
+         { %Rb },
+         { %Rc0, %Rc1 };
+
+    // Increment the loop counter and jump back
+    add.u32    %r0, %r0, 1;
+    bra        loop_start;
+
+loop_exit:
+    ret;                          // Return from the kernel
 }
