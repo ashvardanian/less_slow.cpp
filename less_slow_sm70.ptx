@@ -116,7 +116,7 @@ loop_end:
     .reg .u32 tid;
     .reg .pred impossible_predicate;
     mov.u32 tid, %tid.x; //? Special system registers start with `%`
-    setp.eq.u32 impossible_predicate, tid, 0xFFFFFFFF;
+    setp.ne.u32 impossible_predicate, tid, 0xFFFFFFFF;
     @impossible_predicate bra loop_exit;
 
     // Write into memory:
