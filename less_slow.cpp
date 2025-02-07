@@ -2634,14 +2634,18 @@ std::size_t parse_size_string(std::string const &str) {
 #pragma region Memory Bound Linear Algebra
 #include <cblas.h>
 /**
- *! OpenBLAS defines a `SIZE` macro for internal use, which conflicts with `fmt`
- *! and other code trying to use that name for variable names, so we must undefine it.
+ *  ! OpenBLAS defines a `SIZE` macro for internal use, which conflicts with `fmt`
+ *  ! and other code trying to use that name for variable names, so we must undefine it.
  */
 #undef SIZE
 
 template <typename scalar_type_>
 static void cblas_tops(bm::State &state) {
+    // ! Not all versions of OpenBLAS define the `openblas_set_num_threads`
+    // ! symbol, so we use CMake's `CheckFunctionExists` for that.
+#if defined(LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
     openblas_set_num_threads(physical_cores());
+#endif
 
     // BLAS expects leading dimensions: `lda` = `ldb` = `ldc` = `n` for square inputs.
     std::size_t n = static_cast<std::size_t>(state.range(0));
@@ -4229,13 +4233,14 @@ yyjson_alc yyjson_wrap_arena_prepend(arena_t &arena) noexcept {
  */
 
 #if defined(__x86_64__) && defined(__linux__)
-#include <asm/prctl.h>   // `ARCH_ENABLE_TAGGED_ADDR`
 #include <sys/syscall.h> // `SYS_arch_prctl`
 static bool enable_pointer_tagging(unsigned long bits = 1) noexcept {
     // The argument is required number of tag bits.
     // It is rounded up to the nearest LAM mode that can provide it.
     // For now only LAM_U57 is supported, with 6 tag bits.
-    return syscall(SYS_arch_prctl, ARCH_ENABLE_TAGGED_ADDR, bits) == 0;
+    // ! This requires kernel 6.2 or newer.
+    int _ARCH_ENABLE_TAGGED_ADDR = 0x4002;
+    return syscall(SYS_arch_prctl, _ARCH_ENABLE_TAGGED_ADDR, bits) == 0;
 }
 #else
 static bool enable_pointer_tagging(unsigned long = 0) noexcept { return false; }
@@ -6459,7 +6464,8 @@ class rpc_uring55_client {
 static void rpc_uring55(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
     auto [major, minor] = fetch_linux_kernel_version();
     if (major < 5 || (major == 5 && minor < 5)) {
-        std::string message = std::format("Kernel version {}.{} too old for io_uring 5.0 variant", major, minor);
+        std::string message = "Kernel version "s + std::to_string(major) + "."s + std::to_string(minor) +
+                              " too old for io_uring 5.5 variant"s;
         state.SkipWithError(message.c_str());
         return;
     }
@@ -6794,7 +6800,8 @@ class rpc_uring60_client {
 static void rpc_uring60(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
     auto [major, minor] = fetch_linux_kernel_version();
     if (major < 6) {
-        std::string message = std::format("Kernel version {}.{} too old for io_uring 6.0 variant", major, minor);
+        std::string message = "Kernel version "s + std::to_string(major) + "."s + std::to_string(minor) +
+                              " too old for io_uring 6.0 variant"s;
         state.SkipWithError(message.c_str());
         return;
     }

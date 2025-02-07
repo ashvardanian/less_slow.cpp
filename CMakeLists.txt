@@ -94,6 +94,12 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
 set(CMAKE_FIND_LIBRARY_PREFIXES ";lib")
 find_package(BLAS REQUIRED)
 
+include(CheckFunctionExists)
+check_function_exists(openblas_set_num_threads LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
+if(LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
+    add_definitions(-DLESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
+endif()
+
 # GTest (required by Google Benchmark)
 FetchContent_Declare(
   GoogleTest
