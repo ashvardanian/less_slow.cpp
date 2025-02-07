@@ -21,6 +21,14 @@
 .address_size 64         // 64-bit addressing
 
 /**
+ *  Let's define some global memory buffers, visible on both device and host
+ *  side, to output multiplication results.
+ */
+.visible .global .align 4 .s32 dummy_sink_s32[4];
+.visible .global .align 4 .f32 dummy_sink_f32[4];
+.visible .global .align 8 .f64 dummy_sink_f64[4];
+
+/**
  *  Our previous Volta kernel should work just fine here, but we can make it
  *  nicer by using the `<>` syntax to define many virtual registers without
  *  explicitly naming them! We can also explicitly define them as `.f16x2` to
@@ -98,6 +106,16 @@ loop_start:
     bra loop_start;
 
 loop_exit:
+    // This barrier forces all asynchronous warp-group operations to complete.
+    bar.sync 0;
+
+    // Use volatile stores to force the accumulator values to be written out.
+    // This dummy write (to a global variable) makes the work observable and 
+    // prevents the multiplication  pipeline from being optimized out.
+    st.global.volatile.f32 [dummy_sink_f32],      accum0;
+    st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
+    st.global.volatile.f32 [dummy_sink_f32+8],    accum2;
+    st.global.volatile.f32 [dummy_sink_f32+12],   accum3;
     ret;
 }
 
@@ -157,6 +175,14 @@ loop_start:
     bra loop_start;
 
 loop_exit:
+    // This barrier forces all asynchronous warp-group operations to complete.
+    bar.sync 0;
+
+    // Use volatile stores to force the accumulator values to be written out.
+    // This dummy write (to a global variable) makes the work observable and 
+    // prevents the multiplication  pipeline from being optimized out.
+    st.global.volatile.f64 [dummy_sink_f64],       accum0;
+    st.global.volatile.f64 [dummy_sink_f64+8],     accum1;
     ret;
 }
 
@@ -237,6 +263,16 @@ loop_start:
     bra loop_start;
 
 loop_exit:
+    // This barrier forces all asynchronous warp-group operations to complete.
+    bar.sync 0;
+
+    // Use volatile stores to force the accumulator values to be written out.
+    // This dummy write (to a global variable) makes the work observable and 
+    // prevents the multiplication  pipeline from being optimized out.
+    st.global.volatile.f32 [dummy_sink_f32],      accum0;
+    st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
+    st.global.volatile.f32 [dummy_sink_f32+8],    accum2;
+    st.global.volatile.f32 [dummy_sink_f32+12],   accum3;
     ret;
 }
 
@@ -313,6 +349,9 @@ loop_exit:
     mov.u64 desc_a, 0x0000000000000001;
     mov.u64 desc_b, 0x0000000000000001;
 
+    // Enforce the ordered for Warp-Group instructions
+    wgmma.fence.sync.aligned;
+
     // The main loop will repeat for 1024 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
@@ -331,6 +370,17 @@ loop_start:
     bra loop_start;
 
 loop_exit:
+    // Commit all prior uncommitted operations to the group and wait!
+    wgmma.commit_group.sync.aligned;
+    wgmma.wait_group.sync.aligned 0;
+
+    // Use volatile stores to force the accumulator values to be written out.
+    // This dummy write (to a global variable) makes the work observable and 
+    // prevents the multiplication  pipeline from being optimized out.
+    st.global.volatile.f32 [dummy_sink_f32],      accum0;
+    st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
+    st.global.volatile.f32 [dummy_sink_f32+8],    accum2;
+    st.global.volatile.f32 [dummy_sink_f32+12],   accum3;
     ret;
 }
 
@@ -399,6 +449,9 @@ loop_exit:
     mov.u64 desc_a, 0x0000000000000001;
     mov.u64 desc_b, 0x0000000000000001;
 
+    // Enforce the ordered for Warp-Group instructions
+    wgmma.fence.sync.aligned;
+
     // The main loop will repeat for 1024 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
@@ -432,6 +485,17 @@ loop_start:
     bra loop_start;
 
 loop_exit:
+    // Commit all prior uncommitted operations to the group and wait!
+    wgmma.commit_group.sync.aligned;
+    wgmma.wait_group.sync.aligned 0;
+
+    // Use volatile stores to force the accumulator values to be written out.
+    // This dummy write (to a global variable) makes the work observable and 
+    // prevents the multiplication  pipeline from being optimized out.
+    st.global.volatile.f32 [dummy_sink_f32],      accum0;
+    st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
+    st.global.volatile.f32 [dummy_sink_f32+8],    accum2;
+    st.global.volatile.f32 [dummy_sink_f32+12],   accum3;
     ret;
 }
 
