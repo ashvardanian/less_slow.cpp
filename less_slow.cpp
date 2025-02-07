@@ -2147,32 +2147,40 @@ static void theoretic_tops_ptx(                  //
     }
     ptx_file = ptx_path.string();
 
-    CUresult result;
-    CUdevice device;
-    CUcontext context;
-    CUmodule module_;
-    CUfunction kernel;
+    CUdevice device = 0;
+    CUcontext context = 0;
+    CUmodule module_ = 0;
+    CUfunction kernel = 0;
+    CUresult result = CUDA_SUCCESS;
+    auto last_error_string = [&result]() -> std::string {
+        char const *error_string;
+        cuGetErrorString(result, &error_string);
+        return error_string;
+    };
 
     // Initialize CUDA
     result = cuInit(0);
     if (result != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to initialize CUDA.");
+        state.SkipWithError("Failed to initialize CUDA: " + last_error_string());
         return;
     }
 
     // Get the first device
     result = cuDeviceGet(&device, 0);
     if (result != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to get CUDA device.");
+        state.SkipWithError("Failed to get CUDA device: " + last_error_string());
         return;
     }
+
+    // Reset its error!
+    cuDevicePrimaryCtxReset(device);
 
     // Get compute capability
     int capability_major = 0, capability_minor = 0;
     result = cuDeviceGetAttribute(&capability_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
     result = cuDeviceGetAttribute(&capability_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
-    if (result != CUDA_SUCCESS || result != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to query compute capability.");
+    if (result != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to query compute capability: " + last_error_string());
         return;
     }
 
@@ -2187,27 +2195,25 @@ static void theoretic_tops_ptx(                  //
     }
 
     // Create context
-    result = cuCtxCreate(&context, 0, device);
+    int context_flags = CU_CTX_SCHED_SPIN | CU_CTX_LMEM_RESIZE_TO_MAX | CU_CTX_SYNC_MEMOPS;
+    result = cuCtxCreate(&context, context_flags, device);
     if (result != CUDA_SUCCESS) {
-        char const *error_string;
-        cuGetErrorString(result, &error_string);
-        state.SkipWithError("Failed to create CUDA context: " + std::string(error_string));
+        state.SkipWithError("Failed to create CUDA context: " + last_error_string());
         return;
     }
 
     // Load the PTX file
     result = cuModuleLoad(&module_, ptx_file.c_str());
     if (result != CUDA_SUCCESS) {
-        char const *error_string;
-        cuGetErrorString(result, &error_string);
-        state.SkipWithError("Failed to load PTX file: " + std::string(error_string));
+        state.SkipWithError("Failed to load PTX file: " + last_error_string());
         cuCtxDestroy(context);
         return;
     }
 
     // Access the kernel function
-    if (cuModuleGetFunction(&kernel, module_, kernel_name.c_str()) != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to get kernel function from PTX file.");
+    result = cuModuleGetFunction(&kernel, module_, kernel_name.c_str());
+    if (result != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to get kernel function from PTX file: " + last_error_string());
         cuModuleUnload(module_);
         cuCtxDestroy(context);
         return;
@@ -2216,9 +2222,10 @@ static void theoretic_tops_ptx(                  //
     // Query device properties
     int num_sms = 0;
     int warp_size = 0;
-    if (cuDeviceGetAttribute(&num_sms, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device) != CUDA_SUCCESS ||
-        cuDeviceGetAttribute(&warp_size, CU_DEVICE_ATTRIBUTE_WARP_SIZE, device) != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to query device properties.");
+    result = cuDeviceGetAttribute(&num_sms, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device);
+    result = cuDeviceGetAttribute(&warp_size, CU_DEVICE_ATTRIBUTE_WARP_SIZE, device);
+    if (result != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to query device properties: " + last_error_string());
         cuCtxDestroy(context);
         return;
     }
@@ -2229,15 +2236,13 @@ static void theoretic_tops_ptx(                  //
     void *kernel_args[] = {nullptr};
 
     for (auto _ : state) {
-        CUresult launch_result = cuLaunchKernel(   //
+        result = cuLaunchKernel(                   //
             kernel,                                //
             grid_dim.x, grid_dim.y, grid_dim.z,    //
             block_dim.x, block_dim.y, block_dim.z, //
             0, nullptr, kernel_args, nullptr);
-        if (launch_result != CUDA_SUCCESS) {
-            char const *error_string;
-            cuGetErrorString(launch_result, &error_string);
-            state.SkipWithError("Kernel launch failed: " + std::string(error_string));
+        if (result != CUDA_SUCCESS) {
+            state.SkipWithError("Kernel launch failed: " + last_error_string());
             break;
         }
         cuCtxSynchronize();
@@ -2641,8 +2646,14 @@ void spread_scatter_avx512( //
     for (; i < size; ++i) data[indices[i]] = source[i];
 }
 
-BENCHMARK_CAPTURE(spread_memory, gather_avx512, spread_gather_avx512, 64)->Range(1 << 10, 1 << 20)->MinTime(5);
-BENCHMARK_CAPTURE(spread_memory, scatter_avx512, spread_scatter_avx512, 64)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, gather_avx512, spread_gather_avx512, 64)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
+BENCHMARK_CAPTURE(spread_memory, scatter_avx512, spread_scatter_avx512, 64)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
 
 /**
  *  For consistent timing, for AVX-512 we align allocations to the ZMM register
@@ -2696,8 +2707,14 @@ void spread_scatter_sve( //
     }
 }
 
-BENCHMARK_CAPTURE(spread_memory, gather_sve, spread_gather_sve, max_sve_size_k)->Range(1 << 10, 1 << 20)->MinTime(5);
-BENCHMARK_CAPTURE(spread_memory, scatter_sve, spread_scatter_sve, max_sve_size_k)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, gather_sve, spread_gather_sve, max_sve_size_k)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
+BENCHMARK_CAPTURE(spread_memory, scatter_sve, spread_scatter_sve, max_sve_size_k)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
 
 /**
  *  @b Finally! This may just be the first place where SVE supersedes NEON
