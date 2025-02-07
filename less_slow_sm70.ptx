@@ -1,0 +1,154 @@
+/**
+ *  less_slow_sm70.ptx
+ *
+ *  Micro-kernels for building a performance-first mindset for CUDA-capable
+ *  GPUs using Parallel Thread eXecution (PTX) Intermediate Representation (IR) 
+ *  for different generations of Streaming Multiprocessors (SMs) and Tensor
+ *  Cores (TCs) for Volta-generation Nvidia GPUs.
+ * 
+ *  ? You should start at `less_slow.cu` before reading this file.
+ *  ? Also read intro to PTX: https://docs.nvidia.com/cuda/parallel-thread-execution/
+ *  ? Check the PTX ISA: https://docs.nvidia.com/cuda/pdf/ptx_isa_8.5.pdf
+ *  
+ *  ! PTX is higher-level than SASS, but still very similar to typical CPU 
+ *  ! assembly languages. It has slightly different syntax and semantics for
+ *  ! predicates and memory access, but still don't have `for` loops :(
+ *  ! As for emojis, we can only use ASCII... CUDA can't JIT-compile UTF-8.
+ * 
+ *  You can validate this file by asking the Nvidia PTX Assembler to compile it
+ *  to `.cubin` for some target architecture:
+ * 
+ *  $ ptxas -o less_slow_from_ptx.cubin -arch=sm_70 less_slow_sm70.ptx
+ *  $ cuobjdump -sass less_slow_from_ptx.cubin | grep -i mma
+ * 
+ *  @section Register File
+ * 
+ *  GPU code manages registers differently. Hopper tuning guide suggests that
+ *  the register file size is 64K 32-bit registers per Streaming Multiprocessor.
+ *  The maximum number of registers per thread is 255.
+ * 
+ *  PTX provides read-only variables visible a special registers like `%tid` for
+ *  thread ID, `%ctaid` for block ID, and `%aggr_smem_size` for shared memory,
+ *  or `%current_graph_exec` to access the ID of the current graph execution.
+ *  To read from them, simple use the `mov` instruction.
+ */
+
+.version 6.5             // PTX version 6.5 is enough for Volta GPUs
+.target sm_70            // Target architecture (SM 7.0 - Volta GPUs)
+.address_size 64         // 64-bit addressing
+
+.visible .entry tops_f16f16_sm70tc_16x16x16_1024loop_ptx_kernel()
+{
+    // Accumulator registers used for both input and output of the MMA operation
+    .reg .b32 accum_0, accum_1, accum_2, accum_3;
+
+    // Registers to hold packed 16-bit data for matrix a (8 registers)
+    .reg .b32 matrix_a_0, matrix_a_1, matrix_a_2, matrix_a_3,
+              matrix_a_4, matrix_a_5, matrix_a_6, matrix_a_7;
+
+    // Registers to hold packed 16-bit data for matrix b (8 registers)
+    .reg .b32 matrix_b_0, matrix_b_1, matrix_b_2, matrix_b_3,
+              matrix_b_4, matrix_b_5, matrix_b_6, matrix_b_7;
+
+    // General-purpose registers for loop control and constant values
+    .reg .b32 loop_counter, loop_limit, packed_const;
+
+    // Predicate register for conditional branching (loop exit)
+    .reg .pred exit_predicate;
+
+    // Set up loop counter and loop limit
+    mov.u32 loop_counter, 0;
+    mov.u32 loop_limit, 1024;
+
+    // Zero-initialize the accumulator registers
+    mov.f32 accum_0, 0.0;
+    mov.f32 accum_1, 0.0;
+    mov.f32 accum_2, 0.0;
+    mov.f32 accum_3, 0.0;
+
+    // Initialize constant for packed matrix data (placeholder)
+    mov.b32 packed_const, 0x00010001;
+
+    // Initialize matrix a registers with the packed constant
+    mov.b32 matrix_a_0, packed_const;
+    mov.b32 matrix_a_1, packed_const;
+    mov.b32 matrix_a_2, packed_const;
+    mov.b32 matrix_a_3, packed_const;
+    mov.b32 matrix_a_4, packed_const;
+    mov.b32 matrix_a_5, packed_const;
+    mov.b32 matrix_a_6, packed_const;
+    mov.b32 matrix_a_7, packed_const;
+
+    // Initialize matrix b registers with the packed constant
+    mov.b32 matrix_b_0, packed_const;
+    mov.b32 matrix_b_1, packed_const;
+    mov.b32 matrix_b_2, packed_const;
+    mov.b32 matrix_b_3, packed_const;
+    mov.b32 matrix_b_4, packed_const;
+    mov.b32 matrix_b_5, packed_const;
+    mov.b32 matrix_b_6, packed_const;
+    mov.b32 matrix_b_7, packed_const;
+
+    // The main loop will repeat for 1024 iterations
+loop_start:
+    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
+    @exit_predicate bra loop_end;
+
+    wmma.mma.sync.aligned.row.col.m16n16k16.f16.f16 
+         { accum_0, accum_1, accum_2, accum_3 },
+         { matrix_a_0, matrix_a_1, matrix_a_2, matrix_a_3,
+           matrix_a_4, matrix_a_5, matrix_a_6, matrix_a_7 },
+         { matrix_b_0, matrix_b_1, matrix_b_2, matrix_b_3,
+           matrix_b_4, matrix_b_5, matrix_b_6, matrix_b_7 },
+         { accum_0, accum_1, accum_2, accum_3 };
+
+    // Increment the loop counter
+    add.u32 loop_counter, loop_counter, 1;
+
+    // Branch back to the beginning of the loop
+    bra loop_start;
+
+loop_end:
+    // If we simply exit, the computation will be optimized out!
+    // Instead, let's check for an impossible condition, like if the thread ID
+    // is equal to `UINT_MAX`, and if so - write accumulators to global memory
+    // NULL address.
+    .reg .u32 tid;
+    .reg .pred impossible_predicate;
+    mov.u32 tid, %tid.x; //? Special system registers start with `%`
+    setp.eq.u32 impossible_predicate, tid, 0xFFFFFFFF;
+    @impossible_predicate bra loop_exit;
+
+    // Write into memory:
+    .reg .u64 store_ptr;
+    mov.u64 store_ptr, 0;
+    st.global.f32 [store_ptr],      accum_0;
+    st.global.f32 [store_ptr+4],    accum_1;
+    st.global.f32 [store_ptr+8],    accum_2;
+    st.global.f32 [store_ptr+12],   accum_3;
+
+loop_exit:
+    ret;
+}
+
+/**
+ *  Here are some potentially counterintuitive facts about PTX and SASS:
+ *
+ *  - NVCC unrolls loops more aggressively than any other mainstream compiler.
+ *
+ *  - If you are coming from CPU side, you shouldn't expect instructions to be
+ *    forward-compatible or to have better or equal performance on the next
+ *    generation! Entire instruction families may live for just one generation
+ *    and be completely abandoned in a couple of years.
+ *
+ *  - Some instructions, like Tensor Core Gen 4 and 5 operations can't work
+ *    with both multiplication operands in GPU registers. At least one of them
+ *    has to be in the shared memory. Moreover, they may work up to 10% faster
+ *    with both arguments in shared memory!
+ *
+ *  Because only one `.version` directive can be placed in each file, for newer
+ *  kernels, go to `less_slow_sm90a.ptx`.
+ *
+ *  @see PTX module-level directives:
+ *  https://docs.nvidia.com/cuda/parallel-thread-execution/#ptx-module-directives
+ */

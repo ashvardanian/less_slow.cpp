@@ -32,6 +32,11 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Set a default parallel build level if the user hasn't specified one.
+if(NOT DEFINED CMAKE_BUILD_PARALLEL_LEVEL)
+  set(CMAKE_BUILD_PARALLEL_LEVEL 16 CACHE STRING "Default parallel build level" FORCE)
+endif()
+
 # ------------------------------------------------------------------------------
 # Detect CUDA Support
 # ------------------------------------------------------------------------------
@@ -160,18 +165,29 @@ if(USE_INTEL_TBB)
   endif()
 endif()
 
-# Nvidia's CUDA Core Compute Libraries for GPU acceleration
+# Nvidia's CUDA Core Compute Libraries for GPU-accelerated algorithms
 if(USE_NVIDIA_CCCL)
   # CUB, Thrust, and other libraries of interest are now included into the
-  # CUDA Toolkit, so we don't need this anymore:
-  #
-  # FetchContent_Declare(NvidiaCCCL GIT_REPOSITORY https://github.com/nvidia/cccl.git)
-  # FetchContent_MakeAvailable(NvidiaCCCL)
+  # CUDA Toolkit:
   find_package(CUDAToolkit REQUIRED)
   message(STATUS "CUDA Toolkit Version: ${CUDAToolkit_VERSION}")
   message(STATUS "CUDA Toolkit Include Path: ${CUDAToolkit_INCLUDE_DIRS}")
   message(STATUS "CUDA Toolkit Libraries Path: ${CUDAToolkit_LIBRARY_DIR}")
 endif()
+
+# Nvidia's CUTLASS for GPU-accelerated linear algebra
+# set(CUTLASS_ENABLE_HEADERS_ONLY ON)
+# set(CUTLASS_ENABLE_LIBRARY OFF)
+# set(CUTLASS_ENABLE_EXAMPLES OFF)
+# set(CUTLASS_ENABLE_TESTS OFF)
+# set(CUTLASS_ENABLE_TOOLS OFF)
+# set(CUTLASS_NVCC_ARCHS "90a")
+# FetchContent_Declare(
+#   NvidiaCUTLASS 
+#   GIT_REPOSITORY https://github.com/nvidia/cutlass.git
+#   GIT_TAG v3.7.0
+# )
+# FetchContent_MakeAvailable(NvidiaCUTLASS)
 
 # FMT for logging, as `std::format` has limited functionality
 FetchContent_Declare(
@@ -317,7 +333,6 @@ endif()
 # List of all possible compiler IDs:
 # https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_COMPILER_ID.html
 if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" OR CMAKE_CUDA_COMPILER_ID STREQUAL "NVHPC")
-  set_property(SOURCE less_slow.cpp PROPERTY LANGUAGE CUDA)
   set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
   set_target_properties(less_slow PROPERTIES CUDA_ARCHITECTURES "70;75;80;89;90")
   target_compile_options(less_slow PRIVATE
@@ -413,16 +428,25 @@ endif()
 if(USE_NVIDIA_CCCL)
   # For CUB/Thrust, rely on CUDA Toolkit's bundled versions
   # These are automatically included when you include the CUDA Toolkit directories.
+  target_sources(less_slow PRIVATE less_slow.cu)
   target_include_directories(less_slow PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas CUDA::cuda_driver)
-  target_sources(less_slow PRIVATE less_slow.cu)
+  # target_link_libraries(less_slow PRIVATE nvidia::cutlass::cutlass)
 
-  # Copy the PTX Intermediate Representation file to the runtime directory
-  set_source_files_properties(less_slow.ptx PROPERTIES LANGUAGE "")
-  add_custom_command(
-    TARGET less_slow POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/less_slow.ptx ${CMAKE_CURRENT_BINARY_DIR}/less_slow.ptx
-  )
+  # List the PTX files you want to copy
+  set(PTX_FILES less_slow_sm70.ptx less_slow_sm90a.ptx)
+
+  # Loop over each PTX file and add a custom command to copy it
+  foreach(PTX ${PTX_FILES})
+    # Make sure CMake doesn’t try to compile this file as source code
+    set_source_files_properties(${PTX} PROPERTIES LANGUAGE "")
+    add_custom_command(
+      TARGET less_slow POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy
+              ${CMAKE_CURRENT_SOURCE_DIR}/${PTX}
+              ${CMAKE_CURRENT_BINARY_DIR}/${PTX}
+    )
+  endforeach()
 endif()
 
 if(OpenMP_FOUND)

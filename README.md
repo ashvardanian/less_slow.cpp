@@ -33,6 +33,7 @@ Some of the highlights include:
 - __Intel's oneAPI vs Nvidia's CCCL?__ What's so special about `<thrust>` and `<cub>`?
 - __CUDA C++, [PTX](https://en.wikipedia.org/wiki/Parallel_Thread_Execution) Intermediate Representations, and SASS__, and how do they differ from CPU code?
 - __How to choose between intrinsics, inline `asm`, and separate `.S` files__ for your performance-critical code?
+- __Tensor Cores & Memory__ differences on CPUs, and Volta, Ampere, Hopper, and Blackwell GPUs!
 - __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
@@ -77,7 +78,8 @@ The build will pull and compile several third-party dependencies from the source
 - Lewis Baker's [cppcoro](https://github.com/lewissbaker/cppcoro) implements C++20 coroutines.
 - Jens Axboe's [liburing](https://github.com/axboe/liburing) to simplify Linux kernel-bypass.
 - Chris Kohlhoff's [ASIO](https://github.com/chriskohlhoff/asio) as a [networking TS](https://en.cppreference.com/w/cpp/experimental/networking) extension.
-- Nvidia's [CCCL](https://github.com/nvidia/cccl) for GPU-accelerated computations.
+- Nvidia's [CCCL](https://github.com/nvidia/cccl) for GPU-accelerated algorithms.
+- Nvidia's [CUTLASS](https://github.com/nvidia/cutlass) for GPU-accelerated Linear Algebra.
 
 To control the output or run specific benchmarks, use the following flags:
 

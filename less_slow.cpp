@@ -624,20 +624,47 @@ BENCHMARK(sorting_with_openmp)
 
 #endif // defined(_OPENMP)
 
-#if defined(__CUDACC__)
+/**
+ *  Detecting CUDA availability isn't trivial. NVIDIA's CUDA toolchain defines:
+ *  - __NVCC__: Set only when using the NVCC compiler.
+ *  - __CUDACC__: Set when NVCC compiles CUDA code (host or device).
+ *  - __CUDA_ARCH__: Informs the CUDA version for compiling device (GPU) code.
+ *
+ *  Since host compilers may not define these macros, we use @b `__has_include`
+ *  to check for `<cuda_runtime.h>` as an indicator that CUDA is available.
+ *
+ *  @see NVCC Identification Macros docs:
+ *       https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/#nvcc-identification-macro
+ */
+#define _LESS_SLOW_WITH_CUDA 0
+#if defined(__has_include)
+#if __has_include(<cuda_runtime.h>)
+#define _LESS_SLOW_WITH_CUDA 1
+#endif
+#endif
+
+#if _LESS_SLOW_WITH_CUDA
 
 /**
  *  Unlike STL, Thrust provides some very handy abstractions for sorting
- *  one array by values in another.
+ *  one array by values in another. We are not going to use them here!
+ *  And we will also avoid instantiating any CUDA @b `<algorithm>`-like
+ *  templates in this translation unit to better separate the host-side
+ *  code and device-side and keep compilation time sane!
  *
  *  @see Sorting in Thrust: https://nvidia.github.io/cccl/thrust/api_docs/algorithms/sorting
  */
 #include <cuda_runtime.h>         // `cudaError_t`
 #include <thrust/device_vector.h> // `thrust::device_vector`
 #include <thrust/host_vector.h>   // `thrust::host_vector`
-#include <thrust/sort.h>          // `thrust::sort`
 
-using namespace std::string_literals;
+using namespace std::string_literals; // For `""s` literals
+
+/**
+ *  @brief  Reverses the array and sorts it with Nvidia's Thrust from CCCL.
+ *  @see    Declared in `less_slow.cpp`, but defined in @b `less_slow.cu`!
+ */
+extern void reverse_and_sort_with_thrust(std::uint32_t *device_pointer, std::size_t array_length);
 
 static void sorting_with_thrust(benchmark::State &state) {
     const auto count = static_cast<std::size_t>(state.range(0));
@@ -650,8 +677,7 @@ static void sorting_with_thrust(benchmark::State &state) {
     thrust::device_vector<std::uint32_t> device_array = host_array;
 
     for (auto _ : state) {
-        thrust::reverse(device_array.begin(), device_array.end());
-        thrust::sort(device_array.begin(), device_array.end());
+        reverse_and_sort_with_thrust(device_array.data().get(), count);
         cudaError_t error = cudaDeviceSynchronize(); //! Block until the GPU has completed all tasks
         if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: "s + cudaGetErrorString(error));
         benchmark::DoNotOptimize(device_array.data());
@@ -682,12 +708,17 @@ BENCHMARK(sorting_with_thrust)
  *  pre-allocate temporary memory for CUB's sorting algorithm, and will use
  *  device-side timers for more accurate measurements.
  */
-#include <cub/cub.cuh>
+extern std::size_t reverse_and_sort_with_cub_space(std::uint32_t *device_pointer, std::size_t array_length);
+extern void reverse_and_sort_with_cub(                       //
+    std::uint32_t *device_pointer, std::size_t array_length, // Task
+    void *temporary_pointer, std::size_t temporary_length,   // Space
+    cudaStream_t stream);                                    // Order
 
 static void sorting_with_cub(bm::State &state) {
     auto count = static_cast<std::size_t>(state.range(0));
-    thrust::device_vector<std::uint32_t> device_array(count);
-    thrust::device_vector<std::byte> temporary;
+    thrust::host_vector<std::uint32_t> host_array(count);
+    std::iota(host_array.begin(), host_array.end(), 1u);
+    thrust::device_vector<std::uint32_t> device_array = host_array;
 
     // One of the interesting design choices of CUB is that you can call
     // the target method with `NULL` arguments to infer the required temporary
@@ -695,13 +726,16 @@ static void sorting_with_cub(bm::State &state) {
     //
     // Another one is the naming of the operations - `SortKeys` instead of `Sort`.
     // There is also `SortPairs` and `SortPairsDescending` in for key-value pairs.
-    std::size_t temporary_bytes = 0;
-    cub::DeviceRadixSort::SortKeys(                           //
-        NULL, temporary_bytes,                                // temporary memory and its size
-        device_array.data().get(), device_array.data().get(), // "in" and "out" arrays
-        count                                                 // number of elements and optional parameters
-    );
-    temporary.resize(temporary_bytes);
+    std::size_t temporary_bytes = reverse_and_sort_with_cub_space(device_array.data().get(), count);
+
+    // Allocate temporary memory with `cudaMalloc` instead of using a `device_vector`,
+    // due to potential compilation issues on the host-side compiler.
+    std::byte *temporary_pointer = nullptr;
+    cudaError_t error = cudaMalloc(&temporary_pointer, temporary_bytes);
+    if (error != cudaSuccess) {
+        state.SkipWithError("Failed to allocate temporary memory: "s + cudaGetErrorString(error));
+        return;
+    }
 
     // To schedule the Thrust and CUB operations on the same CUDA stream,
     // we need to wrap it into a "policy" object.
@@ -719,14 +753,11 @@ static void sorting_with_cub(bm::State &state) {
         // Record the start event
         cudaEventRecord(start_event, sorting_stream);
 
-        thrust::reverse(policy, device_array.begin(), device_array.end());
-        cub::DeviceRadixSort::SortKeys(                           //
-            temporary.data().get(), temporary_bytes,              // temporary memory and its size
-            device_array.data().get(), device_array.data().get(), // "in" and "out" arrays pin to same memory
-            count,                                                // number of elements
-            0, sizeof(std::uint32_t) * CHAR_BIT,                  // begin and end bit positions
-            sorting_stream                                        // CUDA stream
-        );
+        // Run the kernels
+        reverse_and_sort_with_cub(              //
+            device_array.data().get(), count,   // Task
+            temporary_pointer, temporary_bytes, // Space
+            sorting_stream);                    // Order
 
         // Record the stop event
         cudaEventRecord(stop_event, sorting_stream);
@@ -747,20 +778,20 @@ BENCHMARK(sorting_with_cub)
     ->RangeMultiplier(4)
     ->Range(1l << 20, 1l << 28)
     ->MinTime(10)
-    ->Complexity(bm::oNLogN)
+    ->Complexity(benchmark::oN) // Not `oNLogN` - it's Radix Sort!
     ->UseManualTime();
 
 /**
  *  Comparing CPU to GPU performance is not straightforward, but we can compare
- *  Thrust to CUB solutions. On a consumer-grade 4060 Ada Lovelace GPU:
+ *  Thrust to CUB solutions. On NVIDIA H200 GPU, for the largest 1 GB buffer:
  *
- *  - `sorting_with_thrust` takes from ~ @b 1ms to @b 84ms
- *  - `sorting_with_cub` takes ~ @b 0.16ms to @b 51ms
+ *  - `sorting_with_thrust` takes @b 6.6 ms
+ *  - `sorting_with_cub` takes @b 6 ms
  *
- *  50% performance improvements are typical for CUB.
+ *  10% ot 50% performance improvements are typical for CUB.
  */
 
-#endif // defined(__CUDACC__)
+#endif // _LESS_SLOW_WITH_CUDA
 
 #pragma endregion // Parallelism and Computational Complexity
 
@@ -2012,7 +2043,7 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 
 #pragma region GPGPU Programming
 
-#if defined(__CUDACC__)
+#if _LESS_SLOW_WITH_CUDA
 #include <cuda.h>
 
 static void theoretic_tops_cuda(                   //
@@ -2026,7 +2057,21 @@ static void theoretic_tops_cuda(                   //
     int const threads_per_block = prop.warpSize;
 
     for (auto _ : state) {
-        kernel<<<blocks, threads_per_block>>>();
+        // A typical CUDA kernel invocation would look like this:
+        //
+        //      kernel<<<blocks, threads_per_block>>>();
+        //
+        // However, that syntactic sugar will break compilation, unless we use
+        // NVCC. Instead we can use the CUDA API directly:
+        void *kernel_args = nullptr;
+        cudaError_t error = cudaLaunchKernel( //
+            kernel,                           // kernel function pointer
+            dim3(blocks),                     // grid dimensions
+            dim3(threads_per_block),          // block dimensions
+            &kernel_args,                     // kernel arguments
+            0,                                // shared memory size
+            0);                               // default stream
+        if (error != cudaSuccess) state.SkipWithError("CUDA error after kernel launch: "s + cudaGetErrorString(error));
         cudaDeviceSynchronize();
     }
 
@@ -2088,12 +2133,13 @@ BENCHMARK_CAPTURE(                                                              
 
 static void theoretic_tops_ptx(                  //
     bm::State &state,                            //
+    std::string file_name,                       //
     std::string kernel_name,                     //
     std::size_t m, std::size_t n, std::size_t k, //
     std::size_t repetitions, int required_capability) {
 
     // Resolve the absolute path to the PTX file
-    std::string ptx_file = "less_slow.ptx";
+    std::string ptx_file = file_name;
     std::filesystem::path ptx_path = std::filesystem::absolute(ptx_file);
     if (!std::filesystem::exists(ptx_path)) {
         state.SkipWithError("Failed to find PTX file.");
@@ -2101,28 +2147,40 @@ static void theoretic_tops_ptx(                  //
     }
     ptx_file = ptx_path.string();
 
-    CUdevice device;
-    CUcontext context;
-    CUmodule module_;
-    CUfunction kernel;
+    CUdevice device = 0;
+    CUcontext context = 0;
+    CUmodule module_ = 0;
+    CUfunction kernel = 0;
+    CUresult result = CUDA_SUCCESS;
+    auto last_error_string = [&result]() -> std::string {
+        char const *error_string;
+        cuGetErrorString(result, &error_string);
+        return error_string;
+    };
 
     // Initialize CUDA
-    if (cuInit(0) != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to initialize CUDA.");
+    result = cuInit(0);
+    if (result != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to initialize CUDA: " + last_error_string());
         return;
     }
 
     // Get the first device
-    if (cuDeviceGet(&device, 0) != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to get CUDA device.");
+    result = cuDeviceGet(&device, 0);
+    if (result != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to get CUDA device: " + last_error_string());
         return;
     }
 
+    // Reset its error!
+    cuDevicePrimaryCtxReset(device);
+
     // Get compute capability
     int capability_major = 0, capability_minor = 0;
-    if (cuDeviceGetAttribute(&capability_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device) != CUDA_SUCCESS ||
-        cuDeviceGetAttribute(&capability_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device) != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to query compute capability.");
+    result = cuDeviceGetAttribute(&capability_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
+    result = cuDeviceGetAttribute(&capability_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
+    if (result != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to query compute capability: " + last_error_string());
         return;
     }
 
@@ -2137,24 +2195,25 @@ static void theoretic_tops_ptx(                  //
     }
 
     // Create context
-    if (cuCtxCreate(&context, 0, device) != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to create CUDA context.");
+    int context_flags = CU_CTX_SCHED_SPIN | CU_CTX_LMEM_RESIZE_TO_MAX | CU_CTX_SYNC_MEMOPS;
+    result = cuCtxCreate(&context, context_flags, device);
+    if (result != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to create CUDA context: " + last_error_string());
         return;
     }
 
     // Load the PTX file
-    CUresult result = cuModuleLoad(&module_, ptx_file.c_str());
+    result = cuModuleLoad(&module_, ptx_file.c_str());
     if (result != CUDA_SUCCESS) {
-        char const *error_string;
-        cuGetErrorString(result, &error_string);
-        state.SkipWithError("Failed to load PTX file: " + std::string(error_string));
+        state.SkipWithError("Failed to load PTX file: " + last_error_string());
         cuCtxDestroy(context);
         return;
     }
 
     // Access the kernel function
-    if (cuModuleGetFunction(&kernel, module_, kernel_name.c_str()) != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to get kernel function from PTX file.");
+    result = cuModuleGetFunction(&kernel, module_, kernel_name.c_str());
+    if (result != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to get kernel function from PTX file: " + last_error_string());
         cuModuleUnload(module_);
         cuCtxDestroy(context);
         return;
@@ -2163,9 +2222,10 @@ static void theoretic_tops_ptx(                  //
     // Query device properties
     int num_sms = 0;
     int warp_size = 0;
-    if (cuDeviceGetAttribute(&num_sms, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device) != CUDA_SUCCESS ||
-        cuDeviceGetAttribute(&warp_size, CU_DEVICE_ATTRIBUTE_WARP_SIZE, device) != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to query device properties.");
+    result = cuDeviceGetAttribute(&num_sms, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device);
+    result = cuDeviceGetAttribute(&warp_size, CU_DEVICE_ATTRIBUTE_WARP_SIZE, device);
+    if (result != CUDA_SUCCESS) {
+        state.SkipWithError("Failed to query device properties: " + last_error_string());
         cuCtxDestroy(context);
         return;
     }
@@ -2176,15 +2236,13 @@ static void theoretic_tops_ptx(                  //
     void *kernel_args[] = {nullptr};
 
     for (auto _ : state) {
-        CUresult launch_result = cuLaunchKernel(   //
+        result = cuLaunchKernel(                   //
             kernel,                                //
             grid_dim.x, grid_dim.y, grid_dim.z,    //
             block_dim.x, block_dim.y, block_dim.z, //
             0, nullptr, kernel_args, nullptr);
-        if (launch_result != CUDA_SUCCESS) {
-            char const *error_string;
-            cuGetErrorString(launch_result, &error_string);
-            state.SkipWithError("Kernel launch failed: " + std::string(error_string));
+        if (result != CUDA_SUCCESS) {
+            state.SkipWithError("Kernel launch failed: " + last_error_string());
             break;
         }
         cuCtxSynchronize();
@@ -2199,9 +2257,59 @@ static void theoretic_tops_ptx(                  //
     cuCtxDestroy(context);
 }
 
-BENCHMARK_CAPTURE(theoretic_tops_ptx, f16f16_sm70tc, "tops_f16f16_sm70tc_16x16x16_1024loop_ptx_kernel", 16, 16, 16,
-                  1024, 70)
+BENCHMARK_CAPTURE(                                                           //
+    theoretic_tops_ptx, f16f16_sm70tc,                                       //
+    "less_slow_sm70.ptx", "tops_f16f16_sm70tc_16x16x16_1024loop_ptx_kernel", //
+    16, 16, 16, 1024, 70)
     ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                            //
+    theoretic_tops_ptx, f16f16_sm90tc,                                        //
+    "less_slow_sm90a.ptx", "tops_f16f16_sm90tc_16x16x16_1024loop_ptx_kernel", //
+    16, 16, 16, 1024, 90)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                         //
+    theoretic_tops_ptx, f64f64_sm90tc,                                     //
+    "less_slow_sm90a.ptx", "tops_f64f64_sm90tc_8x8x4_1024loop_ptx_kernel", //
+    8, 8, 4, 1024, 90)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                             //
+    theoretic_tops_ptx, tf32tf32_sm90tc,                                       //
+    "less_slow_sm90a.ptx", "tops_tf32tf32_sm90tc_16x16x8_1024loop_ptx_kernel", //
+    16, 16, 8, 1024, 90)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                              //
+    theoretic_tops_ptx, tf32tf32_sm90tc_wgmma_smallest,                         //
+    "less_slow_sm90a.ptx", "tops_tf32tf32_sm90tc_m64n16k8_1024loop_ptx_kernel", //
+    64, 16, 8, 1024, 90)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                               //
+    theoretic_tops_ptx, tf32tf32_sm90tc_wgmma_largest,                           //
+    "less_slow_sm90a.ptx", "tops_tf32tf32_sm90tc_m64n256k8_1024loop_ptx_kernel", //
+    64, 256, 8, 1024, 90)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                                //
+    theoretic_tops_ptx, b1b1and_sm90tc_wgmma,                                     //
+    "less_slow_sm90a.ptx", "tops_b1b1and_sm90tc_m64n256k256_1024loop_ptx_kernel", //
+    64, 256, 256, 1024, 90)
+    ->MinTime(10);
+
+/**
+ *  The results on H200 are quite interesting.
+ *
+ *  - The identical SM 70 and SM 90 will compile to the same SASS and will have
+ *    the same throughput of around 150 TOPs, or only around @b 15% of the
+ *    number recommended in the datasheet. Similar for double-precision.
+ *
+ *  - The highest-precision "properly accelerated" type - TF32, will yield only
+ *    @b 75 TOPs when using the old warp-level primitives, but will skyrocket
+ *    to @b 300 TOPS when using the Warp-Group MMA, @b 60% of the recommended.
+ */
 
 #endif
 
@@ -2538,8 +2646,14 @@ void spread_scatter_avx512( //
     for (; i < size; ++i) data[indices[i]] = source[i];
 }
 
-BENCHMARK_CAPTURE(spread_memory, gather_avx512, spread_gather_avx512, 64)->Range(1 << 10, 1 << 20)->MinTime(5);
-BENCHMARK_CAPTURE(spread_memory, scatter_avx512, spread_scatter_avx512, 64)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, gather_avx512, spread_gather_avx512, 64)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
+BENCHMARK_CAPTURE(spread_memory, scatter_avx512, spread_scatter_avx512, 64)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
 
 /**
  *  For consistent timing, for AVX-512 we align allocations to the ZMM register
@@ -2593,8 +2707,14 @@ void spread_scatter_sve( //
     }
 }
 
-BENCHMARK_CAPTURE(spread_memory, gather_sve, spread_gather_sve, max_sve_size_k)->Range(1 << 10, 1 << 20)->MinTime(5);
-BENCHMARK_CAPTURE(spread_memory, scatter_sve, spread_scatter_sve, max_sve_size_k)->Range(1 << 10, 1 << 20)->MinTime(5);
+BENCHMARK_CAPTURE(spread_memory, gather_sve, spread_gather_sve, max_sve_size_k)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
+BENCHMARK_CAPTURE(spread_memory, scatter_sve, spread_scatter_sve, max_sve_size_k)
+    ->Range(1 << 10, 1 << 20)
+    ->MinTime(5)
+    ->MinWarmUpTime(1);
 
 /**
  *  @b Finally! This may just be the first place where SVE supersedes NEON
@@ -2672,8 +2792,8 @@ static void cblas_tops(bm::State &state) {
     state.SetComplexityN(n);
 }
 
-BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
-BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 
 /**
  *  Eigen is a high-level C++ library for linear algebra that provides a
@@ -2711,10 +2831,10 @@ static void eigen_tops(bm::State &state) {
     state.SetComplexityN(n);
 }
 
-BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
-BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
-BENCHMARK(eigen_tops<std::int16_t>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
-BENCHMARK(eigen_tops<std::int8_t>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<std::int16_t>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<std::int8_t>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 
 /**
  *  Arm provides C language extensions for half-precision numbers, like
@@ -2726,17 +2846,17 @@ BENCHMARK(eigen_tops<std::int8_t>)->RangeMultiplier(2)->Range(8, 65536)->Complex
  */
 #if defined(__ARM_FEATURE_FP16_FML) && defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC)
 #include <arm_fp16.h>
-BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<__fp16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 #endif
 
 #if defined(__ARM_FEATURE_BF16) //! May not be defined even if `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC` is!
 #include <arm_bf16.h>
-BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<__bf16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 #endif
 
-#if defined(__AVX512FP16__)
+#if defined(__AVX512FP16__) //! With NVCC, we have to use `half`
 #include <immintrin.h>
-BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity(benchmark::oNCubed);
+BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 #endif
 
 /**
@@ -2772,7 +2892,7 @@ BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 65536)->Complexity
  *  enough.
  */
 
-#if defined(__CUDACC__)
+#if _LESS_SLOW_WITH_CUDA
 #include <cublas_v2.h>
 
 /**
@@ -2809,14 +2929,19 @@ class unified_array {
     std::size_t size() const noexcept { return size_; }
 };
 
-template <typename scalar_type_>
+template <typename>
+struct dependent_false : std::false_type {};
+
+template <typename input_scalar_type_, typename output_scalar_type_ = input_scalar_type_>
 static void cublas_tops(bm::State &state) {
     // Matrix size and leading dimensions
     std::size_t n = static_cast<std::size_t>(state.range(0));
     int lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
+    constexpr bool same_type = std::is_same_v<input_scalar_type_, output_scalar_type_>;
 
     // Unified memory for large matrices
-    unified_array<scalar_type_> a(n * n), b(n * n), c(n * n);
+    unified_array<input_scalar_type_> a(n * n), b(n * n);
+    unified_array<output_scalar_type_> c(n * n);
 
     // With unified memory, we don't even need Thrust to initialize the data
     std::iota(a.begin(), a.end(), 0);
@@ -2830,28 +2955,28 @@ static void cublas_tops(bm::State &state) {
     // Perform the GEMM operation
     // https://docs.nvidia.com/cuda/cublas/#cublas-t-gemm
     for (auto _ : state) {
-        if constexpr (std::is_same_v<scalar_type_, float>) {
-            scalar_type_ alpha = 1, beta = 0;
+        if constexpr (std::is_same_v<input_scalar_type_, float> && same_type) {
+            input_scalar_type_ alpha = 1, beta = 0;
             cublasSgemm(                                   //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
                 &beta, c.begin(), ldc);
         }
-        else if constexpr (std::is_same_v<scalar_type_, double>) {
-            scalar_type_ alpha = 1, beta = 0;
+        else if constexpr (std::is_same_v<input_scalar_type_, double> && same_type) {
+            input_scalar_type_ alpha = 1, beta = 0;
             cublasDgemm(                                   //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
                 &beta, c.begin(), ldc);
         }
-        else if constexpr (std::is_same_v<scalar_type_, __half>) {
-            scalar_type_ alpha = 1, beta = 0;
+        else if constexpr (std::is_same_v<input_scalar_type_, __half> && same_type) {
+            input_scalar_type_ alpha = 1, beta = 0;
             cublasHgemm(                                   //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
                 &beta, c.begin(), ldc);
         }
-        else if constexpr (std::is_same_v<scalar_type_, int8_t>) {
+        else if constexpr (std::is_same_v<input_scalar_type_, int8_t> && std::is_same_v<output_scalar_type_, int32_t>) {
             // Scaling factors must correspond to the accumulator type
             // https://docs.nvidia.com/cuda/cublas/#cublasgemmex
             int32_t alpha_int = 1, beta_int = 0;
@@ -2862,6 +2987,15 @@ static void cublas_tops(bm::State &state) {
                 &beta_int, c.begin(), CUDA_R_32I, ldc,     //
                 CUDA_R_32I, CUBLAS_GEMM_DEFAULT);
         }
+        // Trigger a compile-time error for unsupported type combinations
+        else {
+            static_assert(dependent_false<input_scalar_type_>::value,
+                          "Unsupported combination of input and output types for cuBLAS");
+        }
+
+        // Synchronize to ensure that the GEMM call completes before timing stops.
+        // Otherwise 10'000 calls will be scheduled and we will block forever until all complete!
+        cudaDeviceSynchronize();
     }
 
     std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
@@ -2873,11 +3007,39 @@ static void cublas_tops(bm::State &state) {
 }
 
 // Register benchmarks
-BENCHMARK(cublas_tops<float>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublas_tops<double>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublas_tops<__half>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublas_tops<int8_t>)->RangeMultiplier(2)->Range(8, 1024)->Complexity(benchmark::oNCubed);
-#endif // defined(__CUDACC__)
+BENCHMARK(cublas_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<__half>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+
+/**
+ *  Here are the numbers one can expect on a Nvidia H200 GPUs:
+ *
+ *                    Datasheet    MMA kernels  cuBLAS
+ *
+ *  - `f64`           @b 67 T      @b 3.3 T     @b 60 T
+ *  - `f32`           @b 67 T      @b 51 T      @b 49 T
+ *  - `tf32`          @b 500 T     @b 21 T      -
+ *  - `bf16`          @b 1'000 T   @b 51 T      -
+ *  - `f16`           @b 1'000 T   -            @b 764 T
+ *  - `i8` & `u8`     @b 2'000 T   -            @b 122 T
+ *  - `b1` XOR-based  -            @b 39 T      -
+ *  - `b1` AND-based  -            @b 143 T     -
+ *
+ *  For comparison, on AMD MI 300X accelerators:
+ *  - 80 T arithmetic and 160 T matrix multiplications for `f64`.
+ *  - 160 T arithmetic and matrix multiplications for `f32`.
+ *  - 1.3 P matrix multiplications for `bf16` & `f16` into `f32`.
+ *  - 2.6 P matrix multiplications for `i8` & `f8`.
+ *
+ *  On Nvidia GB200 super-chip with 1 Grace CPU and 2 Blackwell GPUs:
+ *  - 90 T for `f64` matrix multiplications.
+ *  - 90 T for `f64` arithmetic and 180 T for `f32` arithmetic.
+ *  - 5 P for 19-bit `tf32` matrix multiplications into `f32`.
+ *  - 10 P for `i8` matrix multiplications into `i32`.
+ */
+
+#endif // _LESS_SLOW_WITH_CUDA
 
 #pragma endregion // Memory Bound Linear Algebra
 
@@ -2997,7 +3159,7 @@ static void pipeline_cpp11_std_function(bm::State &state) {
 
 BENCHMARK(pipeline_cpp11_std_function);
 
-#if defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine) && !defined(__NVCC__)
+#if defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine)
 /**
  *  C++20 introduces @b coroutines in the language, but not in the library,
  *  so we need to provide a minimal implementation of a "generator" class.
@@ -3134,7 +3296,7 @@ BENCHMARK(pipeline_cpp20_coroutine<cppcoro_generator_t>);
 BENCHMARK(pipeline_cpp20_coroutine<cppcoro_recursive_generator_t>);
 
 #pragma endregion // Coroutines and Asynchronous Programming
-#endif            // defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine) && !defined(__NVCC__)
+#endif            // defined(__cpp_lib_coroutine) && defined(__cpp_impl_coroutine)
 
 #pragma region Ranges and Iterators
 #if defined(__cpp_lib_ranges)
@@ -3681,7 +3843,6 @@ void parse_stl(bm::State &state, std::string_view config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
-#if !defined(__NVCC__)
 /**
  *  The STL's `std::ranges::views::split` won't compile with a predicate lambda,
  *  but Eric Niebler's `ranges-v3` library has a `ranges::view::split_when` that does.
@@ -3726,8 +3887,6 @@ void parse_ranges(bm::State &state, std::string_view config_text) {
     state.counters["pairs/s"] = bm::Counter(pairs, bm::Counter::kIsRate);
 }
 
-#endif // !defined(__NVCC__)
-
 #include <stringzilla/stringzilla.hpp>
 
 void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
@@ -3762,9 +3921,7 @@ void parse_sz(bm::State &state, std::string_view config_text) {
 }
 
 BENCHMARK_CAPTURE(parse_stl, short_, short_config_text)->MinTime(2);
-#if !defined(__NVCC__)
 BENCHMARK_CAPTURE(parse_ranges, short_, short_config_text)->MinTime(2);
-#endif
 BENCHMARK_CAPTURE(parse_sz, short_, short_config_text)->MinTime(2);
 
 /**
@@ -3812,9 +3969,7 @@ monitoring_dashboard_url_for_production_insights: https://dashboard.company.com/
 )";
 
 BENCHMARK_CAPTURE(parse_stl, long_, long_config_text)->MinTime(2);
-#if !defined(__NVCC__)
 BENCHMARK_CAPTURE(parse_ranges, long_, long_config_text)->MinTime(2);
-#endif
 BENCHMARK_CAPTURE(parse_sz, long_, long_config_text)->MinTime(2);
 
 /**
@@ -6730,7 +6885,7 @@ class rpc_uring60_client {
 
             // Prepare send operation
             auto *submitted_entry = io_uring_get_sqe(&ring_);
-            io_uring_prep_sendmsg_zc(submitted_entry, socket_descriptor_, &message.header, MSG_WAITALL);
+            io_uring_prep_sendmsg(submitted_entry, socket_descriptor_, &message.header, MSG_WAITALL);
             io_uring_sqe_set_data(submitted_entry, &message);
             //? We could also use `IOSQE_CQE_SKIP_SUCCESS` here.
             //? In that case the State Machine below would be simpler,
@@ -6832,6 +6987,7 @@ BENCHMARK_CAPTURE(rpc_uring60, public, networking_route_t::public_k, 256 /* mess
 #pragma endregion // IO Uring
 
 #pragma region ASIO
+#if 0
 #include <asio.hpp>
 
 class rpc_asio_server {
@@ -6990,6 +7146,7 @@ BENCHMARK_CAPTURE(rpc_asio, public, networking_route_t::public_k, 256 /* message
     ->UseManualTime()
     ->Unit(benchmark::kMicrosecond);
 
+#endif
 #pragma endregion // ASIO
 
 #pragma endregion // - Networking and Databases

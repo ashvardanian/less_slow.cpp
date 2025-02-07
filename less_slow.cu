@@ -16,11 +16,11 @@
  *  - TODO: How to schedule advanced computational graphs on GPUs?
  *    A.k.a. CUDA streams vs Graph Node API vs Cooperative Groups?
  *
- *  To compile this file, dump the SASS code, and check for Tensor Cores usage
- *  on Volta SM70 GPUs, use the following commands:
+ *  To compile this file, dump the SASS code, and check for Tensor Cores
+ *  usage on Volta SM70 GPUs, use the following commands:
  *
- *  $ nvcc -arch=sm_90 -Xptxas -v -lineinfo -ptx -o less_slow_from_cu.ptx less_slow.cu
- *  $ nvcc -arch=sm_90 -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
+ *  $ nvcc -arch=sm_90a -Xptxas -v -lineinfo -ptx -o less_slow_from_cu.ptx less_slow.cu
+ *  $ nvcc -arch=sm_90a -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
  *  $ cuobjdump -sass less_slow_from_cu.cubin | grep -i mma
  *
  *  Keep in mind the following TC generations:
@@ -28,11 +28,11 @@
  *  - Volta SM70: 1st generation of TCs, server V100 cards.
  *  - Turing SM75: 2nd generation of TCs, consumer RTX 30 cards.
  *  - Ampere SM80: 3rd generation of TCs, server A100 cards.
- *  - Ada Lovelace SM89: 4th generation of TCs, consumer RTX 40 cards.
- *  - Hopper SM90: 5th generation of TCs, server H100 cards.
+ *  - Hopper SM90: 4th generation of TCs, server H100 cards.
+ *  - Blackwell SM100: 5th generations of TCs, server B200 cards.
  *
- *  Looking at server-side V100, A100, and H100 GPUs, most features are
- *  identical, except for @b shared-memory size and TCs:
+ *  Looking at server-side V100, A100, and H100 GPUs, most features
+ *  are identical, except for @b shared-memory size and TCs:
  *
  *    Feature                              | V100     | A100     | H100
  *    -------------------------------------|----------|----------|----------
@@ -52,15 +52,19 @@
  *    -------------------------------------|----------|----------|----------
  *    Ratio of SM Registers to FP32 Cores  | 1024     | 1024     | 512
  *    Shared Memory Size / SM              | ≤ 96 KB  | ≤ 164 KB | ≤ 228 KB
- *    Tensor Core Generation               | 1st      | 3rd      | 5th
+ *    Tensor Core Generation               | 1st      | 3rd      | 4th
  *
  */
 #include <cstdint> // `std::uint8_t`
+
 #if (__CUDA_ARCH__ >= 700)
 #include <cuda_fp16.h> // `half` type
 #endif
 #if (__CUDA_ARCH__ >= 750)
 #include <cuda_bf16.h> // `__nv_bfloat16` type
+#endif
+#if (__CUDA_ARCH__ >= 900)
+#include <cuda_fp8.h> // `__nv_fp8*` types
 #endif
 
 template <typename scalar_type_, std::size_t side_>
@@ -83,6 +87,45 @@ small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda( //
             for (std::size_t k = 0; k != side_; ++k) c.scalars[i][j] += a.scalars[i][k] * b.scalars[k][j];
     return c;
 }
+
+#include <thrust/sort.h> // `thrust::sort`
+
+void reverse_and_sort_with_thrust(std::uint32_t *device_pointer, std::size_t array_length) {
+    // Assuming we don't use the `thrust::device_vector` iterators, we need to pass
+    // the execution policy separately to enforce the GPU backend over the CPU.
+    thrust::reverse(thrust::device, device_pointer, device_pointer + array_length);
+    thrust::sort(thrust::device, device_pointer, device_pointer + array_length);
+}
+
+#include <cub/cub.cuh> // `cub::DeviceRadixSort`
+
+std::size_t reverse_and_sort_with_cub_space(std::uint32_t *device_pointer, std::size_t array_length) {
+    std::size_t temporary_bytes = 0;
+    cub::DeviceRadixSort::SortKeys(     //
+        NULL, temporary_bytes,          // temporary memory and its size
+        device_pointer, device_pointer, // "in" and "out" arrays
+        array_length                    // number of elements and optional parameters
+    );
+    return temporary_bytes;
+}
+
+void reverse_and_sort_with_cub(std::uint32_t *device_pointer, std::size_t array_length, void *temporary_pointer,
+                               std::size_t temporary_bytes, cudaStream_t stream) {
+    // CUB has no reversal kernel. So to schedule the Thrust and CUB operations
+    // on the same CUDA `stream`, we need to wrap it into a "policy" object.
+    auto policy = thrust::cuda::par.on(stream);
+
+    thrust::reverse(policy, device_pointer, device_pointer + array_length);
+    cub::DeviceRadixSort::SortKeys(          //
+        temporary_pointer, temporary_bytes,  // temporary memory and its size
+        device_pointer, device_pointer,      // "in" and "out" arrays pin to same memory
+        array_length,                        // number of elements
+        0, sizeof(std::uint32_t) * CHAR_BIT, // begin and end bit positions
+        stream                               // CUDA stream
+    );
+}
+
+#pragma region Numerics
 
 /**
  *  Starting with Nvidia Volta GPUs, specialized "Tensor Cores" @b (TC) are
@@ -112,18 +155,18 @@ small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda( //
  *  ! HMMA.884.F32.F32.STEP2 R8, R2.reuse.ROW, R2.reuse.COL, R8
  *
  *  Unpacking it:
- *  - HMMA stands for Half-precision Matrix Multiply & Accumulate.
- *  - 884 stands for the 8x8x4 shape of the matrix multiplication.
- *  - F32.F32 defines the multiplication and accumulation precision.
- *  - STEPx denotes the stage of the computation for a specific tile, where
+ *  - @b HMMA stands for Half-precision Matrix Multiply & Accumulate.
+ *  - @b 884 stands for the 8x8x4 shape of the matrix multiplication.
+ *  - @b F32.F32 defines the multiplication and accumulation precision.
+ *  - @b STEPx denotes the stage of the computation for a specific tile, where
  *    each HMMA instruction contributes to completing a part of the final
  *    result. In our case we will get 4 STEPs, repeated 4 times, for a
  *    total of 16x HMMA instructions per WMMA intrinsic.
  *
  *  For optimal usage of Tensor Cores:
- *  - Ensure your matrix dimensions are multiples of the tile size (8x8x4 on Volta).
+ *  - Ensure your matrix dimensions are multiples of the tile size .
  *  - Use shared memory efficiently to reduce global memory accesses.
- *  - Properly align input and output matrices in memory (128-byte alignment).
+ *  - Properly align input and output matrices in memory to 128 bytes.
  *
  *  @see Supported numeric types until Ampere SM80:
  *       https://docs.nvidia.com/cuda/ampere-tuning-guide/index.html#improved-tensor-core-operations
@@ -157,7 +200,7 @@ __device__ inline void tops_tc_cuda_kernel() {
     if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_frag, 16, wmma::mem_row_major);
 }
 
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) //? Binary Matrices require SM75 or higher
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) //? Binary matrices require SM75 or higher
 
 /**
  *  To process binary matrices we can't rely on addition and multiplication.
@@ -274,8 +317,7 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
  *    a known @b structured sparsity pattern. Those are handy when you have
  *    a portion X of Y consecutive cells equal to zero. X and Y are generally
  *    set to 2 and 4, respectively, for a "2:4" pattern.
- *  - @b WGMMA or Warp-Group MMA operates on 4 contiguous warps, forming 128
- *    contiguous threads, generalizing the original MMA in 2 ways:
+ *  - @b WGMMA or Warp-Group MMA generalizes the original MMA in 2 ways:
  *
  *    1. They can be asynchronous, for more flexible scheduling.
  *    2. They can avoid accumulation, a.k.a $C = A * B$, not $C += A * B$.
@@ -288,8 +330,74 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
  *  ! {wgmma.mm_async.sync.aligned}.{m64n64k16}.{f32.f16.f16} { ........ },{ .... }
  *  ? {     much longer header    }.{  shape  }.{   types   } { operands },{ args }
  *
+ *  Not only the signature and "fragment" sizes differ, but also the scheduling
+ *  approach has changed between Ampere and Hopper once again:
+ *
+ *  1. Pre-Volta fast kernels would individually invoke FMA instructions.
+ *  2. Volta's HMMA instruction synchronizes a group of @b 8 threads called
+ *     a @b "quadpair" (QP) to share data and perform an 8x8x4.
+ *  3. Ampere synchronizes all the threads in the warp, typically @b 32.
+ *  4. Hopper synchronizes 4 continuous warps, typically @b 128 threads.
+ *
+ *  Moreover, unlike the CPU, on the GPU, we can't expect the old instructions
+ *  to perform well - there can be a significant performance penalty if you
+ *  don't upgrade your PTX!
+ *
+ *  To simplify the logic of higher-level Linear Algebra libraries, wrapper
+ *  templates from @b CUTLASS can be used. It has a smaller component called
+ *  @b CuTe, that wraps different kinds of MMA "atoms" - primitive kernel
+ *  templates. Just for Hopper alone, there is @b 10'000 lines of different
+ *  supported shape instantiations in @b `mma_sm90.hpp`.
+ *
+ *  We can use CuTe to abstract away the right instructions, by defining small
+ *  shared memory matrices and performing such repeated "atom" instantiations.
+ *
  *  @see "Fast Matrix-Multiplication with WGMMA on NVIDIA Hopper GPUs" by Colfax:
  *       https://research.colfax-intl.com/cutlass-tutorial-wgmma-hopper/
  *  @see "Outperforming cuBLAS on H100: a Worklog" by Pranjal Shankhdhar:
  *       https://cudaforfun.substack.com/p/outperforming-cublas-on-h100-a-worklog
+ *  @see CUTLASS updates: https://github.com/NVIDIA/cutlass/blob/main/CHANGELOG.md
+ *  @see CUTLASS GEMM API: https://github.com/NVIDIA/cutlass/blob/main/media/docs/gemm_api.md
+ *  @see "Deep Dive on CUTLASS Ping-Pong GEMM Kernel" by PyTorch:
+ *       https://pytorch.org/blog/cutlass-ping-pong-gemm-kernel/
+ *  @see Minimal SM90 WGMMA + TMA GEMM example in 100 lines in CUTLASS 3.5.1:
+ *       https://github.com/NVIDIA/cutlass/blob/main/examples/cute/tutorial/wgmma_sm90.cu
+ *  @see "Blackwell Cluster Launch Control" in CUTLASS docs:
+ *       https://github.com/NVIDIA/cutlass/blob/main/media/docs/blackwell_cluster_launch_control.md
  */
+
+#if 0
+#pragma region CuTe
+#include <cute/tensor.hpp>
+#include <cute/arch/mma.hpp>
+
+__global__ void cute_example() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+    using namespace cute;
+
+    // Create tensors with appropriate layouts
+    auto A = make_tensor<half>(Shape<_16, _8> {});  // 16x8 matrix
+    auto B = make_tensor<half>(Shape<_8, _8> {});   // 8x8 matrix
+    auto C = make_tensor<float>(Shape<_16, _8> {}); // 16x8 matrix for accumulation
+    auto D = make_tensor<float>(Shape<_16, _8> {}); // Output tensor
+
+    // Define MMA traits for fp16 input, fp32 output
+    using MMA = SM90_16x8x8_F32F16F16F32_TT; // TN means A is transposed, B is not
+    auto mma = make_tiled_mma(MMA {});
+
+    // Create a thread-specific MMA slice
+    auto thread_mma = mma.get_slice(threadIdx.x);
+
+    // Get partitioned fragments for this thread
+    auto frag_A = thread_mma.partition_fragment_A(A);
+    auto frag_B = thread_mma.partition_fragment_B(B);
+    auto frag_C = thread_mma.partition_fragment_C(C);
+    auto frag_D = thread_mma.partition_fragment_C(D);
+
+    // Execute MMA operation
+    thread_mma(frag_D, frag_A, frag_B, frag_C);
+#endif
+}
+
+#pragma endregion // CuTe
+#endif
