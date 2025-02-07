@@ -54,9 +54,10 @@ If you are familiar with C++ and want to review code and measurements as you rea
 git clone https://github.com/ashvardanian/less_slow.cpp.git # Clone the repository
 cd less_slow.cpp                                            # Change the directory
 
-sudo apt-get install build-essential cmake g++              # Install default build tools
-sudo apt-get install pkg-config liburing-dev                # Install liburing for kernel-bypass
-sudo apt-get install libopenblas-base                       # Install numerics libraries
+pip install cmake --upgrade                                 # PyPI has a newer version of CMake
+sudo apt-get install -y build-essential g++                 # Install default build tools
+sudo apt-get install -y pkg-config liburing-dev             # Install liburing for kernel-bypass
+sudo apt-get install -y libopenblas-base                    # Install numerics libraries
 
 cmake -B build_release -D CMAKE_BUILD_TYPE=Release          # Generate the build files
 cmake --build build_release --config Release                # Build the project
