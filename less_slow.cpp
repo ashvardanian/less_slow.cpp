@@ -6991,7 +6991,6 @@ BENCHMARK_CAPTURE(rpc_uring60, public, networking_route_t::public_k, 256 /* mess
 #pragma endregion // IO Uring
 
 #pragma region ASIO
-#if 0
 #include <asio.hpp>
 
 class rpc_asio_server {
@@ -7150,7 +7149,6 @@ BENCHMARK_CAPTURE(rpc_asio, public, networking_route_t::public_k, 256 /* message
     ->UseManualTime()
     ->Unit(benchmark::kMicrosecond);
 
-#endif
 #pragma endregion // ASIO
 
 #pragma endregion // - Networking and Databases
