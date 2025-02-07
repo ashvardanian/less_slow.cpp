@@ -2288,6 +2288,12 @@ BENCHMARK_CAPTURE(                                                              
     64, 256, 8, 1024, 90)
     ->MinTime(10);
 
+BENCHMARK_CAPTURE(                                                                //
+    theoretic_tops_ptx, b1b1and_sm90tc_wgmma,                                     //
+    "less_slow_sm90a.ptx", "tops_b1b1and_sm90tc_m64n256k256_1024loop_ptx_kernel", //
+    64, 256, 256, 1024, 90)
+    ->MinTime(10);
+
 /**
  *  The results on H200 are quite interesting.
  *
