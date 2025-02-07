@@ -6,6 +6,7 @@ build_release/
 .DS_Store
 
 # Temporary binaries
+/tmp/
 less_slow_from_ptx.cubin
 less_slow_from_cu.cubin
 less_slow_from_cu.ptx

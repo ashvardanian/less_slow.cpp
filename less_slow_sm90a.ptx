@@ -42,7 +42,7 @@
  *  explicitly naming them! We can also explicitly define them as `.f16x2` to
  *  constrain the registers to packed half-precision pairs.
  */
-.visible .entry tops_f16f16_sm90tc_16x16x16_1024loop_ptx_kernel()
+.visible .entry tops_f16f16_sm90tc_16x16x16_loop128_ptx_kernel()
 {
     // Accumulator registers used for both input and output of the MMA operation
     // https://docs.nvidia.com/cuda/parallel-thread-execution/#parameterized-variable-names
@@ -62,7 +62,7 @@
 
     // Set up loop counter and loop limit
     mov.u32 loop_counter, 0;
-    mov.u32 loop_limit, 1024;
+    mov.u32 loop_limit, 128;
 
     // Zero-initialize the accumulators, as registers may contain noise
     // https://docs.nvidia.com/cuda/parallel-thread-execution/#state-spaces
@@ -94,7 +94,7 @@
     mov.b32 matrix_b6, packed_const;
     mov.b32 matrix_b7, packed_const;
 
-    // The main loop will repeat for 1024 iterations
+    // The main loop will repeat for 128 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
     @exit_predicate bra loop_exit;
@@ -135,7 +135,7 @@ loop_exit:
  *  just 8x8x4 for `sm_80` or higher.
  */
 
-.visible .entry tops_f64f64_sm90tc_8x8x4_1024loop_ptx_kernel()
+.visible .entry tops_f64f64_sm90tc_8x8x4_loop128_ptx_kernel()
 {
     // Registers to hold matrix A and B operands (each a single f64)
     .reg .f64 matrix_a, matrix_b;
@@ -151,7 +151,7 @@ loop_exit:
 
     // Set up loop counter and loop limit
     mov.u32 loop_counter, 0;
-    mov.u32 loop_limit, 1024;
+    mov.u32 loop_limit, 128;
 
     // Zero-initialize the accumulator registers
     mov.f64 accum0, 0.0;
@@ -165,7 +165,7 @@ loop_exit:
     mov.f64 bias0, 0.0;
     mov.f64 bias1, 0.0;
 
-    // The main loop will repeat for 1024 iterations
+    // The main loop will repeat for 128 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
     @exit_predicate bra loop_exit;
@@ -209,7 +209,7 @@ loop_exit:
  *  is confusingly 19 bits wide! The synchronous variant would look familiar:
  */
 
- .visible .entry tops_tf32f32_sm90tc_16x16x8_1024loop_ptx_kernel()
+ .visible .entry tops_tf32f32_sm90tc_16x16x8_loop128_ptx_kernel()
 {
     // Accumulator registers used for both input and output of the MMA operation
     .reg .b32 accum<8>;
@@ -228,7 +228,7 @@ loop_exit:
 
     // Set up loop counter and loop limit
     mov.u32 loop_counter, 0;
-    mov.u32 loop_limit, 1024;
+    mov.u32 loop_limit, 128;
 
     // Zero-initialize the accumulator registers
     mov.f32 accum0, 0.0;
@@ -251,7 +251,7 @@ loop_exit:
     mov.b32 matrix_b0, packed_const;
     mov.b32 matrix_b1, packed_const;
 
-    // The main loop will repeat for 1024 iterations
+    // The main loop will repeat for 128 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
     @exit_predicate bra loop_exit;
@@ -325,7 +325,7 @@ loop_exit:
  *  The `scale` parameters can be used to either negate the inputs, or disable
  *  additive bias accumulation in the output.
  */
-.visible .entry tops_tf32f32_sm90tc_m64n16k8_1024loop_ptx_kernel()
+.visible .entry tops_tf32f32_sm90tc_m64n16k8_loop128_ptx_kernel()
 {
     // Accumulator registers used for both input and output of this MMA
     .reg .f32 accum<8>;
@@ -341,7 +341,7 @@ loop_exit:
 
     // Set up loop counter and loop limit
     mov.u32 loop_counter, 0;
-    mov.u32 loop_limit, 1024;
+    mov.u32 loop_limit, 128;
 
     // Zero-initialize the accumulator registers
     mov.f32 accum0, 0.0;
@@ -354,13 +354,13 @@ loop_exit:
     mov.f32 accum7, 0.0;
 
     // Initialize matrix descriptors with arbitrary placeholder values
-    mov.u64 desc_a, 0x0000000000000001;
-    mov.u64 desc_b, 0x0000000000000001;
+    mov.u64 desc_a, 0x0000000000000000;
+    mov.u64 desc_b, 0x0000000000000000;
 
     // Enforce the ordered for Warp-Group instructions
     wgmma.fence.sync.aligned;
 
-    // The main loop will repeat for 1024 iterations
+    // The main loop will repeat for 128 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
     @exit_predicate bra loop_exit;
@@ -401,7 +401,7 @@ loop_exit:
  *  dimension from 16 to 256? It would require 128 accumulators.
  */
 
-.visible .entry tops_tf32f32_sm90tc_m64n256k8_1024loop_ptx_kernel()
+.visible .entry tops_tf32f32_sm90tc_m64n256k8_loop128_ptx_kernel()
 {
     // Accumulator registers used for both input and output of this MMA
     .reg .f32 accum<128>;
@@ -454,13 +454,13 @@ loop_exit:
     mov.f32 accum124, 0.0; mov.f32 accum125, 0.0; mov.f32 accum126, 0.0; mov.f32 accum127, 0.0;
     
     // Initialize matrix descriptors with arbitrary placeholder values
-    mov.u64 desc_a, 0x0000000000000001;
-    mov.u64 desc_b, 0x0000000000000001;
+    mov.u64 desc_a, 0x0000000000000000;
+    mov.u64 desc_b, 0x0000000000000000;
 
     // Enforce the ordered for Warp-Group instructions
     wgmma.fence.sync.aligned;
 
-    // The main loop will repeat for 1024 iterations
+    // The main loop will repeat for 128 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
     @exit_predicate bra loop_exit;
@@ -518,7 +518,7 @@ loop_exit:
  *  dimension by 2x, making the instructions no more usable for small matrices.
  */
 
-.visible .entry tops_b1i32and_sm90tc_m64n256k256_1024loop_ptx_kernel()
+.visible .entry tops_b1i32and_sm90tc_m64n256k256_loop128_ptx_kernel()
 {
     // Accumulator registers used for both input and output of the MMA operation
     .reg .s32 accum<128>;
@@ -534,7 +534,7 @@ loop_exit:
 
     // Set up loop counter and loop limit
     mov.u32 loop_counter, 0;
-    mov.u32 loop_limit, 1024;
+    mov.u32 loop_limit, 128;
 
     // Zero-initialize the accumulators, as registers may contain noise
     mov.s32 accum0,  0;  mov.s32 accum1,  0;  mov.s32 accum2,  0;  mov.s32 accum3,  0;
@@ -572,8 +572,8 @@ loop_exit:
 
     // Initialize matrix descriptors with arbitrary placeholder values.
     // In practice, these would be set to point to shared-memory regions containing your matrices.
-    mov.u64 desc_a, 0x0000000000000001;
-    mov.u64 desc_b, 0x0000000000000001;
+    mov.u64 desc_a, 0x0000000000000000;
+    mov.u64 desc_b, 0x0000000000000000;
 
     // Initialize scale flag (controls operand scaling or additive bias behavior)
     mov.pred scale_d, 1;
@@ -581,7 +581,7 @@ loop_exit:
     // Enforce the ordered for Warp-Group instructions
     wgmma.fence.sync.aligned;
 
-    // The main loop will repeat for 1024 iterations
+    // The main loop will repeat for 128 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
     @exit_predicate bra loop_exit;

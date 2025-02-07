@@ -37,7 +37,7 @@
 .target sm_70            // Target architecture (SM 7.0 - Volta GPUs)
 .address_size 64         // 64-bit addressing
 
-.visible .entry tops_f16f16_sm70tc_16x16x16_1024loop_ptx_kernel()
+.visible .entry tops_f16f16_sm70tc_16x16x16_loop128_ptx_kernel()
 {
     // Accumulator registers used for both input and output of the MMA operation
     .reg .b32 accum_0, accum_1, accum_2, accum_3;
@@ -58,7 +58,7 @@
 
     // Set up loop counter and loop limit
     mov.u32 loop_counter, 0;
-    mov.u32 loop_limit, 1024;
+    mov.u32 loop_limit, 128;
 
     // Zero-initialize the accumulator registers
     mov.f32 accum_0, 0.0;
@@ -89,7 +89,7 @@
     mov.b32 matrix_b_6, packed_const;
     mov.b32 matrix_b_7, packed_const;
 
-    // The main loop will repeat for 1024 iterations
+    // The main loop will repeat for 128 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
     @exit_predicate bra loop_end;

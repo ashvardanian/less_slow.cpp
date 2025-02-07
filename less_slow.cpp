@@ -2080,53 +2080,53 @@ static void theoretic_tops_cuda(                   //
     state.counters["TOP"] = benchmark::Counter(tops_per_gpu * state.iterations(), benchmark::Counter::kIsRate);
 }
 
-extern __global__ void tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel();
-extern __global__ void tops_f16f32_sm70tc_16x16x16_1024unroll_cuda_kernel();
+extern __global__ void tops_f16f16_sm70tc_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_f16f32_sm70tc_16x16x16_loop128_cuda_kernel();
 
-extern __global__ void tops_u8i32_sm75tc_16x16x16_1024unroll_cuda_kernel();
-extern __global__ void tops_u4i32_sm75tc_8x8x32_1024unroll_cuda_kernel();
-extern __global__ void tops_b1i32xor_sm75tc_8x8x128_1024unroll_cuda_kernel();
+extern __global__ void tops_u8i32_sm75tc_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_u4i32_sm75tc_8x8x32_loop128_cuda_kernel();
+extern __global__ void tops_b1i32xor_sm75tc_8x8x128_loop128_cuda_kernel();
 
-extern __global__ void tops_bf16f32_sm80tc_16x16x16_1024unroll_cuda_kernel();
-extern __global__ void tops_tf32f32_sm80tc_16x16x8_1024unroll_cuda_kernel();
-extern __global__ void tops_f64f64_sm80tc_8x8x4_1024unroll_cuda_kernel();
-extern __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel();
+extern __global__ void tops_bf16f32_sm80tc_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_tf32f32_sm80tc_16x16x8_loop128_cuda_kernel();
+extern __global__ void tops_f64f64_sm80tc_8x8x4_loop128_cuda_kernel();
+extern __global__ void tops_b1i32and_sm80tc_8x8x128_loop128_cuda_kernel();
 
-BENCHMARK_CAPTURE(                                                                          //
-    theoretic_tops_cuda, f16f16_sm70tc, tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel, //
-    16, 16, 16, 1024, 70)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                          //
-    theoretic_tops_cuda, f16f32_sm70tc, tops_f16f32_sm70tc_16x16x16_1024unroll_cuda_kernel, //
-    16, 16, 16, 1024, 70)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                        //
-    theoretic_tops_cuda, u8i32_sm75tc, tops_u8i32_sm75tc_16x16x16_1024unroll_cuda_kernel, //
-    16, 16, 16, 1024, 75)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                      //
-    theoretic_tops_cuda, u4i32_sm75tc, tops_u4i32_sm75tc_8x8x32_1024unroll_cuda_kernel, //
-    8, 8, 32, 1024, 75)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                             //
-    theoretic_tops_cuda, b1i32xor_sm75tc, tops_b1i32xor_sm75tc_8x8x128_1024unroll_cuda_kernel, //
-    8, 8, 128, 1024, 75)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                            //
-    theoretic_tops_cuda, bf16f32_sm80tc, tops_bf16f32_sm80tc_16x16x16_1024unroll_cuda_kernel, //
-    16, 16, 16, 1024, 80)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                           //
-    theoretic_tops_cuda, tf32f32_sm80tc, tops_tf32f32_sm80tc_16x16x8_1024unroll_cuda_kernel, //
-    16, 16, 8, 1024, 80)
+BENCHMARK_CAPTURE(                                                                       //
+    theoretic_tops_cuda, f16f16_sm70tc, tops_f16f16_sm70tc_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 128, 70)
     ->MinTime(10);
 BENCHMARK_CAPTURE(                                                                       //
-    theoretic_tops_cuda, f64f64_sm80tc, tops_f64f64_sm80tc_8x8x4_1024unroll_cuda_kernel, //
-    8, 8, 4, 1024, 80)
+    theoretic_tops_cuda, f16f32_sm70tc, tops_f16f32_sm70tc_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 128, 70)
     ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                             //
-    theoretic_tops_cuda, b1i32and_sm80tc, tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel, //
-    8, 8, 128, 1024, 80)
+BENCHMARK_CAPTURE(                                                                     //
+    theoretic_tops_cuda, u8i32_sm75tc, tops_u8i32_sm75tc_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 128, 75)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                   //
+    theoretic_tops_cuda, u4i32_sm75tc, tops_u4i32_sm75tc_8x8x32_loop128_cuda_kernel, //
+    8, 8, 32, 128, 75)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                          //
+    theoretic_tops_cuda, b1i32xor_sm75tc, tops_b1i32xor_sm75tc_8x8x128_loop128_cuda_kernel, //
+    8, 8, 128, 128, 75)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                         //
+    theoretic_tops_cuda, bf16f32_sm80tc, tops_bf16f32_sm80tc_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 128, 80)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                        //
+    theoretic_tops_cuda, tf32f32_sm80tc, tops_tf32f32_sm80tc_16x16x8_loop128_cuda_kernel, //
+    16, 16, 8, 128, 80)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                    //
+    theoretic_tops_cuda, f64f64_sm80tc, tops_f64f64_sm80tc_8x8x4_loop128_cuda_kernel, //
+    8, 8, 4, 128, 80)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                          //
+    theoretic_tops_cuda, b1i32and_sm80tc, tops_b1i32and_sm80tc_8x8x128_loop128_cuda_kernel, //
+    8, 8, 128, 128, 80)
     ->MinTime(10);
 
 #include <filesystem>
@@ -2202,7 +2202,10 @@ static void theoretic_tops_ptx(                  //
         return;
     }
 
-    // Load the PTX file
+    // Load the PTX file and JIT it!
+    // If the compilation is taking long, consider using the `CUDA_CACHE_PATH`
+    // environment variable to cache already compiled modules:
+    // https://developer.nvidia.com/blog/cuda-pro-tip-understand-fat-binaries-jit-caching/
     result = cuModuleLoad(&module_, ptx_file.c_str());
     if (result != CUDA_SUCCESS) {
         state.SkipWithError("Failed to load PTX file: " + last_error_string());
@@ -2261,46 +2264,46 @@ static void theoretic_tops_ptx(                  //
     cuCtxDestroy(context);
 }
 
+BENCHMARK_CAPTURE(                                                          //
+    theoretic_tops_ptx, f16f16_sm70tc,                                      //
+    "less_slow_sm70.ptx", "tops_f16f16_sm70tc_16x16x16_loop128_ptx_kernel", //
+    16, 16, 16, 128, 70)
+    ->MinTime(10);
+
 BENCHMARK_CAPTURE(                                                           //
-    theoretic_tops_ptx, f16f16_sm70tc,                                       //
-    "less_slow_sm70.ptx", "tops_f16f16_sm70tc_16x16x16_1024loop_ptx_kernel", //
-    16, 16, 16, 1024, 70)
+    theoretic_tops_ptx, f16f16_sm90tc,                                       //
+    "less_slow_sm90a.ptx", "tops_f16f16_sm90tc_16x16x16_loop128_ptx_kernel", //
+    16, 16, 16, 128, 90)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                        //
+    theoretic_tops_ptx, f64f64_sm90tc,                                    //
+    "less_slow_sm90a.ptx", "tops_f64f64_sm90tc_8x8x4_loop128_ptx_kernel", //
+    8, 8, 4, 128, 90)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                           //
+    theoretic_tops_ptx, tf32f32_sm90tc,                                      //
+    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_16x16x8_loop128_ptx_kernel", //
+    16, 16, 8, 128, 90)
     ->MinTime(10);
 
 BENCHMARK_CAPTURE(                                                            //
-    theoretic_tops_ptx, f16f16_sm90tc,                                        //
-    "less_slow_sm90a.ptx", "tops_f16f16_sm90tc_16x16x16_1024loop_ptx_kernel", //
-    16, 16, 16, 1024, 90)
-    ->MinTime(10);
-
-BENCHMARK_CAPTURE(                                                         //
-    theoretic_tops_ptx, f64f64_sm90tc,                                     //
-    "less_slow_sm90a.ptx", "tops_f64f64_sm90tc_8x8x4_1024loop_ptx_kernel", //
-    8, 8, 4, 1024, 90)
-    ->MinTime(10);
-
-BENCHMARK_CAPTURE(                                                            //
-    theoretic_tops_ptx, tf32f32_sm90tc,                                       //
-    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_16x16x8_1024loop_ptx_kernel", //
-    16, 16, 8, 1024, 90)
+    theoretic_tops_ptx, tf32f32_sm90tc_wgmma_smallest,                        //
+    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n16k8_loop128_ptx_kernel", //
+    64, 16, 8, 128, 90)
     ->MinTime(10);
 
 BENCHMARK_CAPTURE(                                                             //
-    theoretic_tops_ptx, tf32f32_sm90tc_wgmma_smallest,                         //
-    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n16k8_1024loop_ptx_kernel", //
-    64, 16, 8, 1024, 90)
+    theoretic_tops_ptx, tf32f32_sm90tc_wgmma_largest,                          //
+    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n256k8_loop128_ptx_kernel", //
+    64, 256, 8, 128, 90)
     ->MinTime(10);
 
-BENCHMARK_CAPTURE(                                                              //
-    theoretic_tops_ptx, tf32f32_sm90tc_wgmma_largest,                           //
-    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n256k8_1024loop_ptx_kernel", //
-    64, 256, 8, 1024, 90)
-    ->MinTime(10);
-
-BENCHMARK_CAPTURE(                                                                 //
-    theoretic_tops_ptx, b1i32and_sm90tc_wgmma,                                     //
-    "less_slow_sm90a.ptx", "tops_b1i32and_sm90tc_m64n256k256_1024loop_ptx_kernel", //
-    64, 256, 256, 1024, 90)
+BENCHMARK_CAPTURE(                                                                //
+    theoretic_tops_ptx, b1i32and_sm90tc_wgmma,                                    //
+    "less_slow_sm90a.ptx", "tops_b1i32and_sm90tc_m64n256k256_loop128_ptx_kernel", //
+    64, 256, 256, 128, 90)
     ->MinTime(10);
 
 /**

@@ -180,7 +180,7 @@ void reverse_and_sort_with_cub(std::uint32_t *device_pointer, std::size_t array_
  *  @brief  A CUDA kernel that @b repeatedly computes the product of two small
  *          matrices of size MxN and NxK using Tensor Cores.
  */
-template <typename input_type_, typename output_type_, int m_, int n_, int k_, int repetitions_>
+template <typename input_type_, typename output_type_, int m_, int n_, int k_, int repetitions_ = 128>
 __device__ inline void tops_tc_cuda_kernel() {
     using namespace nvcuda;
     wmma::fragment<wmma::matrix_a, m_, n_, k_, input_type_, wmma::row_major> a_frag;
@@ -210,7 +210,7 @@ __device__ inline void tops_tc_cuda_kernel() {
  *
  *  @see Docs: https://docs.nvidia.com/cuda/cuda-c-programming-guide/#sub-byte-operations
  */
-template <typename input_type_, typename output_type_, int m_, int n_, int k_, int repetitions_>
+template <typename input_type_, typename output_type_, int m_, int n_, int k_, int repetitions_ = 128>
 __device__ inline void binary_tops_tc_cuda_kernel( //
     nvcuda::wmma::experimental::bmmaBitOp bit_op, nvcuda::wmma::experimental::bmmaAccumulateOp acc_op) {
     using namespace nvcuda;
@@ -225,20 +225,20 @@ __device__ inline void binary_tops_tc_cuda_kernel( //
 
 #pragma region Volta
 
-__global__ void tops_f16f16_sm70tc_16x16x16_1024unroll_cuda_kernel() {
+__global__ void tops_f16f16_sm70tc_16x16x16_loop128_cuda_kernel() {
     //? On Volta: 8x8x4.
     //? On Turing: 8x8x4 / 16x8x8 / 16x8x16.
     //? On Ampere: 16x8x8 / 16x8x16.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
-    tops_tc_cuda_kernel<half, half, 16, 16, 16, 1024>();
+    tops_tc_cuda_kernel<half, half, 16, 16, 16>();
 #endif
 }
-__global__ void tops_f16f32_sm70tc_16x16x16_1024unroll_cuda_kernel() {
+__global__ void tops_f16f32_sm70tc_16x16x16_loop128_cuda_kernel() {
     //? On Volta: 8x8x4.
     //? On Turing: 8x8x4 / 16x8x8 / 16x8x16.
     //? On Ampere: 16x8x8 / 16x8x16.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
-    tops_tc_cuda_kernel<half, float, 16, 16, 16, 1024>();
+    tops_tc_cuda_kernel<half, float, 16, 16, 16>();
 #endif
 }
 
@@ -246,27 +246,27 @@ __global__ void tops_f16f32_sm70tc_16x16x16_1024unroll_cuda_kernel() {
 
 #pragma region Turing
 
-__global__ void tops_u8i32_sm75tc_16x16x16_1024unroll_cuda_kernel() {
+__global__ void tops_u8i32_sm75tc_16x16x16_loop128_cuda_kernel() {
     //? On Turing: 8x8x16.
     //? On Ampere: 8x8x16 / 16x8x16 / 16x8x32.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750)
-    tops_tc_cuda_kernel<std::uint8_t, int32_t, 16, 16, 16, 1024>();
+    tops_tc_cuda_kernel<std::uint8_t, int32_t, 16, 16, 16>();
 #endif
 }
-__global__ void tops_u4i32_sm75tc_8x8x32_1024unroll_cuda_kernel() {
+__global__ void tops_u4i32_sm75tc_8x8x32_loop128_cuda_kernel() {
     //! The 16x16x16 won't compile, 8x8x32 will.
     //? On Turing: 8x8x32.
     //? On Ampere: 8x8x32 / 16x8x32 / 16x8x64.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750)
-    tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::u4, int32_t, 8, 8, 32, 1024>();
+    tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::u4, int32_t, 8, 8, 32>();
 #endif
 }
-__global__ void tops_b1i32xor_sm75tc_8x8x128_1024unroll_cuda_kernel() {
+__global__ void tops_b1i32xor_sm75tc_8x8x128_loop128_cuda_kernel() {
     //! The 16x16x16 won't compile, 8x8x128 will.
     //? On Turing: 8x8x128.
     //? On Ampere: 8x8x128 / 16x8x128 / 16x8x256.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750)
-    binary_tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::b1, int32_t, 8, 8, 128, 1024>(
+    binary_tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::b1, int32_t, 8, 8, 128>(
         nvcuda::wmma::experimental::bmmaBitOp::bmmaBitOpXOR,
         nvcuda::wmma::experimental::bmmaAccumulateOp::bmmaAccumulateOpPOPC);
 #endif
@@ -276,32 +276,32 @@ __global__ void tops_b1i32xor_sm75tc_8x8x128_1024unroll_cuda_kernel() {
 
 #pragma region Ampere
 
-__global__ void tops_bf16f32_sm80tc_16x16x16_1024unroll_cuda_kernel() {
+__global__ void tops_bf16f32_sm80tc_16x16x16_loop128_cuda_kernel() {
     //? On Ampere: 16x8x8 / 16x8x16.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-    tops_tc_cuda_kernel<__nv_bfloat16, float, 16, 16, 16, 1024>();
+    tops_tc_cuda_kernel<__nv_bfloat16, float, 16, 16, 16>();
 #endif
 }
-__global__ void tops_tf32f32_sm80tc_16x16x8_1024unroll_cuda_kernel() {
+__global__ void tops_tf32f32_sm80tc_16x16x8_loop128_cuda_kernel() {
     //! The 16x16x16 won't compile, 16x16x8 will.
     //? On Ampere: 16x8x4.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-    tops_tc_cuda_kernel<nvcuda::wmma::precision::tf32, float, 16, 16, 8, 1024>();
+    tops_tc_cuda_kernel<nvcuda::wmma::precision::tf32, float, 16, 16, 8>();
 #endif
 }
-__global__ void tops_f64f64_sm80tc_8x8x4_1024unroll_cuda_kernel() {
+__global__ void tops_f64f64_sm80tc_8x8x4_loop128_cuda_kernel() {
     //! The 16x16x16 won't compile, 8x8x4 will.
     //? On Ampere: 8x8x4.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-    tops_tc_cuda_kernel<double, double, 8, 8, 4, 1024>();
+    tops_tc_cuda_kernel<double, double, 8, 8, 4>();
 #endif
 }
 
-__global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
+__global__ void tops_b1i32and_sm80tc_8x8x128_loop128_cuda_kernel() {
     //! The 16x16x16 won't compile, 8x8x128 will.
     //? On Ampere: 8x8x128 / 16x8x128 / 16x8x256.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-    binary_tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::b1, int32_t, 8, 8, 128, 1024>(
+    binary_tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::b1, int32_t, 8, 8, 128>(
         nvcuda::wmma::experimental::bmmaBitOp::bmmaBitOpAND,
         nvcuda::wmma::experimental::bmmaAccumulateOp::bmmaAccumulateOpPOPC);
 #endif
