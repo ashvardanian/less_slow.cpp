@@ -6521,6 +6521,10 @@ BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* mess
 /**
  *  @brief  A minimal RPC @b server using @b `io_uring` functionality
  *          to setup the UDP socket, and process many requests concurrently.
+ *
+ *  Unlike the `rpc_uring55_server`, this version:
+ *  - registers buffers and off-loads buffer selection to the kernel
+ *  - reduces the number of receive operations, using multi-shot receive
  */
 class rpc_uring60_server {
 
@@ -6550,7 +6554,7 @@ class rpc_uring60_server {
 
         // Initialize `io_uring` with one slot for each receive/send operation
         // TODO: |= IORING_SETUP_COOP_TASKRUN | IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_SUBMIT_ALL
-        auto io_uring_setup_flags = IORING_SETUP_SQPOLL;
+        auto io_uring_setup_flags = 0;
         if (io_uring_queue_init(max_concurrency * 2, &ring_, io_uring_setup_flags) < 0)
             raise_system_error("Failed to initialize io_uring 6.0 server");
         if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
@@ -6586,18 +6590,16 @@ class rpc_uring60_server {
     void stop() noexcept { should_stop_.store(true, std::memory_order_seq_cst); }
 
     void operator()() noexcept {
-        // Submit initial receive operations
-        for (message_t &message : messages_) {
-            message.status = status_t::receiving_k;
-            memset(&message.peer_address, 0, sizeof(sockaddr_in));
+        // Submit the initial receive operation
+        {
+            message_t &message = *messages_.begin();
             struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
-            // TODO: Switch to multishot:
-            // io_uring_prep_recvmsg_multishot(receive_entry, socket_descriptor_, &message.header,
-            //                                 IOSQE_BUFFER_SELECT | IOSQE_FIXED_FILE);
-            io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &message.header, 0);
+            io_uring_prep_recvmsg_multishot(receive_entry, socket_descriptor_, &message.header, MSG_TRUNC);
+            receive_entry->flags |= IOSQE_FIXED_FILE;
+            receive_entry->flags |= IOSQE_BUFFER_SELECT;
+            receive_entry->buf_group = 0;
             io_uring_sqe_set_data(receive_entry, &message);
         }
-
         io_uring_submit(&ring_);
 
         while (!should_stop_.load(std::memory_order_seq_cst)) {
@@ -6613,6 +6615,7 @@ class rpc_uring60_server {
                 struct io_uring_sqe *send_entry = io_uring_get_sqe(&ring_);
                 message.status = status_t::sending_k;
                 io_uring_prep_sendmsg_zc(send_entry, socket_descriptor_, &message.header, 0);
+                send_entry->flags |= IOSQE_FIXED_FILE;
                 io_uring_sqe_set_data(send_entry, &message);
             }
 
@@ -6622,6 +6625,7 @@ class rpc_uring60_server {
                 message.status = status_t::receiving_k;
                 memset(&message.peer_address, 0, sizeof(sockaddr_in));
                 io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &message.header, 0);
+                receive_entry->flags |= IOSQE_FIXED_FILE;
                 io_uring_sqe_set_data(receive_entry, &message);
             }
 
@@ -6668,7 +6672,7 @@ class rpc_uring60_client {
         // Initialize io_uring with one slot for each send/receive/timeout operation,
         // as well as a batch-level timeout operation and a cancel operation for the
         // batch-level timeout.
-        auto io_uring_setup_flags = IORING_SETUP_SQPOLL;
+        auto io_uring_setup_flags = 0;
         if (io_uring_queue_init(concurrency * 3 + 1 + 1, &ring_, io_uring_setup_flags) < 0)
             raise_system_error("Failed to initialize io_uring 6.0 client");
         if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
@@ -6832,84 +6836,103 @@ BENCHMARK_CAPTURE(rpc_uring60, public, networking_route_t::public_k, 256 /* mess
 
 class rpc_asio_server {
 
-    asio::io_context &context_;
+    asio::io_context context_;
     asio::ip::udp::socket socket_;
+    std::thread context_thread_;
 
     /// @brief Buffers, one per concurrent request
     std::vector<rpc_buffer_t> buffers_;
     /// @brief Where did the packets come from
     std::vector<asio::ip::udp::endpoint> clients_;
+    /// @brief Which buffers are available?
+    std::vector<std::size_t> buffers_available_;
     /// @brief Flag to stop the server without corrupting the state
     std::atomic_bool should_stop_;
-    /// @brief Maximum time for this entire batch
-    std::chrono::microseconds max_cycle_duration_;
+    // Use a work guard so the io_context doesn’t run out of work and exit.
+    asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
 
     std::size_t failed_receptions_ = 0;
     std::size_t failed_responses_ = 0;
 
   public:
-    rpc_asio_server(                                                           //
-        asio::io_context &ctx, std::string const &address, std::uint16_t port, //
-        std::size_t max_concurrency, std::chrono::microseconds max_cycle_duration)
-        : context_(ctx), socket_(context_, asio::ip::udp::endpoint(asio::ip::make_address(address), port)),
-          buffers_(max_concurrency), clients_(max_concurrency), max_cycle_duration_(max_cycle_duration) {}
-
-    void stop() { should_stop_.store(true, std::memory_order_seq_cst); }
-
-    void operator()() {
-        while (!should_stop_.load(std::memory_order_seq_cst)) one_batch();
+    rpc_asio_server(std::string const &address, std::uint16_t port, std::size_t max_concurrency)
+        : context_(), socket_(context_), buffers_(max_concurrency), clients_(max_concurrency),
+          work_guard_(asio::make_work_guard(context_)) {
+        // Use your helper function to create and bind the native socket.
+        auto server = rpc_server_socket(port, address);
+        // Now assign the native socket to the ASIO socket.
+        socket_.assign(asio::ip::udp::v4(), server.socket_descriptor);
     }
 
-    void one_batch() {
-        // For per-operation cancellations we could use the `asio::cancellation_signal`,
-        // but this is the simple lucky case when we only want to cancel all the outstanding
-        // transfers at once.
-        std::atomic<std::size_t> remaining = 0;
-        for (std::size_t job = 0; job < buffers_.size(); ++job, ++remaining) {
-            auto finalize = [this, &remaining](std::error_code error, std::size_t) {
-                remaining--;
-                if (error) failed_responses_++;
-            };
-            auto respond = [this, job, finalize, &remaining](std::error_code error, std::size_t bytes) {
-                if (error) { remaining--; }
-                else { socket_.async_send_to(asio::buffer(buffers_[job], bytes), clients_[job], finalize); }
-            };
-            socket_.async_receive_from(asio::buffer(buffers_[job]), clients_[job], respond);
-        }
-        std::chrono::steady_clock::time_point expiry = std::chrono::steady_clock::now() + max_cycle_duration_;
-        asio::steady_timer timer(context_, expiry);
-        timer.wait();
-        if (remaining) socket_.cancel(); // Forcibly abort all ops on this socket
+    void stop() { should_stop_.store(true, std::memory_order_seq_cst); }
+    void close() {
+        socket_.cancel();
+        context_.stop();
+        if (context_thread_.joinable()) context_thread_.join();
+    }
+
+    void operator()() {
+        // For per-operation cancellations we could use the `asio::cancellation_signal`.
+        // Let's issue a receive operation for each buffer, which will call a chain of
+        // operations to process the packet and send a response, and repeat again.
+        for (std::size_t job = 0; job < buffers_.size(); ++job) reuse_buffer(job);
+        // Start listening for incoming packets.
+        context_thread_ = std::thread([this] { context_.run(); });
+    }
+
+  private:
+    void reuse_buffer(std::size_t job) {
+        auto finalize = [this, job](std::error_code error, std::size_t) {
+            if (error) failed_responses_++;
+            if (should_stop_.load(std::memory_order_seq_cst)) return;
+            reuse_buffer(job);
+        };
+        auto respond = [this, finalize, job](std::error_code error, std::size_t bytes) {
+            if (error) { reuse_buffer(job); }
+            else { socket_.async_send_to(asio::buffer(buffers_[job], bytes), clients_[job], finalize); }
+        };
+        socket_.async_receive_from(asio::buffer(buffers_[job]), clients_[job], respond);
     }
 };
 
 class rpc_asio_client {
 
-    asio::io_context &context_;
+    asio::io_context context_;
     asio::ip::udp::socket socket_;
     asio::ip::udp::endpoint server_;
+    std::thread context_thread_;
 
     /// @brief Buffers, one per concurrent request
     std::vector<rpc_buffer_t> buffers_;
     /// @brief Track the send timestamps for each slot to measure latency
     std::vector<std::chrono::steady_clock::time_point> send_times_;
-    /// @brief Maximum time for this entire batch
-    std::chrono::microseconds max_cycle_duration_;
+    // Work guard to keep the io_context running.
+    asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
 
   public:
-    rpc_asio_client(                                                               //
-        asio::io_context &ctx, std::string const &server_addr, std::uint16_t port, //
-        std::size_t concurrency, std::chrono::microseconds max_cycle_duration)
-        : context_(ctx), socket_(ctx, asio::ip::udp::endpoint(asio::ip::udp::v4(), 0)), buffers_(concurrency),
-          send_times_(concurrency), max_cycle_duration_(max_cycle_duration) {
+    rpc_asio_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
+        : context_(), socket_(context_), buffers_(concurrency), send_times_(concurrency),
+          work_guard_(asio::make_work_guard(context_)) {
 
-        // Resolve the server address
-        asio::ip::udp::resolver resolver(context_);
-        asio::ip::udp::resolver::results_type endpoints = resolver.resolve(server_addr, std::to_string(port));
-        server_ = *endpoints.begin(); // Take the first resolved endpoint
+        // Use the helper function to create the native client socket.
+        auto client = rpc_client_socket(server_addr, port);
+        // Assign the native socket to the ASIO socket.
+        socket_.assign(asio::ip::udp::v4(), client.socket_descriptor);
+        // Convert the native `sockaddr_in` from our `rpc_client_socket` to an ASIO endpoint.
+        server_ = asio::ip::udp::endpoint(                                      //
+            asio::ip::address_v4(ntohl(client.server_address.sin_addr.s_addr)), //
+            ntohs(client.server_address.sin_port));
+        // Start listening for incoming packets.
+        context_thread_ = std::thread([this] { context_.run(); });
 
         // Fill each buffer with some pattern (just 'X's, for example)
         for (auto &buf : buffers_) buf.fill('X');
+    }
+
+    ~rpc_asio_client() {
+        socket_.cancel();
+        context_.stop();
+        if (context_thread_.joinable()) context_thread_.join();
     }
 
     rpc_batch_result operator()() { return one_batch(); }
@@ -6942,7 +6965,8 @@ class rpc_asio_client {
             socket_.async_send_to(asio::buffer(buffers_[job]), server_, receive);
             result.sent_packets++;
         }
-        std::chrono::steady_clock::time_point expiry = std::chrono::steady_clock::now() + max_cycle_duration_;
+
+        std::chrono::steady_clock::time_point expiry = std::chrono::steady_clock::now() + rpc_batch_timeout_k;
         asio::steady_timer timer(context_, expiry);
         timer.wait();
         if (remaining) socket_.cancel(); // Forcibly abort all ops on this socket
@@ -6950,48 +6974,21 @@ class rpc_asio_client {
     }
 };
 
-static void rpc_asio(                             //
-    bm::State &state, std::string const &address, //
-    std::size_t batch_size, std::size_t packet_size, std::chrono::microseconds timeout) {
-
-    constexpr std::uint16_t rpc_port_k = 12345;
-
-    // Create server and client
-    asio::io_context server_context;
-    asio::io_context client_context;
-
-    rpc_asio_server server(server_context, address, rpc_port_k, batch_size, timeout);
-    rpc_asio_client client(client_context, address, rpc_port_k, batch_size, timeout);
-
-    // The order of the following thread-initializations is important
-    std::thread server_context_thread([&]() { server_context.run(); });
-    std::thread client_context_thread([&]() { client_context.run(); });
-    std::thread server_thread(std::ref(server));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    // Benchmark the round-trip time
-    rpc_batch_result stats;
-    for (auto _ : state) stats += client();
-
-    // Stop contexts and wait for threads to finish
-    server.stop();
-    server_context.stop();        // Stops the server context
-    client_context.stop();        // Stops the client context
-    server_thread.join();         // Wait for the server itself to finish
-    server_context_thread.join(); // Wait for the server thread to finish
-    client_context_thread.join(); // Wait for the client thread to finish
-
-    // Process and report stats
-    stats.batch_latency =
-        stats.received_packets ? stats.batch_latency / state.iterations() : std::chrono::nanoseconds::zero();
-    state.SetItemsProcessed(stats.sent_packets);
-    state.SetBytesProcessed(stats.sent_packets * packet_size);
-    state.counters["drop,%"] = 100.0 * (stats.sent_packets - stats.received_packets) / stats.sent_packets;
-    state.counters["batch_latency,ns"] = stats.batch_latency.count();
-    state.counters["max_packet_latency,ns"] = stats.max_packet_latency.count();
+static void rpc_asio(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+    return rpc<rpc_asio_server, rpc_asio_client>(state, route, batch_size, packet_size);
 }
 
-BENCHMARK_CAPTURE(rpc_asio, local, "127.0.0.1", 32, 1024, std::chrono::microseconds(50'000))->MinTime(2)->UseRealTime();
+BENCHMARK_CAPTURE(rpc_asio, loopback, networking_route_t::loopback_k, 256 /* messages per batch */,
+                  1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()
+    ->Unit(benchmark::kMicrosecond);
+
+BENCHMARK_CAPTURE(rpc_asio, public, networking_route_t::public_k, 256 /* messages per batch */,
+                  1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()
+    ->Unit(benchmark::kMicrosecond);
 
 #pragma endregion // ASIO
 
