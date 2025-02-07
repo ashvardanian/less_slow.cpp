@@ -176,17 +176,18 @@ if(USE_NVIDIA_CCCL)
 endif()
 
 # Nvidia's CUTLASS for GPU-accelerated linear algebra
-set(CUTLASS_ENABLE_HEADERS_ONLY ON FORCE)
-set(CUTLASS_ENABLE_LIBRARY OFF FORCE)
-set(CUTLASS_ENABLE_EXAMPLES OFF FORCE)
-set(CUTLASS_ENABLE_TESTS OFF FORCE)
-set(CUTLASS_ENABLE_TOOLS OFF FORCE)
-FetchContent_Declare(
-  NvidiaCUTLASS 
-  GIT_REPOSITORY https://github.com/nvidia/cutlass.git
-  GIT_TAG v3.7.0
-)
-FetchContent_MakeAvailable(NvidiaCUTLASS)
+# set(CUTLASS_ENABLE_HEADERS_ONLY ON)
+# set(CUTLASS_ENABLE_LIBRARY OFF)
+# set(CUTLASS_ENABLE_EXAMPLES OFF)
+# set(CUTLASS_ENABLE_TESTS OFF)
+# set(CUTLASS_ENABLE_TOOLS OFF)
+# set(CUTLASS_NVCC_ARCHS "90a")
+# FetchContent_Declare(
+#   NvidiaCUTLASS 
+#   GIT_REPOSITORY https://github.com/nvidia/cutlass.git
+#   GIT_TAG v3.7.0
+# )
+# FetchContent_MakeAvailable(NvidiaCUTLASS)
 
 # FMT for logging, as `std::format` has limited functionality
 FetchContent_Declare(
@@ -430,7 +431,7 @@ if(USE_NVIDIA_CCCL)
   target_sources(less_slow PRIVATE less_slow.cu)
   target_include_directories(less_slow PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_link_libraries(less_slow PRIVATE CUDA::cudart CUDA::cublas CUDA::cuda_driver)
-  target_link_libraries(less_slow PRIVATE nvidia::cutlass::cutlass)
+  # target_link_libraries(less_slow PRIVATE nvidia::cutlass::cutlass)
 
   # List the PTX files you want to copy
   set(PTX_FILES less_slow_sm70.ptx less_slow_sm90a.ptx)

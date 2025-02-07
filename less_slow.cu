@@ -19,8 +19,8 @@
  *  To compile this file, dump the SASS code, and check for Tensor Cores
  *  usage on Volta SM70 GPUs, use the following commands:
  *
- *  $ nvcc -arch=sm_90 -Xptxas -v -lineinfo -ptx -o less_slow_from_cu.ptx less_slow.cu
- *  $ nvcc -arch=sm_90 -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
+ *  $ nvcc -arch=sm_90a -Xptxas -v -lineinfo -ptx -o less_slow_from_cu.ptx less_slow.cu
+ *  $ nvcc -arch=sm_90a -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
  *  $ cuobjdump -sass less_slow_from_cu.cubin | grep -i mma
  *
  *  Keep in mind the following TC generations:
@@ -52,7 +52,7 @@
  *    -------------------------------------|----------|----------|----------
  *    Ratio of SM Registers to FP32 Cores  | 1024     | 1024     | 512
  *    Shared Memory Size / SM              | ≤ 96 KB  | ≤ 164 KB | ≤ 228 KB
- *    Tensor Core Generation               | 1st      | 3rd      | 5th
+ *    Tensor Core Generation               | 1st      | 3rd      | 4th
  *
  */
 #include <cstdint> // `std::uint8_t`
@@ -358,8 +358,15 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_1024unroll_cuda_kernel() {
  *       https://cudaforfun.substack.com/p/outperforming-cublas-on-h100-a-worklog
  *  @see CUTLASS updates: https://github.com/NVIDIA/cutlass/blob/main/CHANGELOG.md
  *  @see CUTLASS GEMM API: https://github.com/NVIDIA/cutlass/blob/main/media/docs/gemm_api.md
+ *  @see "Deep Dive on CUTLASS Ping-Pong GEMM Kernel" by PyTorch:
+ *       https://pytorch.org/blog/cutlass-ping-pong-gemm-kernel/
+ *  @see Minimal SM90 WGMMA + TMA GEMM example in 100 lines in CUTLASS 3.5.1:
+ *       https://github.com/NVIDIA/cutlass/blob/main/examples/cute/tutorial/wgmma_sm90.cu
+ *  @see "Blackwell Cluster Launch Control" in CUTLASS docs:
+ *       https://github.com/NVIDIA/cutlass/blob/main/media/docs/blackwell_cluster_launch_control.md
  */
 
+#if 0
 #pragma region CuTe
 #include <cute/tensor.hpp>
 #include <cute/arch/mma.hpp>
@@ -393,17 +400,4 @@ __global__ void cute_example() {
 }
 
 #pragma endregion // CuTe
-
-/**
- *  @see Deep Dive on CUTLASS Ping-Pong GEMM Kernel
- *       https://pytorch.org/blog/cutlass-ping-pong-gemm-kernel/
- *  @see Minimal SM90 WGMMA + TMA GEMM example in 100 lines in CUTLASS 3.5.1:
- *       https://github.com/NVIDIA/cutlass/blob/main/examples/cute/tutorial/wgmma_sm90.cu
- */
-
-/**
- *  Blackwell introduces a new mechanism for dynamic scheduling called
- *  Cluster Launch Control @b (CLC)
- */
-
-#pragma endregion // Numerics
+#endif
