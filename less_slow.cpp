@@ -53,11 +53,15 @@ namespace bm = benchmark;
  *  or little-endian.
  */
 #include <cstdint> // `std::int32_t` and other sized integers
+#include <cstdlib> // `std::rand`
 
 static void i32_addition(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
+    std::int32_t a = std::rand(), b = std::rand(), c = 0;
     for (auto _ : state) c = a + b;
-    (void)c; // Silence "variable `c` set but not used" warning
+
+    // In some categories of projects, benchmarks are easier to convert
+    // into tests, than the other way around :)
+    if (c != a + b) state.SkipWithError("Incorrect sum!");
 }
 
 BENCHMARK(i32_addition);
@@ -87,17 +91,21 @@ static void i32_addition_inline_asm(bm::State &state) {
     //   and pointers will be 4 bytes wide.
     // - For 64-bit targets (`__x86_64__`): Registers like `eax`, `r8d` will
     //   be used for 32-bit values, while pointers will be 8 bytes wide.
-    std::int32_t a = 0, b = 0, c = 0;
+    std::int32_t a = std::rand(), b = std::rand(), c = 0;
     for (auto _ : state) {
-        asm volatile(                  //
-            "addl %[b], %[a]\n\t"      // Sum `a + b` into `a`; `l` means 32-bit operation.
-            "movl %[a], %[c]\n\t"      // Move result to `c`, again using the `l` suffix.
-            : [c] "=r"(c), [a] "+r"(a) // Outputs: `c` and `a` (read-write)
-            : [b] "r"(b)               // Input: `b`
-            : "cc"                     // Clobbered: condition codes
-        );
+        asm volatile(
+            // Perform a 32-bit addition of `b` into `a`.
+            "addl %[b], %[a]\n\t"
+            // `[a] "=r"(c)` means treat `c` as the output for the result.
+            // `"0"(a)` means reuse the same register allocated to the first output operand for `a`.
+            // `[b] "r"(b)` means that `b` is a read-only operand that must reside in a register.
+            : [a] "=r"(c)
+            : "0"(a), [b] "r"(b)
+            // Tell the compiler that this code modifies the condition codes (CPU flags),
+            // so it cannot assume those flags are still valid after this assembly block.
+            : "cc");
     }
-    (void)c; // Silence "variable `c` set but not used" warning
+    if (c != a + b) state.SkipWithError("Incorrect sum!");
 }
 
 BENCHMARK(i32_addition_inline_asm);
@@ -105,17 +113,25 @@ BENCHMARK(i32_addition_inline_asm);
 #elif defined(__aarch64__) //? The following kernel is just for the 64-bit Arm
 
 static void i32_addition_inline_asm(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
+    // In inline assembly for AArch64 we use `%w` registers for 32-bit operations.
+    // That means `add %w[a], %w[a], %w[b]` will add the 32-bit subregisters
+    // of these named operands. Pointers remain 8 bytes wide, but here we only
+    // deal with 32-bit integers.
+    std::int32_t a = std::rand(), b = std::rand(), c = 0;
     for (auto _ : state) {
-        asm volatile(                     //
-            "add %w[a], %w[b], %w[a]\n\t" // Sum `a + b` into `a`
-            "mov %w[c], %w[a]\n\t"        // Move result to `c`
-            : [c] "=r"(c), [a] "+r"(a)    // Outputs: `c` and `a` (read-write)
-            : [b] "r"(b)                  // Input: `b`
-            : "cc"                        // Clobbered: condition codes
-        );
+        asm volatile(
+            // Perform a 32-bit addition of `b` into `a`: `%w[a] := %w[a] + %w[b]`.
+            "add %w[a], %w[a], %w[b]\n\t"
+            // `[a] "=r"(c)` means treat `c` as the output for the result of the operation.
+            // `"0"(a)` says to reuse the same register allocated to the first output operand for `a`.
+            // `[b] "r"(b)` means that `b` is a read-only operand that must reside in a register.
+            : [a] "=r"(c)
+            : "0"(a), [b] "r"(b)
+            // Tell the compiler that this assembly modifies the condition flags (CPU flags),
+            // so it cannot rely on them remaining unaltered after this assembly block.
+            : "cc");
     }
-    (void)c; // Silence "variable `c` set but not used" warning
+    if (c != a + b) state.SkipWithError("Incorrect sum!");
 }
 BENCHMARK(i32_addition_inline_asm);
 
@@ -154,9 +170,9 @@ BENCHMARK(i32_addition_inline_asm);
 extern "C" std::int32_t i32_add_asm_kernel(std::int32_t a, std::int32_t b);
 
 static void i32_addition_asm(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
+    std::int32_t a = std::rand(), b = std::rand(), c = 0;
     for (auto _ : state) c = i32_add_asm_kernel(a, b);
-    (void)c; // Silence "variable `c` set but not used" warning
+    if (c != a + b) state.SkipWithError("Incorrect sum!");
 }
 
 BENCHMARK(i32_addition_asm);
@@ -178,12 +194,10 @@ BENCHMARK(i32_addition_asm);
  *  @b `std::rand()`, one of the most controversial operations in the
  *  C standard library.
  */
-#include <cstdlib> // `std::rand`
-
 static void i32_addition_random(bm::State &state) {
-    std::int32_t c = 0;
+    std::int32_t c;
     for (auto _ : state) c = std::rand() + std::rand();
-    (void)c; // Silence "variable `c` set but not used" warning
+    (void)c; //? Silence "variable `c` set but not used" warning
 }
 
 BENCHMARK(i32_addition_random);
@@ -203,7 +217,7 @@ BENCHMARK(i32_addition_random);
  */
 
 static void i32_addition_paused(bm::State &state) {
-    std::int32_t a = 0, b = 0, c = 0;
+    std::int32_t a, b, c;
     for (auto _ : state) {
         state.PauseTiming();
         a = std::rand(), b = std::rand();
@@ -287,32 +301,25 @@ std::size_t physical_cores() {
     // return at most 64 cores, as limited by a single windows processor group.
     // However, starting with newer versions of Windows, applications can seamlessly
     // span across multiple processor groups.
-    // GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) can return all logical cores;
-    // However, in order to get physical cores, we have to dive deeper.
-    DWORD bufferSize = 0;
-    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &bufferSize);
-    if (bufferSize == 0) {
-        return 0; // Error occurred
+    DWORD buffer_size = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &buffer_size);
+    if (buffer_size == 0) throw std::runtime_error("GetLogicalProcessorInformationEx failed to get buffer size");
+
+    using core_info_t = PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
+    std::vector<BYTE> buffer(buffer_size);
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<core_info_t>(buffer.data()),
+                                          &buffer_size))
+        throw std::runtime_error("GetLogicalProcessorInformationEx failed to get core info");
+
+    std::size_t core_count = 0;
+
+    for (DWORD buffer_progress = 0; buffer_progress < buffer_size;) {
+        core_info_t ptr = reinterpret_cast<core_info_t>(buffer.data() + buffer_progress);
+        if (ptr->Relationship == RelationProcessorCore) ++core_count;
+        buffer_progress += ptr->Size;
     }
 
-    std::vector<BYTE> buffer(bufferSize);
-    if (!GetLogicalProcessorInformationEx(RelationProcessorCore,
-                                          reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()),
-                                          &bufferSize)) {
-        return 0; // Error occurred
-    }
-
-    std::size_t coreCount = 0;
-    PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX ptr =
-        reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data());
-    DWORD byteOffset = 0;
-    while (byteOffset < bufferSize) {
-        if (ptr->Relationship == RelationProcessorCore) { ++coreCount; }
-        byteOffset += ptr->Size;
-        ptr = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(reinterpret_cast<BYTE *>(ptr) + ptr->Size);
-    }
-
-    return coreCount;
+    return core_count;
 #else
     return std::thread::hardware_concurrency();
 #endif
@@ -2627,14 +2634,18 @@ std::size_t parse_size_string(std::string const &str) {
 #pragma region Memory Bound Linear Algebra
 #include <cblas.h>
 /**
- *! OpenBLAS defines a `SIZE` macro for internal use, which conflicts with `fmt`
- *! and other code trying to use that name for variable names, so we must undefine it.
+ *  ! OpenBLAS defines a `SIZE` macro for internal use, which conflicts with `fmt`
+ *  ! and other code trying to use that name for variable names, so we must undefine it.
  */
 #undef SIZE
 
 template <typename scalar_type_>
 static void cblas_tops(bm::State &state) {
+    // ! Not all versions of OpenBLAS define the `openblas_set_num_threads`
+    // ! symbol, so we use CMake's `CheckFunctionExists` for that.
+#if defined(LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
     openblas_set_num_threads(physical_cores());
+#endif
 
     // BLAS expects leading dimensions: `lda` = `ldb` = `ldc` = `n` for square inputs.
     std::size_t n = static_cast<std::size_t>(state.range(0));
@@ -4222,13 +4233,14 @@ yyjson_alc yyjson_wrap_arena_prepend(arena_t &arena) noexcept {
  */
 
 #if defined(__x86_64__) && defined(__linux__)
-#include <asm/prctl.h>   // `ARCH_ENABLE_TAGGED_ADDR`
 #include <sys/syscall.h> // `SYS_arch_prctl`
 static bool enable_pointer_tagging(unsigned long bits = 1) noexcept {
     // The argument is required number of tag bits.
     // It is rounded up to the nearest LAM mode that can provide it.
     // For now only LAM_U57 is supported, with 6 tag bits.
-    return syscall(SYS_arch_prctl, ARCH_ENABLE_TAGGED_ADDR, bits) == 0;
+    // ! This requires kernel 6.2 or newer.
+    int _ARCH_ENABLE_TAGGED_ADDR = 0x4002;
+    return syscall(SYS_arch_prctl, _ARCH_ENABLE_TAGGED_ADDR, bits) == 0;
 }
 #else
 static bool enable_pointer_tagging(unsigned long = 0) noexcept { return false; }
@@ -5689,8 +5701,1294 @@ BENCHMARK(logging<log_fmt_t>)->Name("log_fmt")->MinTime(2);
  *  There are legends about the complexity of dependency management in C++.
  *  It often prohibits developers from designing larger systems in C++, as
  *  the Web, for example, requires a lot of dependencies.
+ *
+ *  Let's demystify the process by building an @b "echo" RPC server and client,
+ *  starting them within the same process and measuring the round-trip time.
+ *  This will teach us about the overhead of user-space vs kernel-space IO,
+ *  and the network stack in general. To benchmark both the latency and
+ *  throughput, we should process packets @b Out-Of-Order, keeping a reusable
+ *  buffer for incoming and outgoing packets. Keeping
+ *
+ *  Hopefully, it will also show, how ugly can state-management get in
+ *  Systems Design, and that reverting to abstraction-less C can often be a
+ *  better choice.
+ *
+ *  The naive approach would be to take the TCP/IP stack use LibC's native
+ *  @b `socket/bind/listen/accept/connect/send/recv` functions, just like
+ *  90% of the industry does. That solution is so bad, I don't know where
+ *  to start.
+ *
+ *  As you can see in the above examples, the common theme of this repo is
+ *  not relying on general purpose solutions and not pushing the problem
+ *  somewhere else out of laziness. Like, when you know your memory allocation
+ *  pattern, you shouldn't just expect the general purpose system-level allocator
+ *  to be better than your custom one. If you know how your code scales across
+ *  CPU cores, don't just spawn a million threads hoping the OS scheduler will
+ *  do a better job than yours. As we get to higher-level Systems, like
+ *  networking, it's expected that we will have to deal with the same problems.
+ *
+ *  LibC manages memory for you to grow and shrink buffers for incoming and
+ *  outgoing packets. It then introduces [operating] @b system-calls that can take
+ *  arbitrary time to complete. Until then, your thread is blocked, and you can't
+ *  do anything else. You'd pay for at least 2 context switches per packet,
+ *  one to the kernel and one back to the user-space.
+ *
+ *  @b ASIO is the default way C++ developers do networking. It comes in @b three
+ *  flavors, no less: standalone, @b Boost.Asio and the @b NetworkingTS for the
+ *  future STL releases. It's slightly better, than using LibC, but we will see
+ *  that there is an even better way with @b io_uring and @b DPDK.
+ *
+ *  If we drop the TCP stack, we need to track Out-Of-Order execution ourselves.
+ *  If some UDP packets are lost, we need to be able to continue the benchmark.
+ *  When the UDP packets are received, we need to track the time they took to
+ *  complete the round trip. A truly efficient design will be overly complicated
+ *  for a tutorial, but if we amortize the cost of logic with @b batching, we can
+ *  get a good-enough solution. As for it's functionality:
+ *
+ *  - It won't perform retries on lost packets
+ *  - It won't be able to handle packets larger than the MTU
+ *  - It won't be able to handle packets that are fragmented
+ *
+ *  For something more serious, check out Unum's UCall 😉
+ *
+ *  @see Most recent ASIO docs: https://think-async.com/Asio/asio-1.30.2/doc/asio/overview.html
+ *  @see "User Datagram Protocol" on Wikipedia: https://en.wikipedia.org/wiki/User_Datagram_Protocol
+ *  @see "Asio 201 - timeouts, cancellation & custom tokens" by Klemens Morgenstern:
+ *       https://cppalliance.org/asio/2023/01/02/Asio201Timeouts.html
+ *
+ *  If locally on ping-pong interaction takes on average 10 microseconds, then
+ *  a batch of 1000 packets should take 10 milliseconds.
  */
+constexpr std::chrono::milliseconds rpc_packet_timeout_k = std::chrono::milliseconds(1);
+constexpr std::chrono::milliseconds rpc_batch_timeout_k = std::chrono::milliseconds(10);
+
+struct rpc_batch_result {
+    std::size_t sent_packets = 0;
+    std::size_t received_packets = 0;
+    std::chrono::nanoseconds batch_latency = std::chrono::nanoseconds::zero();
+    std::chrono::nanoseconds max_packet_latency = std::chrono::nanoseconds::zero();
+
+    rpc_batch_result &operator+=(rpc_batch_result const &other) {
+        sent_packets += other.sent_packets;
+        received_packets += other.received_packets;
+        batch_latency += other.batch_latency;
+        max_packet_latency = std::max(max_packet_latency, other.max_packet_latency);
+        return *this;
+    }
+};
+
+enum class networking_route_t { loopback_k, public_k };
+
+/**
+ *  The User Datagram Protocol (UDP) is OSI Layer 4 "Transport protocol", and
+ *  should be able to operate on top of any OSI Layer 3 "Network protocol".
+ *
+ *  In most cases, it operates on top of the Internet Protocol (IP), which can
+ *  have Maximum Transmission Unit (MTU) ranging 20 for IPv4 and 40 for IPv6
+ *  to 65535 bytes. In our case, however, the OSI Layer 2 "Data Link Layer" is
+ *  likely to be Ethernet, which has a MTU of 1500 bytes, but most routers are
+ *  configured to fragment packets larger than 1460 bytes. Hence, our choice!
+ */
+constexpr std::size_t rpc_mtu_k = 1460;
+using rpc_buffer_t = std::array<char, rpc_mtu_k>;
+constexpr uint16_t rpc_port_k = 12345;
+
+auto to_microseconds(auto duration) { return std::chrono::duration_cast<std::chrono::microseconds>(duration); }
+
+std::string execute_system_call(std::string const &command) {
+    std::array<char, 1024> buffer {};
+    std::string result;
+    if (FILE *pipe = popen(command.c_str(), "r")) {
+        while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe)) result += buffer.data();
+        pclose(pipe);
+    }
+    return result;
+}
+
+std::string raise_system_error(std::string const &message) {
+    std::string error_message = message + ": " + std::strerror(errno) + " (" + std::to_string(errno) + ")";
+    throw std::runtime_error(error_message);
+}
+
+/**
+ *  @brief Fetches the public IP address of the default networking
+ *         interface on the current machine.
+ */
+std::string fetch_public_ip() {
+#if defined(__linux__)
+    // Try Linux approach
+    std::string command = R"(ip route get 8.8.8.8 | sed -nE 's/.*src ([0-9\.]+).*/\1/p')";
+    std::string output = execute_system_call(command);
+    // Trim whitespace
+    if (!output.empty())
+        while (!output.empty() && isspace(output.back())) output.pop_back();
+    return output;
+#elif defined(__APPLE__)
+    // Try macOS approach with `ipconfig getifaddr en0`
+    std::string command = "ipconfig getifaddr en0";
+    std::string output = execute_system_call(command);
+    // Trim whitespace
+    if (!output.empty())
+        while (!output.empty() && isspace(output.back())) output.pop_back();
+
+    return output; // Could still be empty
+#else
+    return {};
+#endif
+}
+
+/**
+ *  @brief Emulates some message processing logic, that will update the `input` packet
+ *         and write the result to the `output` buffer, returning the output length.
+ *
+ *  This function will be called on the server size to reply each message.
+ *  It is also called on the client side to validate the received response.
+ */
+std::size_t packet_modify(char const *input, std::size_t input_length, char *output) {
+    // Echo the input packet back. Any wiser suggestions?
+    std::memcpy(output, input, input_length);
+    return input_length;
+}
+
+#pragma region POSIX
+
+/**
+ *  POSIX is an open standard (IEEE 1003) that defines a wide range of operating-system-level
+ *  interfaces and utilities, including file I/O, process control, threading, and networking.
+ *  Networking functions such as `socket`, `select`, `bind`, `send`, and `recv` come from
+ *  the POSIX specification.
+ *
+ *  In our case, focusing on UDP, we will use `sendto` and `recvfrom` functions, as in stateless
+ *  protocols, the server does not maintain any information about the client, and the client does
+ *  not maintain any information about the server. Each packet is treated independently.
+ *
+ *  Unlike other implementations, this one is synchronous and should result in the worst performance.
+ */
+#include <arpa/inet.h>  // `inet_addr`
+#include <netinet/in.h> // `sockaddr_in`
+#include <sys/socket.h> // `socket`, `bind`, `sendto`, `recvfrom`
+
+#include <array>  // `std::array` for packet buffers
+#include <atomic> // `std::atomic_bool` for stopping the server
+
+struct addressed_socket_t {
+    int socket_descriptor;
+    sockaddr_in server_address;
+};
+
+/**
+ *  @brief  Opens the socket and binds it to the specified address and port.
+ *  @param  port The port to bind to.
+ *  @param  address The address to bind to. If "0.0.0.0" for IPv4 (or "::" for IPv6),
+ *          we bind to all interfaces, meaning we can receive packets from any network
+ *          interface. Binding to "127.0.0.1" (or "::1" for IPv6) will only allow
+ *          packets from the loopback interface, which can be handy for testing.
+ */
+addressed_socket_t rpc_server_socket(std::uint16_t port, std::string const &address = "0.0.0.0") {
+    addressed_socket_t server;
+    // Initialize socket
+    server.socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
+    if (server.socket_descriptor < 0) raise_system_error("Failed to create socket");
+
+    // Allow port reuse
+    int const socket_option = 1;
+    if (setsockopt(server.socket_descriptor, SOL_SOCKET, SO_REUSEADDR, &socket_option, sizeof(socket_option)) < 0)
+        raise_system_error("Failed to set SO_REUSEADDR");
+
+    // Bind to address and port
+    server.server_address.sin_family = AF_INET;
+    server.server_address.sin_addr.s_addr = inet_addr(address.c_str());
+    server.server_address.sin_port = htons(port);
+    if (bind(server.socket_descriptor, reinterpret_cast<sockaddr *>(&server.server_address),
+             sizeof(server.server_address)) < 0)
+        raise_system_error("Failed to bind socket");
+    return server;
+}
+
+/**
+ *  @brief  Opens the socket and resolves the server address.
+ *  @param  port The port to bind to on the server.
+ *  @param  address The address to bind to on the server.
+ */
+addressed_socket_t rpc_client_socket(std::string const &server_addr, std::uint16_t port) {
+    addressed_socket_t client;
+    // Initialize socket
+    client.socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
+    if (client.socket_descriptor < 0) raise_system_error("Failed to create socket");
+
+    // Resolve server address
+    client.server_address.sin_family = AF_INET;
+    client.server_address.sin_addr.s_addr = inet_addr(server_addr.c_str());
+    client.server_address.sin_port = htons(port);
+    return client;
+}
+
+/**
+ *  @brief  A minimal RPC @b server using LibC functionality to setup the UDP socket,
+ *          and synchronous blocking POSIX calls to receive and send packets -
+ *          @b one at a time!
+ */
+class rpc_libc_server {
+    int socket_descriptor_;
+    sockaddr_in server_address_;
+    std::atomic_bool should_stop_;
+
+  public:
+    rpc_libc_server(std::string const &server_address_str, std::uint16_t port, std::size_t max_concurrency)
+        : should_stop_(false) {
+        auto [socket_descriptor, server_address] = rpc_server_socket(port, server_address_str);
+        socket_descriptor_ = socket_descriptor;
+        server_address_ = server_address;
+
+        // Let's make sure we don't block forever on `recvfrom`
+        struct timeval duration;
+        duration.tv_sec = 0;
+        duration.tv_usec = to_microseconds(rpc_batch_timeout_k).count();
+        if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
+            raise_system_error("Failed to set sockets batch timeout");
+    }
+
+    ~rpc_libc_server() noexcept {}
+    void close() noexcept { ::close(socket_descriptor_); }
+    void stop() noexcept { should_stop_.store(true, std::memory_order_seq_cst); }
+
+    void operator()() noexcept {
+        sockaddr_in client_address;
+        socklen_t client_len = sizeof(client_address);
+        rpc_buffer_t receive_buffer, send_buffer;
+
+        while (!should_stop_.load(std::memory_order_seq_cst)) {
+            ssize_t received_length = recvfrom(socket_descriptor_, receive_buffer.data(), receive_buffer.size(), 0,
+                                               reinterpret_cast<sockaddr *>(&client_address), &client_len);
+            if (received_length <= 0) continue;
+            std::size_t reply_length =
+                packet_modify(receive_buffer.data(), static_cast<std::size_t>(received_length), send_buffer.data());
+            sendto(socket_descriptor_, send_buffer.data(), reply_length, 0,
+                   reinterpret_cast<sockaddr *>(&client_address), client_len);
+        }
+    }
+};
+
+/**
+ *  @brief  A minimal RPC @b client using LibC functionality to setup the UDP socket,
+ *          and synchronous blocking POSIX calls to send and receive packets -
+ *          @b one at a time!
+ */
+class rpc_libc_client {
+    int socket_descriptor_;
+    sockaddr_in server_address_;
+    std::size_t concurrency_;
+
+  public:
+    rpc_libc_client(std::string const &server_address_str, std::uint16_t port, std::size_t concurrency)
+        : concurrency_(concurrency) {
+
+        auto [socket_descriptor, server_address] = rpc_client_socket(server_address_str, port);
+        socket_descriptor_ = socket_descriptor;
+        server_address_ = server_address;
+
+        // Let's make sure we don't block forever on `recvfrom`
+        struct timeval duration;
+        duration.tv_sec = 0;
+        duration.tv_usec = to_microseconds(rpc_batch_timeout_k).count();
+        if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_RCVTIMEO, &duration, sizeof(duration)) < 0)
+            raise_system_error("Failed to set sockets batch timeout");
+    }
+
+    ~rpc_libc_client() noexcept { close(socket_descriptor_); }
+
+    rpc_batch_result operator()() noexcept {
+        rpc_batch_result result;
+
+        sockaddr_in reply_addr;
+        socklen_t reply_len = sizeof(reply_addr);
+        rpc_buffer_t send_buffer, receive_buffer;
+        send_buffer.fill('X');
+
+        for (std::size_t i = 0; i < concurrency_; ++i) {
+            auto send_time = std::chrono::steady_clock::now();
+            ssize_t sent_length = sendto(socket_descriptor_, send_buffer.data(), send_buffer.size(), 0,
+                                         reinterpret_cast<sockaddr *>(&server_address_), sizeof(server_address_));
+            result.sent_packets++;
+            if (sent_length <= 0) continue;
+
+            // In general, `select` is used to monitor multiple file descriptors or sockets at once
+            // to see if they are ready for I/O, but in this case we use it to constrain the time
+            // we are willing to wait for a single response.
+            struct timeval expiry;
+            expiry.tv_sec = 0;
+            expiry.tv_usec = to_microseconds(rpc_packet_timeout_k).count();
+            fd_set available_descriptors;
+            FD_ZERO(&available_descriptors);
+            FD_SET(socket_descriptor_, &available_descriptors);
+            if (select(socket_descriptor_ + 1, &available_descriptors, nullptr, nullptr, &expiry) <= 0) continue;
+
+            ssize_t received_length = recvfrom(socket_descriptor_, receive_buffer.data(), receive_buffer.size(), 0,
+                                               reinterpret_cast<sockaddr *>(&reply_addr), &reply_len);
+            if (received_length <= 0) continue;
+            auto response_time = std::chrono::steady_clock::now();
+            auto diff = response_time - send_time;
+            result.batch_latency += diff;
+            result.max_packet_latency = std::max(result.max_packet_latency, diff);
+            result.received_packets++;
+        }
+        return result;
+    }
+};
+
+/**
+ *  Here we can show-off one more Google Benchmark feature - overriding the
+ *  default timer! Measuring the time on the computer is an expensive operation,
+ *  and assuming we've already done that in the client itself, we can use the
+ *  @b `UseManualTime` feature to avoid the overhead of measuring time in the server.
+ */
+template <typename server_t, typename client_t>
+static void rpc(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+
+    std::string address_to_listen = route == networking_route_t::loopback_k ? "127.0.0.1" : "0.0.0.0";
+    std::string address_to_talk = route == networking_route_t::loopback_k ? "127.0.0.1" : fetch_public_ip();
+
+    rpc_batch_result stats;
+    try {
+        // Create server and client
+        server_t server(address_to_listen, rpc_port_k, batch_size);
+        client_t client(address_to_talk, rpc_port_k, batch_size);
+
+        std::thread server_thread(std::ref(server));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        // Benchmark round-trip time
+        for (auto _ : state) {
+            rpc_batch_result batch_stats = client();
+            stats += batch_stats;
+            double seconds =
+                std::chrono::duration_cast<std::chrono::duration<double>>(batch_stats.batch_latency).count();
+            state.SetIterationTime(seconds);
+        }
+
+        server.stop();        // Inform the server to stop polling for new packets
+        server_thread.join(); // Wait for the server to finish
+        server.close();       // Close the server socket and free resources
+    }
+    catch (std::exception const &e) {
+        state.SkipWithError(e.what());
+    }
+
+    // Process and report stats
+    auto const mean_batch_latency_us =
+        stats.received_packets ? to_microseconds(stats.batch_latency).count() * 1.0 / state.iterations() : 0.0;
+    auto const mean_packet_latency_us = to_microseconds(stats.batch_latency).count() * 1.0 / stats.received_packets;
+
+    state.SetItemsProcessed(stats.sent_packets);
+    state.SetBytesProcessed(stats.sent_packets * packet_size);
+    state.counters["drop,%"] = 100.0 * (stats.sent_packets - stats.received_packets) / stats.sent_packets;
+    state.counters["mean_batch_latency,us"] = mean_batch_latency_us;
+    state.counters["mean_packet_latency,us"] = mean_packet_latency_us;
+    state.counters["max_packet_latency,us"] = to_microseconds(stats.max_packet_latency).count();
+}
+
+static void rpc_libc(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+    return rpc<rpc_libc_server, rpc_libc_client>(state, route, batch_size, packet_size);
+}
+
+BENCHMARK_CAPTURE(rpc_libc, loopback, networking_route_t::loopback_k, //
+                  256 /* messages per batch */, 1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()                // We are logging time with `SetIterationTime`
+    ->Unit(benchmark::kMicrosecond); // For IO, higher resolution than microseconds is too verbose
+
+BENCHMARK_CAPTURE(rpc_libc, public, networking_route_t::public_k, //
+                  256 /* messages per batch */, 1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()                // We are logging time with `SetIterationTime`
+    ->Unit(benchmark::kMicrosecond); // For IO, higher resolution than microseconds is too verbose
+
+#pragma endregion // POSIX
+
+#pragma region IO Uring for Linux Kernel 5.5
+#if defined(__linux__)
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)
+
+/**
+ *  We will start by designing a version that only uses features available
+ *  on the Linux kernel 5.5 or earlier:
+ *  - `IORING_OP_RECVMSG` and `IORING_OP_SENDMSG` - since 5.3
+ *  - `IORING_OP_LINK_TIMEOUT` - since 5.5
+ *  - `IORING_OP_TIMEOUT` - since 5.4
+ *  - `IORING_REGISTER_BUFFERS` - since 5.1
+ *
+ *  @see Supported operations: https://man7.org/linux/man-pages/man2/io_uring_enter2.2.html
+ *  @see Kernel versions in Ubuntu: https://ubuntu.com/security/livepatch/docs/livepatch/reference/kernels
+ */
+#include <liburing.h>    // `io_uring`
+#include <sys/utsname.h> // `uname`
+#include <sys/mman.h>    // `mmap`, `munmap`
+
+std::pair<int, int> fetch_linux_kernel_version() {
+    struct utsname buffer;
+    if (uname(&buffer) < 0) throw std::runtime_error("Failed to fetch Linux kernel version");
+    int major = 0, minor = 0;
+    // Attempt to parse something like "5.19.0-38-generic" into major=5, minor=19
+    std::sscanf(buffer.release, "%d.%d", &major, &minor);
+    return {major, minor};
+}
+
+/**
+ *  @brief  Memory allocator, sharing the same memory region between the kernel and user-space.
+ *  @note   This is essential for `IORING_REGISTER_BUFFERS`.
+ */
+template <typename type_>
+class mmap_array {
+    type_ *data_ = nullptr;
+    std::size_t size_ = 0;
+
+  public:
+    mmap_array(std::size_t count) : size_(count) {
+        // The basic mmap call, creating an anonymous region:
+        void *addr = ::mmap(            //
+            nullptr,                    // no specific address
+            size_ * sizeof(type_),      // length in bytes
+            PROT_READ | PROT_WRITE,     // read/write allowed
+            MAP_SHARED | MAP_ANONYMOUS, // not backed by a file
+            -1,                         // no file descriptor
+            0                           // offset
+        );
+        if (addr == MAP_FAILED) throw std::bad_alloc();
+
+        // Ensure the pages are locked in memory:
+        if (mlock(addr, size_ * sizeof(type_)) != 0) {
+            ::munmap(addr, size_ * sizeof(type_));
+            throw std::runtime_error("`mlock` failed");
+        }
+
+        data_ = static_cast<type_ *>(addr);
+    }
+
+    ~mmap_array() noexcept {
+        ::munlock(data_, size_ * sizeof(type_));
+        ::munmap(data_, size_ * sizeof(type_));
+    }
+
+    type_ *begin() const noexcept { return data_; }
+    type_ *end() const noexcept { return data_ + size_; }
+    type_ &operator[](std::size_t idx) noexcept { return data_[idx]; }
+    type_ operator[](std::size_t idx) const noexcept { return data_[idx]; }
+    std::size_t size() const noexcept { return size_; }
+};
+
+/**
+ *  @brief  Wraps the `rpc_buffer_t` with metadata about the client address.
+ *
+ *  It's a common pattern in async systems to store request metadata next
+ *  to the buffer to locate both with a single pointer.
+ */
+struct alignas(64) message_t {
+    enum class message_status_t {
+        pending_k,
+        sending_k,
+        receiving_k,
+    };
+    rpc_buffer_t buffer;                             //? Put first to improve alignment
+    struct iovec io_vec;                             //? Point to `buffer` 🙃
+    struct msghdr header;                            //? Point to the `io_vec` 🙃🙃
+    sockaddr_in peer_address;                        //? Where is the packet coming from?
+    message_status_t status;                         //? For our simple state machine
+    std::chrono::steady_clock::time_point timestamp; //? Optional
+};
+
+/**
+ *  @brief  A minimal RPC @b server using @b `io_uring` functionality
+ *          to setup the UDP socket, and process many requests concurrently.
+ */
+class rpc_uring55_server {
+
+    int socket_descriptor_;
+    sockaddr_in server_address_;
+    std::atomic_bool should_stop_;
+    io_uring ring_;
+
+    // Pre-allocated resources
+    mmap_array<message_t> messages_;
+    std::size_t max_concurrency_;
+
+  public:
+    using status_t = message_t::message_status_t;
+
+    rpc_uring55_server(std::string const &server_address_str, std::uint16_t port, std::size_t max_concurrency)
+        : should_stop_(false), messages_(max_concurrency * 2), max_concurrency_(max_concurrency) {
+
+        auto [socket_descriptor, server_address] = rpc_server_socket(port, server_address_str);
+        socket_descriptor_ = socket_descriptor;
+        server_address_ = server_address;
+
+        // Initialize `io_uring` with one slot for each receive/send operation
+        if (io_uring_queue_init(max_concurrency * 2, &ring_, 0) < 0)
+            raise_system_error("Failed to initialize io_uring 5.5 server");
+        if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
+            raise_system_error("Failed to register file descriptor with io_uring 5.5 server");
+
+        // Initialize message resources
+        for (message_t &message : messages_) {
+            memset(&message.header, 0, sizeof(message.header));
+            message.header.msg_name = &message.peer_address;
+            message.header.msg_namelen = sizeof(sockaddr_in);
+            // Each message will be made of just one buffer
+            message.header.msg_iov = &message.io_vec;
+            message.header.msg_iovlen = 1;
+            // ... and that buffer is a member of our `message`
+            message.io_vec.iov_base = message.buffer.data();
+            message.io_vec.iov_len = message.buffer.size();
+            message.status = status_t::pending_k;
+        }
+
+        // Let's register all of those with `IORING_REGISTER_BUFFERS`
+        std::vector<struct iovec> iovecs_to_register;
+        for (message_t &message : messages_) iovecs_to_register.push_back(message.io_vec);
+        if (io_uring_register_buffers(&ring_, iovecs_to_register.data(), iovecs_to_register.size()) < 0)
+            raise_system_error("Failed to register buffers with io_uring 5.5 server");
+    }
+
+    ~rpc_uring55_server() noexcept {}
+    void close() noexcept {
+        ::close(socket_descriptor_);
+        io_uring_queue_exit(&ring_);
+    }
+
+    void stop() noexcept { should_stop_.store(true, std::memory_order_seq_cst); }
+
+    void operator()() noexcept {
+        // Submit initial receive operations
+        for (message_t &message : messages_) {
+            message.status = status_t::receiving_k;
+            memset(&message.peer_address, 0, sizeof(sockaddr_in));
+            struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &message.header, 0);
+            io_uring_sqe_set_data(receive_entry, &message);
+        }
+
+        io_uring_submit(&ring_);
+
+        while (!should_stop_.load(std::memory_order_seq_cst)) {
+            struct io_uring_cqe *completed_entry;
+            bool completed_something = io_uring_peek_cqe(&ring_, &completed_entry) == 0;
+            if (!completed_something) continue;
+
+            int transmitted_length = completed_entry->res;
+            message_t &message = *static_cast<message_t *>(io_uring_cqe_get_data(completed_entry));
+
+            // If we've received some content, submit a reply
+            if (message.status == status_t::receiving_k) {
+                struct io_uring_sqe *send_entry = io_uring_get_sqe(&ring_);
+                message.status = status_t::sending_k;
+                io_uring_prep_sendmsg(send_entry, socket_descriptor_, &message.header, 0);
+                io_uring_sqe_set_data(send_entry, &message);
+            }
+
+            // Prepare next receive operation
+            else if (message.status == status_t::sending_k) {
+                struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
+                message.status = status_t::receiving_k;
+                memset(&message.peer_address, 0, sizeof(sockaddr_in));
+                io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &message.header, 0);
+                io_uring_sqe_set_data(receive_entry, &message);
+            }
+
+            io_uring_cqe_seen(&ring_, completed_entry);
+            io_uring_submit(&ring_);
+        }
+    }
+};
+
+/**
+ *  @brief  A minimal RPC @b client using @b `io_uring` functionality
+ *          to setup the UDP socket, and process many requests in batches.
+ */
+class rpc_uring55_client {
+
+    int socket_descriptor_;
+    sockaddr_in server_address_;
+    io_uring ring_;
+
+    // Pre-allocated resources
+    mmap_array<message_t> messages_;
+    message_t packet_timeout_handle_;
+    message_t batch_timeout_handle_;
+
+  public:
+    using status_t = message_t::message_status_t;
+
+    rpc_uring55_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
+        : messages_(concurrency) {
+        // Initialize socket
+        socket_descriptor_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (socket_descriptor_ < 0) raise_system_error("Failed to create socket");
+
+        // Resolve server address
+        server_address_.sin_family = AF_INET;
+        server_address_.sin_addr.s_addr = inet_addr(server_addr.c_str());
+        server_address_.sin_port = htons(port);
+
+        // Initialize io_uring with one slot for each send/receive/timeout operation,
+        // as well as a batch-level timeout operation and a cancel operation for the
+        // batch-level timeout.
+        if (io_uring_queue_init(concurrency * 3 + 1 + 1, &ring_, 0) < 0)
+            raise_system_error("Failed to initialize io_uring 5.5 client");
+        if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
+            raise_system_error("Failed to register file descriptor with io_uring 5.5 client");
+
+        // Initialize message resources
+        for (message_t &message : messages_) {
+            memset(&message.header, 0, sizeof(message.header));
+            message.header.msg_name = &server_address_;
+            message.header.msg_namelen = sizeof(server_address_);
+            // Each message will be made of just one buffer
+            message.header.msg_iov = &message.io_vec;
+            message.header.msg_iovlen = 1;
+            // ... and that buffer is a member of our `message`
+            message.io_vec.iov_base = message.buffer.data();
+            message.io_vec.iov_len = message.buffer.size();
+            // Initialize the buffer with some data
+            message.buffer.fill('X');
+            message.status = status_t::pending_k;
+        }
+
+        // Let's register all of those with `IORING_REGISTER_BUFFERS`
+        std::vector<struct iovec> iovecs_to_register;
+        for (message_t &message : messages_) iovecs_to_register.push_back(message.io_vec);
+        if (io_uring_register_buffers(&ring_, iovecs_to_register.data(), iovecs_to_register.size()) < 0)
+            raise_system_error("Failed to register buffers with io_uring 5.5 client");
+    }
+
+    ~rpc_uring55_client() noexcept {
+        close(socket_descriptor_);
+        io_uring_queue_exit(&ring_);
+    }
+
+    rpc_batch_result operator()() noexcept {
+        rpc_batch_result result;
+
+        auto const batch_start_time = std::chrono::steady_clock::now();
+        auto const billion = 1'000'000'000;
+        // For a batch-wide timeout, we could use:
+        //
+        //      struct __kernel_timespec batch_timeout;
+        //      auto const batch_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(rpc_batch_timeout_k);
+        //      batch_timeout.tv_sec = static_cast<__s64>(batch_ns.count() / billion);
+        //      batch_timeout.tv_nsec = static_cast<__s64>(batch_ns.count() % billion);
+        struct __kernel_timespec packet_timeout;
+        {
+            auto const packet_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(rpc_packet_timeout_k);
+            packet_timeout.tv_sec = static_cast<__s64>(packet_ns.count() / billion);
+            packet_timeout.tv_nsec = static_cast<__s64>(packet_ns.count() % billion);
+        }
+
+        // Submit tasks
+        int count_entries = 0;
+        for (auto &message : messages_) {
+
+            // Prepare send operation
+            auto *submitted_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_sendmsg(submitted_entry, socket_descriptor_, &message.header, 0);
+            io_uring_sqe_set_data(submitted_entry, &message);
+            //? We could also use `IOSQE_CQE_SKIP_SUCCESS` here.
+            //? In that case the State Machine below would be simpler,
+            //? but it would be less representative of a real-world scenario.
+            io_uring_sqe_set_flags(submitted_entry, IOSQE_IO_LINK); // Don't receive before sending :)
+            message.timestamp = std::chrono::steady_clock::now();
+            message.status = status_t::sending_k;
+            count_entries++;
+
+            // Prepare receive operation
+            submitted_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_recvmsg(submitted_entry, socket_descriptor_, &message.header, 0);
+            io_uring_sqe_set_data(submitted_entry, &message);       // Attach to the same buffer
+            io_uring_sqe_set_flags(submitted_entry, IOSQE_IO_LINK); // Link to timeout!
+            count_entries++;
+
+            // Timeout operation
+            submitted_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_link_timeout(submitted_entry, &packet_timeout, 0);
+            io_uring_sqe_set_data(submitted_entry, &packet_timeout_handle_);
+            count_entries++;
+
+            result.sent_packets++;
+        }
+        // We can add a batch-wide timeout:
+        //
+        //      auto *batch_timeout_entry = io_uring_get_sqe(&ring_);
+        //      io_uring_prep_timeout(batch_timeout_entry, &batch_timeout, count_entries, 0);
+        //      io_uring_sqe_set_data(batch_timeout_entry, &batch_timeout_handle_);
+        //      count_entries++;
+        int submitted_entries = io_uring_submit_and_wait(&ring_, count_entries);
+        if (submitted_entries != count_entries) raise_system_error("Failed to submit io_uring");
+
+        // Wait until all packets are received or the batch times out
+        bool batch_killed = false;
+        std::size_t failed_packets = 0;
+        while (result.received_packets + failed_packets < result.sent_packets && !batch_killed) {
+            struct io_uring_cqe *completed_entry;
+            int completed_code = io_uring_wait_cqe(&ring_, &completed_entry);
+            message_t &message = *static_cast<message_t *>(io_uring_cqe_get_data(completed_entry));
+            io_uring_cqe_seen(&ring_, completed_entry);
+
+            if (&message == &packet_timeout_handle_) { continue; }                // We don't care about timeouts
+            else if (&message == &batch_timeout_handle_) { batch_killed = true; } // Time to exit!
+            else if (completed_code < 0) { failed_packets++; }                    // Failed operation
+            else {
+                // Successful submitted the send request:
+                if (message.status == status_t::sending_k) { message.status = status_t::receiving_k; }
+                // Received a reply:
+                else {
+                    auto now = std::chrono::steady_clock::now();
+                    auto diff = now - message.timestamp;
+                    result.max_packet_latency = std::max(result.max_packet_latency, diff);
+                    result.received_packets++;
+                }
+            }
+        }
+
+        // In case we haven't reached the deadline, cancel the batch timeout.
+        // It should drain the queues before we call this function again:
+        //
+        //      if (!batch_killed) {
+        //          auto *lift_timeout_entry = io_uring_get_sqe(&ring_);
+        //          auto batch_timeout_user_data = reinterpret_cast<std::uint64_t>(&batch_timeout_handle_);
+        //          io_uring_prep_timeout_remove(lift_timeout_entry, batch_timeout_user_data, 0);
+        //          io_uring_submit_and_wait(&ring_, 1);
+        //      }
+
+        result.batch_latency = std::chrono::steady_clock::now() - batch_start_time;
+        return result;
+    }
+};
+
+static void rpc_uring55(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+    auto [major, minor] = fetch_linux_kernel_version();
+    if (major < 5 || (major == 5 && minor < 5)) {
+        std::string message = "Kernel version "s + std::to_string(major) + "."s + std::to_string(minor) +
+                              " too old for io_uring 5.5 variant"s;
+        state.SkipWithError(message.c_str());
+        return;
+    }
+    return rpc<rpc_uring55_server, rpc_uring55_client>(state, route, batch_size, packet_size);
+}
+
+BENCHMARK_CAPTURE(rpc_uring55, loopback, networking_route_t::loopback_k, 256 /* messages per batch */,
+                  1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()
+    ->Unit(benchmark::kMicrosecond);
+
+BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* messages per batch */,
+                  1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()
+    ->Unit(benchmark::kMicrosecond);
+
+#endif            // Is Linux 5.5 or higher
+#endif            // Is Linux
+#pragma endregion // IO Uring for Linux Kernel 5.5
+
+/**
+ *  This already provides noticeable improvements over the POSIX version:
+ *
+ *  - Blocking POSIX calls take @b 20-30 microseconds for ping-pong on loopback.
+ *  - Non-blocking `io_uring` calls take @b 5-10 microseconds on the same path.
+ *
+ *  But our previous version is still quite basic, and doesn't use:
+ *
+ *  - `IORING_RECV_MULTISHOT` or `io_uring_prep_recvmsg_multishot` - since 6.0
+ *  - `IORING_OP_SEND_ZC` or `io_uring_prep_sendmsg_zc` - since 6.0
+ *  - `IORING_SETUP_SQPOLL` - with `IORING_FEAT_SQPOLL_NONFIXED` after 5.11
+ *  - `IORING_SETUP_SUBMIT_ALL` - since 5.18
+ *  - `IORING_SETUP_COOP_TASKRUN` - since 5.19
+ *  - `IORING_SETUP_SINGLE_ISSUER` - since 6.0
+ *
+ *  Let's add all of those!
+ *
+ *  - `IORING_SETUP_COOP_TASKRUN` doesn't work
+ *  - `IORING_SETUP_SINGLE_ISSUER` doesn't help
+ *  - `IORING_SETUP_SUBMIT_ALL` - core dumped :O
+ *  - `IORING_OP_SEND_ZC` - core dumped :O
+ */
+
+#pragma region IO Uring for Linux Kernel 6.0
+#if defined(__linux__)
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+
+/**
+ *  @brief  A minimal RPC @b server using @b `io_uring` functionality
+ *          to setup the UDP socket, and process many requests concurrently.
+ *
+ *  Unlike the `rpc_uring55_server`, this version:
+ *  - registers buffers and off-loads buffer selection to the kernel
+ *  - reduces the number of receive operations, using multi-shot receive
+ */
+class rpc_uring60_server {
+
+    int socket_descriptor_;
+    sockaddr_in server_address_;
+    std::atomic_bool should_stop_;
+    io_uring ring_;
+
+    // Pre-allocated resources
+    mmap_array<message_t> messages_;
+    std::size_t max_concurrency_;
+
+  public:
+    using status_t = message_t::message_status_t;
+
+    rpc_uring60_server(std::string const &server_address_str, std::uint16_t port, std::size_t max_concurrency)
+        : should_stop_(false), messages_(max_concurrency * 2), max_concurrency_(max_concurrency) {
+
+        auto [socket_descriptor, server_address] = rpc_server_socket(port, server_address_str);
+        socket_descriptor_ = socket_descriptor;
+        server_address_ = server_address;
+
+        // Zero copy operations would require more socket options
+        int const one = 1;
+        if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_ZEROCOPY, &one, sizeof(one)) < 0)
+            raise_system_error("Failed to enable zero-copy on socket");
+
+        // Initialize `io_uring` with one slot for each receive/send operation
+        // TODO: |= IORING_SETUP_COOP_TASKRUN | IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_SUBMIT_ALL
+        auto io_uring_setup_flags = 0;
+        if (io_uring_queue_init(max_concurrency * 2, &ring_, io_uring_setup_flags) < 0)
+            raise_system_error("Failed to initialize io_uring 6.0 server");
+        if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
+            raise_system_error("Failed to register file descriptor with io_uring 6.0 server");
+
+        // Initialize message resources
+        for (message_t &message : messages_) {
+            memset(&message.header, 0, sizeof(message.header));
+            message.header.msg_name = &message.peer_address;
+            message.header.msg_namelen = sizeof(sockaddr_in);
+            // Each message will be made of just one buffer
+            message.header.msg_iov = &message.io_vec;
+            message.header.msg_iovlen = 1;
+            // ... and that buffer is a member of our `message`
+            message.io_vec.iov_base = message.buffer.data();
+            message.io_vec.iov_len = message.buffer.size();
+            message.status = status_t::pending_k;
+        }
+
+        // Let's register all of those with `IORING_REGISTER_BUFFERS`
+        std::vector<struct iovec> iovecs_to_register;
+        for (message_t &message : messages_) iovecs_to_register.push_back(message.io_vec);
+        if (io_uring_register_buffers(&ring_, iovecs_to_register.data(), iovecs_to_register.size()) < 0)
+            raise_system_error("Failed to register buffers with io_uring 6.0 server");
+    }
+
+    ~rpc_uring60_server() noexcept {}
+    void close() noexcept {
+        ::close(socket_descriptor_);
+        io_uring_queue_exit(&ring_);
+    }
+
+    void stop() noexcept { should_stop_.store(true, std::memory_order_seq_cst); }
+
+    void operator()() noexcept {
+        // Submit the initial receive operation
+        {
+            message_t &message = *messages_.begin();
+            struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_recvmsg_multishot(receive_entry, socket_descriptor_, &message.header, MSG_TRUNC);
+            receive_entry->flags |= IOSQE_FIXED_FILE;
+            receive_entry->flags |= IOSQE_BUFFER_SELECT;
+            receive_entry->buf_group = 0;
+            io_uring_sqe_set_data(receive_entry, &message);
+        }
+        io_uring_submit(&ring_);
+
+        while (!should_stop_.load(std::memory_order_seq_cst)) {
+            struct io_uring_cqe *completed_entry;
+            bool completed_something = io_uring_peek_cqe(&ring_, &completed_entry) == 0;
+            if (!completed_something) continue;
+
+            int transmitted_length = completed_entry->res;
+            message_t &message = *static_cast<message_t *>(io_uring_cqe_get_data(completed_entry));
+
+            // If we've received some content, submit a reply
+            if (message.status == status_t::receiving_k) {
+                struct io_uring_sqe *send_entry = io_uring_get_sqe(&ring_);
+                message.status = status_t::sending_k;
+                io_uring_prep_sendmsg_zc(send_entry, socket_descriptor_, &message.header, 0);
+                send_entry->flags |= IOSQE_FIXED_FILE;
+                io_uring_sqe_set_data(send_entry, &message);
+            }
+
+            // Prepare next receive operation
+            else if (message.status == status_t::sending_k) {
+                struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
+                message.status = status_t::receiving_k;
+                memset(&message.peer_address, 0, sizeof(sockaddr_in));
+                io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &message.header, 0);
+                receive_entry->flags |= IOSQE_FIXED_FILE;
+                io_uring_sqe_set_data(receive_entry, &message);
+            }
+
+            io_uring_cqe_seen(&ring_, completed_entry);
+            io_uring_submit(&ring_);
+        }
+    }
+};
+
+/**
+ *  @brief  A minimal RPC @b client using @b `io_uring` functionality
+ *          to setup the UDP socket, and process many requests in batches.
+ */
+class rpc_uring60_client {
+
+    int socket_descriptor_;
+    sockaddr_in server_address_;
+    io_uring ring_;
+
+    // Pre-allocated resources
+    mmap_array<message_t> messages_;
+    message_t packet_timeout_handle_;
+    message_t batch_timeout_handle_;
+
+  public:
+    using status_t = message_t::message_status_t;
+
+    rpc_uring60_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
+        : messages_(concurrency) {
+        // Initialize socket
+        socket_descriptor_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (socket_descriptor_ < 0) raise_system_error("Failed to create socket");
+
+        // Zero copy operations would require more socket options
+        int const one = 1;
+        if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_ZEROCOPY, &one, sizeof(one)) < 0)
+            raise_system_error("Failed to enable zero-copy on socket");
+
+        // Resolve server address
+        server_address_.sin_family = AF_INET;
+        server_address_.sin_addr.s_addr = inet_addr(server_addr.c_str());
+        server_address_.sin_port = htons(port);
+
+        // Initialize io_uring with one slot for each send/receive/timeout operation,
+        // as well as a batch-level timeout operation and a cancel operation for the
+        // batch-level timeout.
+        auto io_uring_setup_flags = 0;
+        if (io_uring_queue_init(concurrency * 3 + 1 + 1, &ring_, io_uring_setup_flags) < 0)
+            raise_system_error("Failed to initialize io_uring 6.0 client");
+        if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
+            raise_system_error("Failed to register file descriptor with io_uring 6.0 client");
+
+        // Initialize message resources
+        for (message_t &message : messages_) {
+            memset(&message.header, 0, sizeof(message.header));
+            message.header.msg_name = &server_address_;
+            message.header.msg_namelen = sizeof(server_address_);
+            // Each message will be made of just one buffer
+            message.header.msg_iov = &message.io_vec;
+            message.header.msg_iovlen = 1;
+            // ... and that buffer is a member of our `message`
+            message.io_vec.iov_base = message.buffer.data();
+            message.io_vec.iov_len = message.buffer.size();
+            // Initialize the buffer with some data
+            message.buffer.fill('X');
+            message.status = status_t::pending_k;
+        }
+
+        // Let's register all of those with `IORING_REGISTER_BUFFERS`
+        std::vector<struct iovec> iovecs_to_register;
+        for (message_t &message : messages_) iovecs_to_register.push_back(message.io_vec);
+        if (io_uring_register_buffers(&ring_, iovecs_to_register.data(), iovecs_to_register.size()) < 0)
+            raise_system_error("Failed to register buffers with io_uring 6.0 client");
+    }
+
+    ~rpc_uring60_client() noexcept {
+        close(socket_descriptor_);
+        io_uring_queue_exit(&ring_);
+    }
+
+    rpc_batch_result operator()() noexcept {
+        rpc_batch_result result;
+
+        auto const batch_start_time = std::chrono::steady_clock::now();
+        auto const billion = 1'000'000'000;
+        // For a batch-wide timeout, we could use:
+        //
+        //      struct __kernel_timespec batch_timeout;
+        //      auto const batch_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(rpc_batch_timeout_k);
+        //      batch_timeout.tv_sec = static_cast<__s64>(batch_ns.count() / billion);
+        //      batch_timeout.tv_nsec = static_cast<__s64>(batch_ns.count() % billion);
+        struct __kernel_timespec packet_timeout;
+        {
+            auto const packet_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(rpc_packet_timeout_k);
+            packet_timeout.tv_sec = static_cast<__s64>(packet_ns.count() / billion);
+            packet_timeout.tv_nsec = static_cast<__s64>(packet_ns.count() % billion);
+        }
+
+        // Submit tasks
+        int count_entries = 0;
+        for (auto &message : messages_) {
+
+            // Prepare send operation
+            auto *submitted_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_sendmsg_zc(submitted_entry, socket_descriptor_, &message.header, MSG_WAITALL);
+            io_uring_sqe_set_data(submitted_entry, &message);
+            //? We could also use `IOSQE_CQE_SKIP_SUCCESS` here.
+            //? In that case the State Machine below would be simpler,
+            //? but it would be less representative of a real-world scenario.
+            io_uring_sqe_set_flags(submitted_entry, IOSQE_IO_LINK); // Don't receive before sending :)
+            message.timestamp = std::chrono::steady_clock::now();
+            message.status = status_t::sending_k;
+            count_entries++;
+
+            // Prepare receive operation
+            submitted_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_recvmsg(submitted_entry, socket_descriptor_, &message.header, 0);
+            io_uring_sqe_set_data(submitted_entry, &message);       // Attach to the same buffer
+            io_uring_sqe_set_flags(submitted_entry, IOSQE_IO_LINK); // Link to timeout!
+            count_entries++;
+
+            // Timeout operation
+            submitted_entry = io_uring_get_sqe(&ring_);
+            io_uring_prep_link_timeout(submitted_entry, &packet_timeout, 0);
+            io_uring_sqe_set_data(submitted_entry, &packet_timeout_handle_);
+            count_entries++;
+
+            result.sent_packets++;
+        }
+        // We can add a batch-wide timeout:
+        //
+        //      auto *batch_timeout_entry = io_uring_get_sqe(&ring_);
+        //      io_uring_prep_timeout(batch_timeout_entry, &batch_timeout, count_entries, 0);
+        //      io_uring_sqe_set_data(batch_timeout_entry, &batch_timeout_handle_);
+        //      count_entries++;
+        int submitted_entries = io_uring_submit_and_wait(&ring_, count_entries);
+        if (submitted_entries != count_entries) raise_system_error("Failed to submit io_uring");
+
+        // Wait until all packets are received or the batch times out
+        bool batch_killed = false;
+        std::size_t failed_packets = 0;
+        while (result.received_packets + failed_packets < result.sent_packets && !batch_killed) {
+            struct io_uring_cqe *completed_entry;
+            int completed_code = io_uring_wait_cqe(&ring_, &completed_entry);
+            message_t &message = *static_cast<message_t *>(io_uring_cqe_get_data(completed_entry));
+            io_uring_cqe_seen(&ring_, completed_entry);
+
+            if (&message == &packet_timeout_handle_) { continue; }                // We don't care about timeouts
+            else if (&message == &batch_timeout_handle_) { batch_killed = true; } // Time to exit!
+            else if (completed_code < 0) { failed_packets++; }                    // Failed operation
+            else {
+                // Successful submitted the send request:
+                if (message.status == status_t::sending_k) { message.status = status_t::receiving_k; }
+                // Received a reply:
+                else {
+                    auto now = std::chrono::steady_clock::now();
+                    auto diff = now - message.timestamp;
+                    result.max_packet_latency = std::max(result.max_packet_latency, diff);
+                    result.received_packets++;
+                }
+            }
+        }
+
+        // In case we haven't reached the deadline, cancel the batch timeout.
+        // It should drain the queues before we call this function again:
+        //
+        //      if (!batch_killed) {
+        //          auto *lift_timeout_entry = io_uring_get_sqe(&ring_);
+        //          auto batch_timeout_user_data = reinterpret_cast<std::uint64_t>(&batch_timeout_handle_);
+        //          io_uring_prep_timeout_remove(lift_timeout_entry, batch_timeout_user_data, 0);
+        //          io_uring_submit_and_wait(&ring_, 1);
+        //      }
+
+        result.batch_latency = std::chrono::steady_clock::now() - batch_start_time;
+        return result;
+    }
+};
+
+static void rpc_uring60(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+    auto [major, minor] = fetch_linux_kernel_version();
+    if (major < 6) {
+        std::string message = "Kernel version "s + std::to_string(major) + "."s + std::to_string(minor) +
+                              " too old for io_uring 6.0 variant"s;
+        state.SkipWithError(message.c_str());
+        return;
+    }
+    return rpc<rpc_uring60_server, rpc_uring60_client>(state, route, batch_size, packet_size);
+}
+
+BENCHMARK_CAPTURE(rpc_uring60, loopback, networking_route_t::loopback_k, 256 /* messages per batch */,
+                  1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()
+    ->Unit(benchmark::kMicrosecond);
+
+BENCHMARK_CAPTURE(rpc_uring60, public, networking_route_t::public_k, 256 /* messages per batch */,
+                  1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()
+    ->Unit(benchmark::kMicrosecond);
+
+#endif            // Is Linux 6.0 or higher
+#endif            // Is Linux
+#pragma endregion // IO Uring
+
 #pragma region ASIO
+#include <asio.hpp>
+
+class rpc_asio_server {
+
+    asio::io_context context_;
+    asio::ip::udp::socket socket_;
+    std::thread context_thread_;
+
+    /// @brief Buffers, one per concurrent request
+    std::vector<rpc_buffer_t> buffers_;
+    /// @brief Where did the packets come from
+    std::vector<asio::ip::udp::endpoint> clients_;
+    /// @brief Which buffers are available?
+    std::vector<std::size_t> buffers_available_;
+    /// @brief Flag to stop the server without corrupting the state
+    std::atomic_bool should_stop_;
+    // Use a work guard so the io_context doesn’t run out of work and exit.
+    asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
+
+    std::size_t failed_receptions_ = 0;
+    std::size_t failed_responses_ = 0;
+
+  public:
+    rpc_asio_server(std::string const &address, std::uint16_t port, std::size_t max_concurrency)
+        : context_(), socket_(context_), buffers_(max_concurrency), clients_(max_concurrency),
+          work_guard_(asio::make_work_guard(context_)) {
+        // Use your helper function to create and bind the native socket.
+        auto server = rpc_server_socket(port, address);
+        // Now assign the native socket to the ASIO socket.
+        socket_.assign(asio::ip::udp::v4(), server.socket_descriptor);
+    }
+
+    void stop() { should_stop_.store(true, std::memory_order_seq_cst); }
+    void close() {
+        socket_.cancel();
+        context_.stop();
+        if (context_thread_.joinable()) context_thread_.join();
+    }
+
+    void operator()() {
+        // For per-operation cancellations we could use the `asio::cancellation_signal`.
+        // Let's issue a receive operation for each buffer, which will call a chain of
+        // operations to process the packet and send a response, and repeat again.
+        for (std::size_t job = 0; job < buffers_.size(); ++job) reuse_buffer(job);
+        // Start listening for incoming packets.
+        context_thread_ = std::thread([this] { context_.run(); });
+    }
+
+  private:
+    void reuse_buffer(std::size_t job) {
+        auto finalize = [this, job](std::error_code error, std::size_t) {
+            if (error) failed_responses_++;
+            if (should_stop_.load(std::memory_order_seq_cst)) return;
+            reuse_buffer(job);
+        };
+        auto respond = [this, finalize, job](std::error_code error, std::size_t bytes) {
+            if (error) { reuse_buffer(job); }
+            else { socket_.async_send_to(asio::buffer(buffers_[job], bytes), clients_[job], finalize); }
+        };
+        socket_.async_receive_from(asio::buffer(buffers_[job]), clients_[job], respond);
+    }
+};
+
+class rpc_asio_client {
+
+    asio::io_context context_;
+    asio::ip::udp::socket socket_;
+    asio::ip::udp::endpoint server_;
+    std::thread context_thread_;
+
+    /// @brief Buffers, one per concurrent request
+    std::vector<rpc_buffer_t> buffers_;
+    /// @brief Track the send timestamps for each slot to measure latency
+    std::vector<std::chrono::steady_clock::time_point> send_times_;
+    // Work guard to keep the io_context running.
+    asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
+
+  public:
+    rpc_asio_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
+        : context_(), socket_(context_), buffers_(concurrency), send_times_(concurrency),
+          work_guard_(asio::make_work_guard(context_)) {
+
+        // Use the helper function to create the native client socket.
+        auto client = rpc_client_socket(server_addr, port);
+        // Assign the native socket to the ASIO socket.
+        socket_.assign(asio::ip::udp::v4(), client.socket_descriptor);
+        // Convert the native `sockaddr_in` from our `rpc_client_socket` to an ASIO endpoint.
+        server_ = asio::ip::udp::endpoint(                                      //
+            asio::ip::address_v4(ntohl(client.server_address.sin_addr.s_addr)), //
+            ntohs(client.server_address.sin_port));
+        // Start listening for incoming packets.
+        context_thread_ = std::thread([this] { context_.run(); });
+
+        // Fill each buffer with some pattern (just 'X's, for example)
+        for (auto &buf : buffers_) buf.fill('X');
+    }
+
+    ~rpc_asio_client() {
+        socket_.cancel();
+        context_.stop();
+        if (context_thread_.joinable()) context_thread_.join();
+    }
+
+    rpc_batch_result operator()() { return one_batch(); }
+
+  private:
+    rpc_batch_result one_batch() {
+        rpc_batch_result result;
+
+        // For per-operation cancellations we could use the `asio::cancellation_signal`,
+        // but this is the simple lucky case when we only want to cancel all the outstanding
+        // transfers at once.
+        std::atomic<std::size_t> remaining = 0;
+        for (std::size_t job = 0; job < buffers_.size(); ++job, ++remaining) {
+            send_times_[job] = std::chrono::steady_clock::now();
+            auto finalize = [this, job, &result, &remaining](std::error_code error, std::size_t) {
+                remaining--;
+                if (error) return;
+
+                // Measure latency
+                auto response_time = std::chrono::steady_clock::now();
+                auto diff = response_time - send_times_[job];
+                result.batch_latency += diff;
+                result.max_packet_latency = std::max(result.max_packet_latency, diff);
+                result.received_packets++;
+            };
+            auto receive = [this, job, finalize, &remaining](std::error_code error, std::size_t bytes) {
+                if (error) { remaining--; }
+                else { socket_.async_receive_from(asio::buffer(buffers_[job], bytes), server_, finalize); }
+            };
+            socket_.async_send_to(asio::buffer(buffers_[job]), server_, receive);
+            result.sent_packets++;
+        }
+
+        std::chrono::steady_clock::time_point expiry = std::chrono::steady_clock::now() + rpc_batch_timeout_k;
+        asio::steady_timer timer(context_, expiry);
+        timer.wait();
+        if (remaining) socket_.cancel(); // Forcibly abort all ops on this socket
+        return result;
+    }
+};
+
+static void rpc_asio(bm::State &state, networking_route_t route, std::size_t batch_size, std::size_t packet_size) {
+    return rpc<rpc_asio_server, rpc_asio_client>(state, route, batch_size, packet_size);
+}
+
+BENCHMARK_CAPTURE(rpc_asio, loopback, networking_route_t::loopback_k, 256 /* messages per batch */,
+                  1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()
+    ->Unit(benchmark::kMicrosecond);
+
+BENCHMARK_CAPTURE(rpc_asio, public, networking_route_t::public_k, 256 /* messages per batch */,
+                  1024 /* bytes per packet */)
+    ->MinTime(2)
+    ->UseManualTime()
+    ->Unit(benchmark::kMicrosecond);
 
 #pragma endregion // ASIO
 
@@ -5706,7 +7004,15 @@ int main(int argc, char **argv) {
 
     // Let's log the CPU specs:
     std::size_t const cache_line_width = fetch_cache_line_width();
+    std::string const public_ip = fetch_public_ip();
     std::printf("Cache line width: %zu bytes\n", cache_line_width);
+    std::printf("Public IP address: %s\n", public_ip.c_str());
+
+// On Linux we can print more metadata:
+#if defined(__linux__)
+    auto [major, minor] = fetch_linux_kernel_version();
+    std::printf("Linux kernel version: %d.%d\n", major, minor);
+#endif
 
     // Make sure the defaults are set correctly:
     char arg0_default[] = "benchmark";

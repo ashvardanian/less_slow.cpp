@@ -2,7 +2,7 @@
 # 3.17+ for `FindCUDAToolkit`
 # 3.25.2 for CUDA20 support
 # The good news is that Ubuntu 24.04 comes with 3.28!
-cmake_minimum_required(VERSION 0.6.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.25.2 FATAL_ERROR)
 
 # ------------------------------------------------------------------------------
 # Project Setup
@@ -51,7 +51,7 @@ endif()
 # Options
 # ------------------------------------------------------------------------------
 option(USE_INTEL_TBB "Use Intel TBB for parallel STL algorithms" ON)
-option(USE_NVIDIA_CCCL "Use Nvidia CCCL for CUDA acceleration" ON)
+option(USE_NVIDIA_CCCL "Use Nvidia CCCL for CUDA acceleration" OFF)
 
 # Enable or disable options based on system and CUDA support
 if(ENABLE_CUDA)
@@ -69,16 +69,36 @@ message(STATUS "USE_NVIDIA_CCCL: ${USE_NVIDIA_CCCL}")
 # ------------------------------------------------------------------------------
 find_package(Threads REQUIRED)
 find_package(OpenMP QUIET)
-find_package(BLAS QUIET)
-
-if(BLAS_FOUND)
-  message(STATUS "BLAS found: ${BLAS_LIBRARIES}")
-else()
-  message(FATAL_ERROR "BLAS not found")
-endif()
 
 set(FETCHCONTENT_QUIET OFF)
 include(FetchContent)
+
+# Disable warnings for dependencies
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
+
+# Sadly, OpenBLAS compilation fails on some platforms
+#
+# FetchContent_Declare(
+# OpenBLAS
+# GIT_REPOSITORY https://github.com/xianyi/OpenBLAS.git
+# GIT_TAG v0.3.29
+# )
+# set(NOFORTRAN ON CACHE BOOL "Disable Fortran" FORCE)
+# set(BUILD_WITHOUT_LAPACK ON CACHE BOOL "Build without LAPACK" FORCE)
+# set(USE_THREAD ON CACHE BOOL "Use threading" FORCE)
+# FetchContent_MakeAvailable(OpenBLAS)
+#
+# Moreover, CMake sometimes fails to find it on Windows:
+# https://stackoverflow.com/a/78335726/2766161
+set(CMAKE_FIND_LIBRARY_PREFIXES ";lib")
+find_package(BLAS REQUIRED)
+
+include(CheckFunctionExists)
+check_function_exists(openblas_set_num_threads LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
+if(LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
+    add_definitions(-DLESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
+endif()
 
 # GTest (required by Google Benchmark)
 FetchContent_Declare(
@@ -165,7 +185,8 @@ FetchContent_MakeAvailable(VictorZverovichFMT)
 FetchContent_Declare(
   EricNieblerRangeV3
   GIT_REPOSITORY https://github.com/ericniebler/range-v3
-  GIT_TAG master
+  GIT_TAG master # The tags are not up-to-date
+  GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(EricNieblerRangeV3)
 
@@ -173,7 +194,8 @@ FetchContent_MakeAvailable(EricNieblerRangeV3)
 FetchContent_Declare(
   AndreasBuhrCppCoro
   GIT_REPOSITORY https://github.com/andreasbuhr/cppcoro
-  GIT_TAG main
+  GIT_TAG main # No tags on this fork
+  GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(AndreasBuhrCppCoro)
 
@@ -182,7 +204,8 @@ set(CXX_COROUTINES_HAVE_COROUTINES 0)
 FetchContent_Declare(
   MetaLibUnifEx
   GIT_REPOSITORY https://github.com/facebookexperimental/libunifex.git
-  GIT_TAG main
+  GIT_TAG main # The tags are not up-to-date
+  GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(MetaLibUnifEx)
 
@@ -190,7 +213,7 @@ FetchContent_MakeAvailable(MetaLibUnifEx)
 FetchContent_Declare(
   AshVardanianStringZilla
   GIT_REPOSITORY https://github.com/ashvardanian/stringzilla
-  GIT_TAG main
+  GIT_TAG v3.11.3
 )
 FetchContent_MakeAvailable(AshVardanianStringZilla)
 
@@ -198,7 +221,8 @@ FetchContent_MakeAvailable(AshVardanianStringZilla)
 FetchContent_Declare(
   HanaDusikovaCTRE
   GIT_REPOSITORY https://github.com/hanickadot/compile-time-regular-expressions
-  GIT_TAG main
+  GIT_TAG main # The tags are not up-to-date
+  GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(HanaDusikovaCTRE)
 
@@ -218,13 +242,41 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(NielsLohmannJSON)
 
-# Yaoyuan Guo YYJSON for more flexible & performant C-style parsing
+# Yaoyuan Guo's YYJSON for more flexible & performant C-style parsing
 FetchContent_Declare(
   YaoyuanGuoYYJSON
   GIT_REPOSITORY https://github.com/ibireme/yyjson.git
   GIT_TAG 0.10.0
 )
 FetchContent_MakeAvailable(YaoyuanGuoYYJSON)
+
+# Chris Karloff's ASIO standalone, avoiding Boost... integration is a bit tricky:
+# https://github.com/cpm-cmake/CPM.cmake/blob/master/examples/asio-standalone/CMakeLists.txt
+FetchContent_Declare(
+  ChrisKohlhoffASIO
+  GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+  GIT_TAG asio-1-32-0 # Latest docs are for 1.30.2 😭
+)
+FetchContent_MakeAvailable(ChrisKohlhoffASIO)
+add_library(asio INTERFACE)
+target_include_directories(asio SYSTEM INTERFACE ${chriskohlhoffasio_SOURCE_DIR}/asio/include)
+target_compile_definitions(asio INTERFACE ASIO_STANDALONE ASIO_NO_DEPRECATED)
+
+# Jens Axboe's liburing to simplify I/O operations on Linux
+# https://github.com/axboe/liburing/pull/438
+# https://github.com/axboe/liburing/issues/946
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(LIBURING REQUIRED liburing)
+
+  if(LIBURING_FOUND)
+    message(STATUS "liburing found: version=${LIBURING_VERSION}")
+    message(STATUS "Include dirs: ${LIBURING_INCLUDE_DIRS}")
+    message(STATUS "Libraries:   ${LIBURING_LIBRARIES}")
+  else()
+    message(FATAL_ERROR "liburing not found. Please install liburing-dev.")
+  endif()
+endif()
 
 # Eigen is one of the few libraries not using GitHub
 FetchContent_Declare(
@@ -252,6 +304,7 @@ endif()
 # ------------------------------------------------------------------------------
 # Compiler Flags / Options
 # ------------------------------------------------------------------------------
+
 # Check for compiler support of `-march=native`
 if(CMAKE_CXX_COMPILER_ID MATCHES "Intel")
   target_compile_options(less_slow PRIVATE -xHost)
@@ -296,25 +349,32 @@ endif()
 
 # Release vs. Debug flags via generator expressions
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  target_compile_options(less_slow PRIVATE
-    $<$<CONFIG:Release>:-O3>
-    $<$<CONFIG:Release>:-Wno-unused-but-set-variable>
-    $<$<CONFIG:Release>:-falign-functions=32>
-    $<$<CONFIG:Debug>:-g>
-  )
-  set_property(TARGET less_slow PROPERTY SANITIZE_ADDRESS TRUE)
-  set_property(TARGET less_slow PROPERTY SANITIZE_UNDEFINED TRUE)
+  if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    target_compile_options(less_slow PRIVATE
+      -O3
+      -Wno-unused-but-set-variable
+      -falign-functions=32
+    )
+  endif()
+
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    target_compile_options(less_slow PRIVATE -g)
+  endif()
+
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set_property(TARGET less_slow PROPERTY SANITIZE_ADDRESS TRUE)
+    set_property(TARGET less_slow PROPERTY SANITIZE_UNDEFINED TRUE)
+  endif()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-  target_compile_options(less_slow PRIVATE
-    $<$<CONFIG:Release>:/O2>
-    $<$<CONFIG:Release>:/Ob2>
-    $<$<CONFIG:Release>:/Oi>
-    $<$<CONFIG:Release>:/Ot>
-    $<$<CONFIG:Release>:/GL>
-  )
-  target_link_options(less_slow PRIVATE
-    $<$<CONFIG:Release>:/LTCG:incremental>
-  )
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_options(less_slow PRIVATE "/O2" "/Ob2" "/Oi" "/Ot" "/GL")
+    target_link_options(less_slow PRIVATE "/LTCG:incremental")
+  elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(less_slow PRIVATE "/Od" "/Zi")
+  elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    target_compile_options(less_slow PRIVATE "/O2" "/Ob2" "/Oi" "/Ot" "/GL" "/Zi")
+    target_link_options(less_slow PRIVATE "/LTCG:incremental")
+  endif()
 endif()
 
 # ------------------------------------------------------------------------------
@@ -331,6 +391,7 @@ target_link_libraries(less_slow
   stringzilla
   yyjson
   ctre
+  asio
 
   # There is no `absl` shortcut:
   # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets
@@ -339,6 +400,11 @@ target_link_libraries(less_slow
   Eigen3::Eigen
   ${BLAS_LIBRARIES}
 )
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # target_include_directories(less_slow PRIVATE ${LIBURING_INCLUDE_DIRS})
+  target_link_libraries(less_slow PRIVATE ${LIBURING_LIBRARIES})
+endif()
 
 if(USE_INTEL_TBB)
   target_link_libraries(less_slow PRIVATE TBB::tbb)

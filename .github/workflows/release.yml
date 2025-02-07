@@ -32,7 +32,7 @@ jobs:
           verbose: "true"
           version-file: "VERSION"
           update-version-in: |
-            CMakeLists.txt:VERSION (\d+\.\d+\.\d+)
+            CMakeLists.txt:^\s*VERSION (\d+\.\d+\.\d+)
           dry-run: "false"
           push: "true"
           create-release: "true"

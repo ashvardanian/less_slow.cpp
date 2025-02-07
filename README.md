@@ -22,7 +22,7 @@ Some of the highlights include:
 - __Scaling AI?__ Measure the gap between theoretical [ALU](https://en.wikipedia.org/wiki/Arithmetic_logic_unit) throughput and your [BLAS](https://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms).
 - __How many if conditions are too many?__ Test your CPU's branch predictor with just 10 lines of code.
 - __Prefer recursion to iteration?__ Measure the depth at which your algorithm with [`SEGFAULT`](https://en.wikipedia.org/wiki/Segmentation_fault).
-- How to choose between exceptions, `std::error_code`, and [`std::variant`](https://en.cppreference.com/w/cpp/utility/variant)-like wrappers?
+- __Why avoid exceptions?__ Take `std::error_code` or [`std::variant`](https://en.cppreference.com/w/cpp/utility/variant)-like wrappers?
 - __Scaling to many cores?__ Learn how to use [OpenMP](https://en.wikipedia.org/wiki/OpenMP), Intel's oneTBB, or your custom thread pool.
 - __How to handle [JSON](https://www.json.org/json-en.html) avoiding memory allocations?__ Is it easier with C++ 20 or old-school C 99 tools?
 - __How to properly use STL's associative containers__ with custom keys and transparent comparators?
@@ -30,8 +30,9 @@ Some of the highlights include:
 - __Is the pointer size really 64 bits__ and how to exploit [pointer-tagging](https://en.wikipedia.org/wiki/Tagged_pointer)?
 - __How many packets is [UDP](https://www.cloudflare.com/learning/ddos/glossary/user-datagram-protocol-udp/) dropping__ and how to serve web requests in [`io_uring`](https://en.wikipedia.org/wiki/Io_uring) from user-space?
 - __Scatter and Gather__ for 50% faster vectorized disjoint memory operations.
+- __Intel's oneAPI vs Nvidia's CCCL?__ What's so special about `<thrust>` and `<cub>`?
 - __CUDA C++, [PTX](https://en.wikipedia.org/wiki/Parallel_Thread_Execution) Intermediate Representations, and SASS__, and how do they differ from CPU code?
-- __How to choose between intrinsics, inline Assembly, and separate `.S` files__ for your performance-critical code?
+- __How to choose between intrinsics, inline `asm`, and separate `.S` files__ for your performance-critical code?
 - __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
@@ -51,6 +52,11 @@ If you are familiar with C++ and want to review code and measurements as you rea
 ```sh
 git clone https://github.com/ashvardanian/less_slow.cpp.git # Clone the repository
 cd less_slow.cpp                                            # Change the directory
+
+sudo apt-get install build-essential cmake g++              # Install default build tools
+sudo apt-get install pkg-config liburing-dev                # Install liburing for kernel-bypass
+sudo apt-get install libopenblas-base                       # Install numerics libraries
+
 cmake -B build_release -D CMAKE_BUILD_TYPE=Release          # Generate the build files
 cmake --build build_release --config Release                # Build the project
 build_release/less_slow                                     # Run the benchmarks
@@ -69,6 +75,8 @@ The build will pull and compile several third-party dependencies from the source
 - Yaoyuan Guo's [yyjson](https://github.com/ibireme/yyjson) for faster JSON processing.
 - Google's [Abseil](https://github.com/abseil/abseil-cpp) replaces STL's associative containers.
 - Lewis Baker's [cppcoro](https://github.com/lewissbaker/cppcoro) implements C++20 coroutines.
+- Jens Axboe's [liburing](https://github.com/axboe/liburing) to simplify Linux kernel-bypass.
+- Chris Kohlhoff's [ASIO](https://github.com/chriskohlhoff/asio) as a [networking TS](https://en.cppreference.com/w/cpp/experimental/networking) extension.
 - Nvidia's [CCCL](https://github.com/nvidia/cccl) for GPU-accelerated computations.
 
 To control the output or run specific benchmarks, use the following flags:
