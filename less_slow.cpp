@@ -6105,8 +6105,10 @@ BENCHMARK_CAPTURE(rpc_libc, public, networking_route_t::public_k, //
 
 #pragma endregion // POSIX
 
-#if defined(__linux__) // The next section only applies to kernel bypass on Linux
 #pragma region IO Uring for Linux Kernel 5.5
+#if defined(__linux__)
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)
 
 /**
  *  We will start by designing a version that only uses features available
@@ -6484,6 +6486,8 @@ BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* mess
     ->UseManualTime()
     ->Unit(benchmark::kMicrosecond);
 
+#endif            // Is Linux 5.5 or higher
+#endif            // Is Linux
 #pragma endregion // IO Uring for Linux Kernel 5.5
 
 /**
@@ -6510,6 +6514,9 @@ BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* mess
  */
 
 #pragma region IO Uring for Linux Kernel 6.0
+#if defined(__linux__)
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 
 /**
  *  @brief  A minimal RPC @b server using @b `io_uring` functionality
@@ -6816,8 +6823,9 @@ BENCHMARK_CAPTURE(rpc_uring60, public, networking_route_t::public_k, 256 /* mess
     ->UseManualTime()
     ->Unit(benchmark::kMicrosecond);
 
+#endif            // Is Linux 6.0 or higher
+#endif            // Is Linux
 #pragma endregion // IO Uring
-#endif            // defined(__linux__)
 
 #pragma region ASIO
 #include <asio.hpp>

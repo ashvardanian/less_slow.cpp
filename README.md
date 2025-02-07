@@ -32,7 +32,7 @@ Some of the highlights include:
 - __Scatter and Gather__ for 50% faster vectorized disjoint memory operations.
 - __Intel's oneAPI vs Nvidia's CCCL?__ What's so special about `<thrust>` and `<cub>`?
 - __CUDA C++, [PTX](https://en.wikipedia.org/wiki/Parallel_Thread_Execution) Intermediate Representations, and SASS__, and how do they differ from CPU code?
-- __How to choose between intrinsics, inline Assembly, and separate `.S` files__ for your performance-critical code?
+- __How to choose between intrinsics, inline `asm`, and separate `.S` files__ for your performance-critical code?
 - __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
