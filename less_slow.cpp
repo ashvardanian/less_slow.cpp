@@ -6508,6 +6508,10 @@ BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* mess
 /**
  *  @brief  A minimal RPC @b server using @b `io_uring` functionality
  *          to setup the UDP socket, and process many requests concurrently.
+ *
+ *  Unlike the `rpc_uring55_server`, this version:
+ *  - registers buffers and off-loads buffer selection to the kernel
+ *  - reduces the number of receive operations, using multi-shot receive
  */
 class rpc_uring60_server {
 
@@ -6537,7 +6541,7 @@ class rpc_uring60_server {
 
         // Initialize `io_uring` with one slot for each receive/send operation
         // TODO: |= IORING_SETUP_COOP_TASKRUN | IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_SUBMIT_ALL
-        auto io_uring_setup_flags = IORING_SETUP_SQPOLL;
+        auto io_uring_setup_flags = 0;
         if (io_uring_queue_init(max_concurrency * 2, &ring_, io_uring_setup_flags) < 0)
             raise_system_error("Failed to initialize io_uring 6.0 server");
         if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
@@ -6573,18 +6577,16 @@ class rpc_uring60_server {
     void stop() noexcept { should_stop_.store(true, std::memory_order_seq_cst); }
 
     void operator()() noexcept {
-        // Submit initial receive operations
-        for (message_t &message : messages_) {
-            message.status = status_t::receiving_k;
-            memset(&message.peer_address, 0, sizeof(sockaddr_in));
+        // Submit the initial receive operation
+        {
+            message_t &message = *messages_.begin();
             struct io_uring_sqe *receive_entry = io_uring_get_sqe(&ring_);
-            // TODO: Switch to multishot:
-            // io_uring_prep_recvmsg_multishot(receive_entry, socket_descriptor_, &message.header,
-            //                                 IOSQE_BUFFER_SELECT | IOSQE_FIXED_FILE);
-            io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &message.header, 0);
+            io_uring_prep_recvmsg_multishot(receive_entry, socket_descriptor_, &message.header, MSG_TRUNC);
+            receive_entry->flags |= IOSQE_FIXED_FILE;
+            receive_entry->flags |= IOSQE_BUFFER_SELECT;
+            receive_entry->buf_group = 0;
             io_uring_sqe_set_data(receive_entry, &message);
         }
-
         io_uring_submit(&ring_);
 
         while (!should_stop_.load(std::memory_order_seq_cst)) {
@@ -6600,6 +6602,7 @@ class rpc_uring60_server {
                 struct io_uring_sqe *send_entry = io_uring_get_sqe(&ring_);
                 message.status = status_t::sending_k;
                 io_uring_prep_sendmsg_zc(send_entry, socket_descriptor_, &message.header, 0);
+                send_entry->flags |= IOSQE_FIXED_FILE;
                 io_uring_sqe_set_data(send_entry, &message);
             }
 
@@ -6609,6 +6612,7 @@ class rpc_uring60_server {
                 message.status = status_t::receiving_k;
                 memset(&message.peer_address, 0, sizeof(sockaddr_in));
                 io_uring_prep_recvmsg(receive_entry, socket_descriptor_, &message.header, 0);
+                receive_entry->flags |= IOSQE_FIXED_FILE;
                 io_uring_sqe_set_data(receive_entry, &message);
             }
 
@@ -6655,7 +6659,7 @@ class rpc_uring60_client {
         // Initialize io_uring with one slot for each send/receive/timeout operation,
         // as well as a batch-level timeout operation and a cancel operation for the
         // batch-level timeout.
-        auto io_uring_setup_flags = IORING_SETUP_SQPOLL;
+        auto io_uring_setup_flags = 0;
         if (io_uring_queue_init(concurrency * 3 + 1 + 1, &ring_, io_uring_setup_flags) < 0)
             raise_system_error("Failed to initialize io_uring 6.0 client");
         if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
