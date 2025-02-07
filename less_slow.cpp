@@ -2270,9 +2270,15 @@ BENCHMARK_CAPTURE(                                                             /
     ->MinTime(10);
 
 BENCHMARK_CAPTURE(                                                              //
-    theoretic_tops_ptx, tf32tf32_sm90tc_wgmma,                                  //
+    theoretic_tops_ptx, tf32tf32_sm90tc_wgmma_smallest,                         //
     "less_slow_sm90a.ptx", "tops_tf32tf32_sm90tc_m64n16k8_1024loop_ptx_kernel", //
-    64, 8, 16, 1024, 90)
+    64, 16, 8, 1024, 90)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                               //
+    theoretic_tops_ptx, tf32tf32_sm90tc_wgmma_largest,                           //
+    "less_slow_sm90a.ptx", "tops_tf32tf32_sm90tc_m64n256k8_1024loop_ptx_kernel", //
+    64, 256, 8, 1024, 90)
     ->MinTime(10);
 
 /**
