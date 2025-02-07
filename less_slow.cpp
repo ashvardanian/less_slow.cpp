@@ -2147,27 +2147,31 @@ static void theoretic_tops_ptx(                  //
     }
     ptx_file = ptx_path.string();
 
+    CUresult result;
     CUdevice device;
     CUcontext context;
     CUmodule module_;
     CUfunction kernel;
 
     // Initialize CUDA
-    if (cuInit(0) != CUDA_SUCCESS) {
+    result = cuInit(0);
+    if (result != CUDA_SUCCESS) {
         state.SkipWithError("Failed to initialize CUDA.");
         return;
     }
 
     // Get the first device
-    if (cuDeviceGet(&device, 0) != CUDA_SUCCESS) {
+    result = cuDeviceGet(&device, 0);
+    if (result != CUDA_SUCCESS) {
         state.SkipWithError("Failed to get CUDA device.");
         return;
     }
 
     // Get compute capability
     int capability_major = 0, capability_minor = 0;
-    if (cuDeviceGetAttribute(&capability_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device) != CUDA_SUCCESS ||
-        cuDeviceGetAttribute(&capability_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device) != CUDA_SUCCESS) {
+    result = cuDeviceGetAttribute(&capability_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
+    result = cuDeviceGetAttribute(&capability_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
+    if (result != CUDA_SUCCESS || result != CUDA_SUCCESS) {
         state.SkipWithError("Failed to query compute capability.");
         return;
     }
@@ -2183,13 +2187,16 @@ static void theoretic_tops_ptx(                  //
     }
 
     // Create context
-    if (cuCtxCreate(&context, 0, device) != CUDA_SUCCESS) {
-        state.SkipWithError("Failed to create CUDA context.");
+    result = cuCtxCreate(&context, 0, device);
+    if (result != CUDA_SUCCESS) {
+        char const *error_string;
+        cuGetErrorString(result, &error_string);
+        state.SkipWithError("Failed to create CUDA context: " + std::string(error_string));
         return;
     }
 
     // Load the PTX file
-    CUresult result = cuModuleLoad(&module_, ptx_file.c_str());
+    result = cuModuleLoad(&module_, ptx_file.c_str());
     if (result != CUDA_SUCCESS) {
         char const *error_string;
         cuGetErrorString(result, &error_string);
