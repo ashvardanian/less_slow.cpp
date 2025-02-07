@@ -2148,12 +2148,12 @@ static void theoretic_tops_ptx(                  //
     ptx_file = ptx_path.string();
 
     CUdevice device = 0;
-    CUcontext context = 0;
-    CUmodule module_ = 0;
-    CUfunction kernel = 0;
+    CUcontext context = nullptr;
+    CUmodule module_ = nullptr;
+    CUfunction kernel = nullptr;
     CUresult result = CUDA_SUCCESS;
     auto last_error_string = [&result]() -> std::string {
-        char const *error_string;
+        char const *error_string = nullptr;
         cuGetErrorString(result, &error_string);
         return error_string;
     };
@@ -2195,7 +2195,7 @@ static void theoretic_tops_ptx(                  //
     }
 
     // Create context
-    int context_flags = CU_CTX_SCHED_SPIN | CU_CTX_LMEM_RESIZE_TO_MAX | CU_CTX_SYNC_MEMOPS;
+    int context_flags = 0; // CU_CTX_SCHED_SPIN | CU_CTX_LMEM_RESIZE_TO_MAX | CU_CTX_SYNC_MEMOPS;
     result = cuCtxCreate(&context, context_flags, device);
     if (result != CUDA_SUCCESS) {
         state.SkipWithError("Failed to create CUDA context: " + last_error_string());
@@ -2242,10 +2242,14 @@ static void theoretic_tops_ptx(                  //
             block_dim.x, block_dim.y, block_dim.z, //
             0, nullptr, kernel_args, nullptr);
         if (result != CUDA_SUCCESS) {
-            state.SkipWithError("Kernel launch failed: " + last_error_string());
+            state.SkipWithError("Failed to launch the kernel: " + last_error_string());
             break;
         }
-        cuCtxSynchronize();
+        result = cuCtxSynchronize();
+        if (result != CUDA_SUCCESS) {
+            state.SkipWithError("Failed while running the kernel: " + last_error_string());
+            break;
+        }
     }
 
     std::size_t const tops_per_cycle = m * n * k * 2 * repetitions;
@@ -2275,27 +2279,27 @@ BENCHMARK_CAPTURE(                                                         //
     8, 8, 4, 1024, 90)
     ->MinTime(10);
 
-BENCHMARK_CAPTURE(                                                             //
-    theoretic_tops_ptx, tf32tf32_sm90tc,                                       //
-    "less_slow_sm90a.ptx", "tops_tf32tf32_sm90tc_16x16x8_1024loop_ptx_kernel", //
+BENCHMARK_CAPTURE(                                                            //
+    theoretic_tops_ptx, tf32f32_sm90tc,                                       //
+    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_16x16x8_1024loop_ptx_kernel", //
     16, 16, 8, 1024, 90)
     ->MinTime(10);
 
-BENCHMARK_CAPTURE(                                                              //
-    theoretic_tops_ptx, tf32tf32_sm90tc_wgmma_smallest,                         //
-    "less_slow_sm90a.ptx", "tops_tf32tf32_sm90tc_m64n16k8_1024loop_ptx_kernel", //
+BENCHMARK_CAPTURE(                                                             //
+    theoretic_tops_ptx, tf32f32_sm90tc_wgmma_smallest,                         //
+    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n16k8_1024loop_ptx_kernel", //
     64, 16, 8, 1024, 90)
     ->MinTime(10);
 
-BENCHMARK_CAPTURE(                                                               //
-    theoretic_tops_ptx, tf32tf32_sm90tc_wgmma_largest,                           //
-    "less_slow_sm90a.ptx", "tops_tf32tf32_sm90tc_m64n256k8_1024loop_ptx_kernel", //
+BENCHMARK_CAPTURE(                                                              //
+    theoretic_tops_ptx, tf32f32_sm90tc_wgmma_largest,                           //
+    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n256k8_1024loop_ptx_kernel", //
     64, 256, 8, 1024, 90)
     ->MinTime(10);
 
-BENCHMARK_CAPTURE(                                                                //
-    theoretic_tops_ptx, b1b1and_sm90tc_wgmma,                                     //
-    "less_slow_sm90a.ptx", "tops_b1b1and_sm90tc_m64n256k256_1024loop_ptx_kernel", //
+BENCHMARK_CAPTURE(                                                                 //
+    theoretic_tops_ptx, b1i32and_sm90tc_wgmma,                                     //
+    "less_slow_sm90a.ptx", "tops_b1i32and_sm90tc_m64n256k256_1024loop_ptx_kernel", //
     64, 256, 256, 1024, 90)
     ->MinTime(10);
 

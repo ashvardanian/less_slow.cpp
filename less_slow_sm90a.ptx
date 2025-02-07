@@ -32,9 +32,9 @@
  *  Let's define some global memory buffers, visible on both device and host
  *  side, to output multiplication results.
  */
-.visible .global .align 4 .s32 dummy_sink_s32[4];
-.visible .global .align 4 .f32 dummy_sink_f32[4];
-.visible .global .align 8 .f64 dummy_sink_f64[4];
+.visible .global .align 8 .f64 dummy_sink_f64[32];
+.visible .global .align 4 .s32 dummy_sink_s32[32];
+.visible .global .align 4 .f32 dummy_sink_f32[32];
 
 /**
  *  Our previous Volta kernel should work just fine here, but we can make it
@@ -209,7 +209,7 @@ loop_exit:
  *  is confusingly 19 bits wide! The synchronous variant would look familiar:
  */
 
- .visible .entry tops_tf32tf32_sm90tc_16x16x8_1024loop_ptx_kernel()
+ .visible .entry tops_tf32f32_sm90tc_16x16x8_1024loop_ptx_kernel()
 {
     // Accumulator registers used for both input and output of the MMA operation
     .reg .b32 accum<8>;
@@ -325,7 +325,7 @@ loop_exit:
  *  The `scale` parameters can be used to either negate the inputs, or disable
  *  additive bias accumulation in the output.
  */
-.visible .entry tops_tf32tf32_sm90tc_m64n16k8_1024loop_ptx_kernel()
+.visible .entry tops_tf32f32_sm90tc_m64n16k8_1024loop_ptx_kernel()
 {
     // Accumulator registers used for both input and output of this MMA
     .reg .f32 accum<8>;
@@ -401,7 +401,7 @@ loop_exit:
  *  dimension from 16 to 256? It would require 128 accumulators.
  */
 
-.visible .entry tops_tf32tf32_sm90tc_m64n256k8_1024loop_ptx_kernel()
+.visible .entry tops_tf32f32_sm90tc_m64n256k8_1024loop_ptx_kernel()
 {
     // Accumulator registers used for both input and output of this MMA
     .reg .f32 accum<128>;
@@ -518,7 +518,7 @@ loop_exit:
  *  dimension by 2x, making the instructions no more usable for small matrices.
  */
 
-.visible .entry tops_b1b1and_sm90tc_m64n256k256_1024loop_ptx_kernel()
+.visible .entry tops_b1i32and_sm90tc_m64n256k256_1024loop_ptx_kernel()
 {
     // Accumulator registers used for both input and output of the MMA operation
     .reg .s32 accum<128>;
