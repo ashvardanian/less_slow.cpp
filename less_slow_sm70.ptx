@@ -92,7 +92,7 @@
     // The main loop will repeat for 1024 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
-    @exit_predicate bra loop_exit;
+    @exit_predicate bra loop_end;
 
     wmma.mma.sync.aligned.row.col.m16n16k16.f16.f16 
          { accum_0, accum_1, accum_2, accum_3 },
@@ -107,6 +107,25 @@ loop_start:
 
     // Branch back to the beginning of the loop
     bra loop_start;
+
+loop_end:
+    // If we simply exit, the computation will be optimized out!
+    // Instead, let's check for an impossible condition, like if the thread ID
+    // is equal to `UINT_MAX`, and if so - write accumulators to global memory
+    // NULL address.
+    .reg .u32 tid;
+    .reg .pred impossible_predicate;
+    mov.u32 tid, %tid.x; //? Special system registers start with `%`
+    setp.eq.u32 impossible_predicate, tid, 0xFFFFFFFF;
+    @impossible_predicate bra loop_exit;
+
+    // Write into memory:
+    .reg .u64 store_ptr;
+    mov.u64 store_ptr, 0;
+    st.global.f32 [store_ptr],      accum_0;
+    st.global.f32 [store_ptr+4],    accum_1;
+    st.global.f32 [store_ptr+8],    accum_2;
+    st.global.f32 [store_ptr+12],   accum_3;
 
 loop_exit:
     ret;
