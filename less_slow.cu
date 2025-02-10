@@ -225,7 +225,7 @@ __device__ inline void binary_tops_tc_cuda_kernel( //
 
 #pragma region Volta
 
-__global__ void tops_f16f16_sm70tc_16x16x16_loop128_cuda_kernel() {
+__global__ void tops_f16f16_sm70wmma_16x16x16_loop128_cuda_kernel() {
     //? On Volta: 8x8x4.
     //? On Turing: 8x8x4 / 16x8x8 / 16x8x16.
     //? On Ampere: 16x8x8 / 16x8x16.
@@ -233,7 +233,7 @@ __global__ void tops_f16f16_sm70tc_16x16x16_loop128_cuda_kernel() {
     tops_tc_cuda_kernel<half, half, 16, 16, 16>();
 #endif
 }
-__global__ void tops_f16f32_sm70tc_16x16x16_loop128_cuda_kernel() {
+__global__ void tops_f16f32_sm70wmma_16x16x16_loop128_cuda_kernel() {
     //? On Volta: 8x8x4.
     //? On Turing: 8x8x4 / 16x8x8 / 16x8x16.
     //? On Ampere: 16x8x8 / 16x8x16.
@@ -246,14 +246,14 @@ __global__ void tops_f16f32_sm70tc_16x16x16_loop128_cuda_kernel() {
 
 #pragma region Turing
 
-__global__ void tops_u8i32_sm75tc_16x16x16_loop128_cuda_kernel() {
+__global__ void tops_u8i32_sm75wmma_16x16x16_loop128_cuda_kernel() {
     //? On Turing: 8x8x16.
     //? On Ampere: 8x8x16 / 16x8x16 / 16x8x32.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750)
     tops_tc_cuda_kernel<std::uint8_t, int32_t, 16, 16, 16>();
 #endif
 }
-__global__ void tops_u4i32_sm75tc_8x8x32_loop128_cuda_kernel() {
+__global__ void tops_u4i32_sm75wmma_8x8x32_loop128_cuda_kernel() {
     //! The 16x16x16 won't compile, 8x8x32 will.
     //? On Turing: 8x8x32.
     //? On Ampere: 8x8x32 / 16x8x32 / 16x8x64.
@@ -261,7 +261,7 @@ __global__ void tops_u4i32_sm75tc_8x8x32_loop128_cuda_kernel() {
     tops_tc_cuda_kernel<nvcuda::wmma::experimental::precision::u4, int32_t, 8, 8, 32>();
 #endif
 }
-__global__ void tops_b1i32xor_sm75tc_8x8x128_loop128_cuda_kernel() {
+__global__ void tops_b1i32xor_sm75wmma_8x8x128_loop128_cuda_kernel() {
     //! The 16x16x16 won't compile, 8x8x128 will.
     //? On Turing: 8x8x128.
     //? On Ampere: 8x8x128 / 16x8x128 / 16x8x256.
@@ -276,20 +276,20 @@ __global__ void tops_b1i32xor_sm75tc_8x8x128_loop128_cuda_kernel() {
 
 #pragma region Ampere
 
-__global__ void tops_bf16f32_sm80tc_16x16x16_loop128_cuda_kernel() {
+__global__ void tops_bf16f32_sm80wmma_16x16x16_loop128_cuda_kernel() {
     //? On Ampere: 16x8x8 / 16x8x16.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
     tops_tc_cuda_kernel<__nv_bfloat16, float, 16, 16, 16>();
 #endif
 }
-__global__ void tops_tf32f32_sm80tc_16x16x8_loop128_cuda_kernel() {
+__global__ void tops_tf32f32_sm80wmma_16x16x8_loop128_cuda_kernel() {
     //! The 16x16x16 won't compile, 16x16x8 will.
     //? On Ampere: 16x8x4.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
     tops_tc_cuda_kernel<nvcuda::wmma::precision::tf32, float, 16, 16, 8>();
 #endif
 }
-__global__ void tops_f64f64_sm80tc_8x8x4_loop128_cuda_kernel() {
+__global__ void tops_f64f64_sm80wmma_8x8x4_loop128_cuda_kernel() {
     //! The 16x16x16 won't compile, 8x8x4 will.
     //? On Ampere: 8x8x4.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
@@ -297,7 +297,7 @@ __global__ void tops_f64f64_sm80tc_8x8x4_loop128_cuda_kernel() {
 #endif
 }
 
-__global__ void tops_b1i32and_sm80tc_8x8x128_loop128_cuda_kernel() {
+__global__ void tops_b1i32and_sm80wmma_8x8x128_loop128_cuda_kernel() {
     //! The 16x16x16 won't compile, 8x8x128 will.
     //? On Ampere: 8x8x128 / 16x8x128 / 16x8x256.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
@@ -322,13 +322,15 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_loop128_cuda_kernel() {
  *    1. They can be asynchronous, for more flexible scheduling.
  *    2. They can avoid accumulation, a.k.a $C = A * B$, not $C += A * B$.
  *
- *  The later are vastly more complex. Just compare our old MMA signature:
+ *  The WGMMA is vastly more complex.
+ *
+ *  Just compare our old MMA signature:
  *  ! {wmma.mma.sync.aligned}.{row.col}.{m16n16k16}.{f32.f32} { ........ }
  *  ? {        header       }.{ layout}.{  shape  }.{ types } { operands }
  *
  *  To the new WGMMA signature:
- *  ! {wgmma.mm_async.sync.aligned}.{m64n64k16}.{f32.f16.f16} { ........ },{ .... }
- *  ? {     much longer header    }.{  shape  }.{   types   } { operands },{ args }
+ *  ! {wgmma.mma_async.sync.aligned}.{m64n64k16}.{f32.f16.f16} { ........ },{ .... }
+ *  ? {     much  longer header    }.{  shape  }.{   types   } { operands },{ args }
  *
  *  Not only the signature and "fragment" sizes differ, but also the scheduling
  *  approach has changed between Ampere and Hopper once again:
@@ -343,39 +345,144 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_loop128_cuda_kernel() {
  *  to perform well - there can be a significant performance penalty if you
  *  don't upgrade your PTX!
  *
- *  To simplify the logic of higher-level Linear Algebra libraries, wrapper
- *  templates from @b CUTLASS can be used. It has a smaller component called
- *  @b CuTe, that wraps different kinds of MMA "atoms" - primitive kernel
- *  templates. Just for Hopper alone, there is @b 10'000 lines of different
- *  supported shape instantiations in @b `mma_sm90.hpp`.
- *
- *  We can use CuTe to abstract away the right instructions, by defining small
- *  shared memory matrices and performing such repeated "atom" instantiations.
- *  We can also write "inline PTX" in CUDA C++, the same way we can write
- *  "inline assembly" on the host side C++.
- *
  *  @see "Fast Matrix-Multiplication with WGMMA on NVIDIA Hopper GPUs" by Colfax:
  *       https://research.colfax-intl.com/cutlass-tutorial-wgmma-hopper/
  *  @see "Outperforming cuBLAS on H100: a Worklog" by Pranjal Shankhdhar:
  *       https://cudaforfun.substack.com/p/outperforming-cublas-on-h100-a-worklog
+ *
+ *  To make things worse, there are no `wgmma::` CUDA C++ intrinsics!
+ *  The closest thing to them is the @b CuTe low-level collection of C++
+ *  templates, wrapping raw PTX instructions into MMA @b "atoms".
+ *  Just for Hopper alone, there is @b 10'000 lines of different supported
+ *  shape instantiations in @b `mma_sm90.hpp`.
+ *
  *  @see CUTLASS updates: https://github.com/NVIDIA/cutlass/blob/main/CHANGELOG.md
  *  @see CUTLASS GEMM API: https://github.com/NVIDIA/cutlass/blob/main/media/docs/gemm_api.md
  *  @see "Deep Dive on CUTLASS Ping-Pong GEMM Kernel" by PyTorch:
  *       https://pytorch.org/blog/cutlass-ping-pong-gemm-kernel/
  *  @see Minimal SM90 WGMMA + TMA GEMM example in 100 lines in CUTLASS 3.5.1:
  *       https://github.com/NVIDIA/cutlass/blob/main/examples/cute/tutorial/wgmma_sm90.cu
- *  @see "Blackwell Cluster Launch Control" in CUTLASS docs:
- *       https://github.com/NVIDIA/cutlass/blob/main/media/docs/blackwell_cluster_launch_control.md
+ *
+ *  We can also write "inline PTX" in CUDA C++, the same way we can write
+ *  "inline assembly" on the host side C++.
+ *
+ *  The instruction syntax for Warp-Group asynchronous instructions is very
+ *  different, as at least one of the operand matrices has to be in shared
+ *  memory (not registers). It's documented as in 2 variants:
+ *
+ *      wgmma.mma_async.sync.aligned.shape.dtype.tf32.tf32
+ *          d, a-desc, b-desc, scale-d, imm-scale-a, imm-scale-b;
+ *      wgmma.mma_async.sync.aligned.shape.dtype.tf32.tf32
+ *          d, a, b-desc, scale-d, imm-scale-a, imm-scale-b;
+ *
+ *  There is no "C" matrix involved at all, we are computing `D = A * B + D`.
+ *  The `imm-scale` parameters can be used to either negate the inputs,
+ *  or disable additive bias accumulation in the output. Both must be immediate
+ *  values. The supported shapes list is also quite exhausting and differs for
+ *  various numeric types. For half-precision floats:
+ *
+ *      .m64n8k8, .m64n16k8, .m64n24k8, .m64n32k8,
+ *      .m64n40k8, .m64n48k8, .m64n56k8, .m64n64k8,
+ *      .m64n72k8, .m64n80k8, .m64n88k8, .m64n96k8,
+ *      .m64n104k8, .m64n112k8, .m64n120k8, .m64n128k8,
+ *      .m64n136k8, .m64n144k8, .m64n152k8, .m64n160k8,
+ *      .m64n168k8, .m64n176k8, .m64n184k8, .m64n192k8,
+ *      .m64n200k8, .m64n208k8, .m64n216k8, .m64n224k8,
+ *      .m64n232k8, .m64n240k8, .m64n248k8, .m64n256k8
+
+ */
+#pragma region Hopper
+
+/**
+ *  Ideally, both matrices A and B should be in shared memory. Both are
+ *  defined using 64-bit descriptors with the following layout:
+ *
+ *      - 14 bits [0; 13]: start address
+ *      - 14 bits [16; 29]: leading dimension byte offset
+ *      - 14 bits [32; 45]: stride dimension byte offset
+ *      - 3 bits [49; 51]: matrix base offset, valid only for "swizzling"
+ *      - 2 bits [62; 63]: "swizzling" mode
+ *
+ *  The matrix layout in WGMMA can be normal or transposed, but its named
+ *  differently. Non-Transposed for A and B is called K-Major. The Transposed
+ *  variant is called M-Major for A and N-Major for B.
+ *
+ *  The matrices in the shared memory are made up of one or more "swizzle
+ *  layout atom". The exact layout of these swizzle atoms depends on the
+ *  swizzling mode, swizzle-atomicity, and the leading dimension.
+ *
+ *  Swizzling defines the order of the elements and can have 4 possible values:
+ *
+ *      0: no "swizzling" at all
+ *      1: a 128-byte "swizzle" with a 1024 byte offset of a repeating pattern
+ *      2: a 64-byte "swizzle" with a 512 byte offset of a repeating pattern
+ *      3: a 32-byte "swizzle" with a 256 byte offset of a repeating pattern
+ *
+ *  Here is how that logic is packed together:
  */
 __device__ std::uint64_t wgmma_descriptor(                                                //
     std::uint64_t address,                                                                //
     std::uint64_t leading_offset, std::uint64_t stride_offset, std::uint64_t base_offset, //
     std::uint64_t swizzle) {
+    //! One of the most counter-intuitive things is how those matrix descriptors are composed.
+    //! All fo the strides are in bytes, but divided by 16 (same as right-sift by four).
     return ((address & 0x3FFFF) >> 4) | ((leading_offset >> 4) << 16) | ((stride_offset >> 4) << 32) |
            (base_offset << 49) | (swizzle << 62);
 }
 
+__device__ void wgmma_f16f32_64x256x16(float r[128], std::uint64_t a_descriptor, std::uint64_t b_descriptor) {
+    //! Interestingly, there are 2 variants of this instruction:
+    //! 1. Both arguments are in shared memory, in which case 2 immediate values
+    //!    can be used to transpose the inputs.
+    //! 2. One argument is in shared memory, and the other one is in the registers,
+    //!    in which case only one can be transposed, and only one immediate value
+    //!    for that can be supplied!
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+    asm volatile( //
+        "wgmma.mma_async.sync.aligned.m64n256k16.f32.f16.f16 "
+        "{"
+        "%0, %1, %2, %3, %4, %5, %6, %7, "
+        "%8, %9, %10, %11, %12, %13, %14, %15, "
+        "%16, %17, %18, %19, %20, %21, %22, %23, "
+        "%24, %25, %26, %27, %28, %29, %30, %31, "
+        "%32, %33, %34, %35, %36, %37, %38, %39, "
+        "%40, %41, %42, %43, %44, %45, %46, %47, "
+        "%48, %49, %50, %51, %52, %53, %54, %55, "
+        "%56, %57, %58, %59, %60, %61, %62, %63, "
+        "%64, %65, %66, %67, %68, %69, %70, %71, "
+        "%72, %73, %74, %75, %76, %77, %78, %79, "
+        "%80, %81, %82, %83, %84, %85, %86, %87, "
+        "%88, %89, %90, %91, %92, %93, %94, %95, "
+        "%96, %97, %98, %99, %100, %101, %102, %103, "
+        "%104, %105, %106, %107, %108, %109, %110, %111, "
+        "%112, %113, %114, %115, %116, %117, %118, %119, "
+        "%120, %121, %122, %123, %124, %125, %126, %127"
+        "}, "
+        "%128, %129, "
+        "1, 1, 1, 0, 0;"
+        : "=f"(r[0]), "=f"(r[1]), "=f"(r[2]), "=f"(r[3]), "=f"(r[4]), "=f"(r[5]), "=f"(r[6]), "=f"(r[7]), "=f"(r[8]),
+          "=f"(r[9]), "=f"(r[10]), "=f"(r[11]), "=f"(r[12]), "=f"(r[13]), "=f"(r[14]), "=f"(r[15]), "=f"(r[16]),
+          "=f"(r[17]), "=f"(r[18]), "=f"(r[19]), "=f"(r[20]), "=f"(r[21]), "=f"(r[22]), "=f"(r[23]), "=f"(r[24]),
+          "=f"(r[25]), "=f"(r[26]), "=f"(r[27]), "=f"(r[28]), "=f"(r[29]), "=f"(r[30]), "=f"(r[31]), "=f"(r[32]),
+          "=f"(r[33]), "=f"(r[34]), "=f"(r[35]), "=f"(r[36]), "=f"(r[37]), "=f"(r[38]), "=f"(r[39]), "=f"(r[40]),
+          "=f"(r[41]), "=f"(r[42]), "=f"(r[43]), "=f"(r[44]), "=f"(r[45]), "=f"(r[46]), "=f"(r[47]), "=f"(r[48]),
+          "=f"(r[49]), "=f"(r[50]), "=f"(r[51]), "=f"(r[52]), "=f"(r[53]), "=f"(r[54]), "=f"(r[55]), "=f"(r[56]),
+          "=f"(r[57]), "=f"(r[58]), "=f"(r[59]), "=f"(r[60]), "=f"(r[61]), "=f"(r[62]), "=f"(r[63]), "=f"(r[64]),
+          "=f"(r[65]), "=f"(r[66]), "=f"(r[67]), "=f"(r[68]), "=f"(r[69]), "=f"(r[70]), "=f"(r[71]), "=f"(r[72]),
+          "=f"(r[73]), "=f"(r[74]), "=f"(r[75]), "=f"(r[76]), "=f"(r[77]), "=f"(r[78]), "=f"(r[79]), "=f"(r[80]),
+          "=f"(r[81]), "=f"(r[82]), "=f"(r[83]), "=f"(r[84]), "=f"(r[85]), "=f"(r[86]), "=f"(r[87]), "=f"(r[88]),
+          "=f"(r[89]), "=f"(r[90]), "=f"(r[91]), "=f"(r[92]), "=f"(r[93]), "=f"(r[94]), "=f"(r[95]), "=f"(r[96]),
+          "=f"(r[97]), "=f"(r[98]), "=f"(r[99]), "=f"(r[100]), "=f"(r[101]), "=f"(r[102]), "=f"(r[103]), "=f"(r[104]),
+          "=f"(r[105]), "=f"(r[106]), "=f"(r[107]), "=f"(r[108]), "=f"(r[109]), "=f"(r[110]), "=f"(r[111]),
+          "=f"(r[112]), "=f"(r[113]), "=f"(r[114]), "=f"(r[115]), "=f"(r[116]), "=f"(r[117]), "=f"(r[118]),
+          "=f"(r[119]), "=f"(r[120]), "=f"(r[121]), "=f"(r[122]), "=f"(r[123]), "=f"(r[124]), "=f"(r[125]),
+          "=f"(r[126]), "=f"(r[127])
+        : "l"(a_descriptor), "l"(b_descriptor));
+#endif
+}
+
 __device__ void wgmma_bf16f32_64x256x16(float r[128], std::uint64_t a_descriptor, std::uint64_t b_descriptor) {
+    // The `bf16` instructions are almost identical to `f16`.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
     asm volatile( //
         "wgmma.mma_async.sync.aligned.m64n256k16.f32.bf16.bf16 "
@@ -420,6 +527,53 @@ __device__ void wgmma_bf16f32_64x256x16(float r[128], std::uint64_t a_descriptor
 #endif
 }
 
+__device__ void wgmma_tf32f32_64x256x16(float r[128], std::uint64_t a_descriptor, std::uint64_t b_descriptor) {
+    //! Unlike the `f16` and `bf16` instructions, the `tf32` has fewer operands,
+    //! and can't transpose the input matrices!
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+    asm volatile( //
+        "wgmma.mma_async.sync.aligned.m64n256k16.f32.tf32.tf32 "
+        "{"
+        "%0, %1, %2, %3, %4, %5, %6, %7, "
+        "%8, %9, %10, %11, %12, %13, %14, %15, "
+        "%16, %17, %18, %19, %20, %21, %22, %23, "
+        "%24, %25, %26, %27, %28, %29, %30, %31, "
+        "%32, %33, %34, %35, %36, %37, %38, %39, "
+        "%40, %41, %42, %43, %44, %45, %46, %47, "
+        "%48, %49, %50, %51, %52, %53, %54, %55, "
+        "%56, %57, %58, %59, %60, %61, %62, %63, "
+        "%64, %65, %66, %67, %68, %69, %70, %71, "
+        "%72, %73, %74, %75, %76, %77, %78, %79, "
+        "%80, %81, %82, %83, %84, %85, %86, %87, "
+        "%88, %89, %90, %91, %92, %93, %94, %95, "
+        "%96, %97, %98, %99, %100, %101, %102, %103, "
+        "%104, %105, %106, %107, %108, %109, %110, %111, "
+        "%112, %113, %114, %115, %116, %117, %118, %119, "
+        "%120, %121, %122, %123, %124, %125, %126, %127"
+        "}, "
+        "%128, %129, "
+        "1, 1, 1;"
+        : "=f"(r[0]), "=f"(r[1]), "=f"(r[2]), "=f"(r[3]), "=f"(r[4]), "=f"(r[5]), "=f"(r[6]), "=f"(r[7]), "=f"(r[8]),
+          "=f"(r[9]), "=f"(r[10]), "=f"(r[11]), "=f"(r[12]), "=f"(r[13]), "=f"(r[14]), "=f"(r[15]), "=f"(r[16]),
+          "=f"(r[17]), "=f"(r[18]), "=f"(r[19]), "=f"(r[20]), "=f"(r[21]), "=f"(r[22]), "=f"(r[23]), "=f"(r[24]),
+          "=f"(r[25]), "=f"(r[26]), "=f"(r[27]), "=f"(r[28]), "=f"(r[29]), "=f"(r[30]), "=f"(r[31]), "=f"(r[32]),
+          "=f"(r[33]), "=f"(r[34]), "=f"(r[35]), "=f"(r[36]), "=f"(r[37]), "=f"(r[38]), "=f"(r[39]), "=f"(r[40]),
+          "=f"(r[41]), "=f"(r[42]), "=f"(r[43]), "=f"(r[44]), "=f"(r[45]), "=f"(r[46]), "=f"(r[47]), "=f"(r[48]),
+          "=f"(r[49]), "=f"(r[50]), "=f"(r[51]), "=f"(r[52]), "=f"(r[53]), "=f"(r[54]), "=f"(r[55]), "=f"(r[56]),
+          "=f"(r[57]), "=f"(r[58]), "=f"(r[59]), "=f"(r[60]), "=f"(r[61]), "=f"(r[62]), "=f"(r[63]), "=f"(r[64]),
+          "=f"(r[65]), "=f"(r[66]), "=f"(r[67]), "=f"(r[68]), "=f"(r[69]), "=f"(r[70]), "=f"(r[71]), "=f"(r[72]),
+          "=f"(r[73]), "=f"(r[74]), "=f"(r[75]), "=f"(r[76]), "=f"(r[77]), "=f"(r[78]), "=f"(r[79]), "=f"(r[80]),
+          "=f"(r[81]), "=f"(r[82]), "=f"(r[83]), "=f"(r[84]), "=f"(r[85]), "=f"(r[86]), "=f"(r[87]), "=f"(r[88]),
+          "=f"(r[89]), "=f"(r[90]), "=f"(r[91]), "=f"(r[92]), "=f"(r[93]), "=f"(r[94]), "=f"(r[95]), "=f"(r[96]),
+          "=f"(r[97]), "=f"(r[98]), "=f"(r[99]), "=f"(r[100]), "=f"(r[101]), "=f"(r[102]), "=f"(r[103]), "=f"(r[104]),
+          "=f"(r[105]), "=f"(r[106]), "=f"(r[107]), "=f"(r[108]), "=f"(r[109]), "=f"(r[110]), "=f"(r[111]),
+          "=f"(r[112]), "=f"(r[113]), "=f"(r[114]), "=f"(r[115]), "=f"(r[116]), "=f"(r[117]), "=f"(r[118]),
+          "=f"(r[119]), "=f"(r[120]), "=f"(r[121]), "=f"(r[122]), "=f"(r[123]), "=f"(r[124]), "=f"(r[125]),
+          "=f"(r[126]), "=f"(r[127])
+        : "l"(a_descriptor), "l"(b_descriptor));
+#endif
+}
+
 __device__ void wgmma_commit_group() {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
     asm volatile("wgmma.commit_group.sync.aligned;");
@@ -432,9 +586,11 @@ __device__ void wgmma_wait_group() {
 #endif
 }
 
-__global__ void tops_bf16f32_sm90tc_64x256x16_loop128_cuda_kernel() {
-    __shared__ __nv_bfloat16 a_shared[64][16];
-    __shared__ __nv_bfloat16 b_shared[256][16];
+__global__ void tops_f16f32_sm90wgmma_64x256x16_loop128_cuda_kernel() {
+    // 64x256x16 is the largest tile size for `f16` supported on Hopper.
+    // We can use `half` for type, but `uint16_t` is more portable.
+    __shared__ std::uint16_t a_shared[64][16];
+    __shared__ std::uint16_t b_shared[256][16];
 
     float c_registers[128] = {0.0f};
     std::uint64_t a_descriptor = wgmma_descriptor((std::uint64_t)a_shared, 128, 256, 0, 0);
@@ -443,3 +599,42 @@ __global__ void tops_bf16f32_sm90tc_64x256x16_loop128_cuda_kernel() {
     wgmma_commit_group();
     wgmma_wait_group();
 }
+
+__global__ void tops_bf16f32_sm90wgmma_64x256x16_loop128_cuda_kernel() {
+    // 64x256x16 is the largest tile size for `bf16` supported on Hopper.
+    // We can use `__nv_bfloat16` for type, but `uint16_t` is more portable.
+    __shared__ std::uint16_t a_shared[64][16];
+    __shared__ std::uint16_t b_shared[256][16];
+
+    float c_registers[128] = {0.0f};
+    std::uint64_t a_descriptor = wgmma_descriptor((std::uint64_t)a_shared, 128, 256, 0, 0);
+    std::uint64_t b_descriptor = wgmma_descriptor((std::uint64_t)b_shared, 128 * 256 / 8, 128, 0, 0);
+    for (int i = 0; i != 128; ++i) wgmma_bf16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
+    wgmma_commit_group();
+    wgmma_wait_group();
+}
+
+__global__ void tops_tf32f32_sm90wgmma_64x256x16_loop128_cuda_kernel() {
+    // 64x256x16 is the largest tile size for `tf32` supported on Hopper.
+    // Four-byte representations should be used for storage. Each entry will
+    // shifted right by 13 bits before multiplication.
+    __shared__ std::uint32_t a_shared[64][16];
+    __shared__ std::uint32_t b_shared[256][16];
+
+    // TODO: Unlike smaller 2-byte floats, the stride sizes will be different here.
+    float c_registers[128] = {0.0f};
+    std::uint64_t a_descriptor = wgmma_descriptor((std::uint64_t)a_shared, 128, 256, 0, 0);
+    std::uint64_t b_descriptor = wgmma_descriptor((std::uint64_t)b_shared, 128 * 256 / 8, 128, 0, 0);
+    for (int i = 0; i != 128; ++i) wgmma_bf16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
+    wgmma_commit_group();
+    wgmma_wait_group();
+}
+
+#pragma endregion
+
+/**
+ *
+ *  @see "Blackwell Cluster Launch Control" in CUTLASS docs:
+ *       https://github.com/NVIDIA/cutlass/blob/main/media/docs/blackwell_cluster_launch_control.md
+ *
+ */
