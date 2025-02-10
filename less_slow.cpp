@@ -2394,16 +2394,10 @@ BENCHMARK_CAPTURE(                                                            //
     16, 16, 8, 80, 128, tensor_core_scale_t::warp_k)
     ->MinTime(10);
 
-BENCHMARK_CAPTURE(                                                            //
-    theoretic_tops_ptx, tf32f32_sm90wgmma_smallest,                           //
-    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n16k8_loop128_ptx_kernel", //
-    64, 16, 8, 90, 128, tensor_core_scale_t::warpgroup_k)
-    ->MinTime(10);
-
 BENCHMARK_CAPTURE(                                                             //
-    theoretic_tops_ptx, tf32f32_sm90wgmma,                                     //
-    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n256k8_loop128_ptx_kernel", //
-    64, 256, 8, 90, 128)
+    theoretic_tops_ptx, f16f32_sm90wgmma,                                      //
+    "less_slow_sm90a.ptx", "tops_f16f32_sm90tc_m64n256k16_loop128_ptx_kernel", //
+    64, 256, 16, 90, 128, tensor_core_scale_t::warpgroup_k)
     ->MinTime(10);
 
 BENCHMARK_CAPTURE(                                                                //
