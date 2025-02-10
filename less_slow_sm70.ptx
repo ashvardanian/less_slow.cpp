@@ -37,18 +37,95 @@
 .target sm_70            // Target architecture (SM 7.0 - Volta GPUs)
 .address_size 64         // 64-bit addressing
 
-.visible .entry tops_f16f16_sm70tc_16x16x16_loop128_ptx_kernel()
+.visible .entry tops_f16f16_sm70mma_8x8x4_loop128_ptx_kernel()
 {
     // Accumulator registers used for both input and output of the MMA operation
     .reg .b32 accum_0, accum_1, accum_2, accum_3;
 
-    // Registers to hold packed 16-bit data for matrix a (8 registers)
-    .reg .b32 matrix_a_0, matrix_a_1, matrix_a_2, matrix_a_3,
-              matrix_a_4, matrix_a_5, matrix_a_6, matrix_a_7;
+    // Registers to hold packed pairs of 16-bit data for matrix a (2 registers)
+    .reg .b32 matrix_a_0, matrix_a_1;
 
-    // Registers to hold packed 16-bit data for matrix b (8 registers)
-    .reg .b32 matrix_b_0, matrix_b_1, matrix_b_2, matrix_b_3,
-              matrix_b_4, matrix_b_5, matrix_b_6, matrix_b_7;
+    // Registers to hold packed pairs of 16-bit data for matrix b (2 registers)
+    .reg .b32 matrix_b_0, matrix_b_1;
+
+    // General-purpose registers for loop control and constant values
+    .reg .b32 loop_counter, loop_limit, packed_const;
+
+    // Predicate register for conditional branching (loop exit)
+    .reg .pred exit_predicate;
+
+    // Set up loop counter and loop limit
+    mov.u32 loop_counter, 0;
+    mov.u32 loop_limit, 128;
+
+    // Zero-initialize the accumulator registers
+    mov.f32 accum_0, 0.0;
+    mov.f32 accum_1, 0.0;
+    mov.f32 accum_2, 0.0;
+    mov.f32 accum_3, 0.0;
+
+    // Initialize constant for packed matrix data (placeholder)
+    mov.b32 packed_const, 0x00010001;
+
+    // Initialize matrix a registers with the packed constant
+    mov.b32 matrix_a_0, packed_const;
+    mov.b32 matrix_a_1, packed_const;
+
+    // Initialize matrix b registers with the packed constant
+    mov.b32 matrix_b_0, packed_const;
+    mov.b32 matrix_b_1, packed_const;
+
+    // The main loop will repeat for 128 iterations
+loop_start:
+    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
+    @exit_predicate bra loop_end;
+
+    mma.sync.aligned.m8n8k4.row.col.f16.f16.f16.f16 
+         { accum_0, accum_1, accum_2, accum_3 },
+         { matrix_a_0, matrix_a_1 },
+         { matrix_b_0, matrix_b_1 },
+         { accum_0, accum_1, accum_2, accum_3 };
+
+    // Increment the loop counter
+    add.u32 loop_counter, loop_counter, 1;
+
+    // Branch back to the beginning of the loop
+    bra loop_start;
+
+loop_end:
+    // If we simply exit, the computation will be optimized out!
+    // Instead, let's check for an impossible condition, like if the thread ID
+    // is equal to `UINT_MAX`, and if so - write accumulators to global memory
+    // NULL address.
+    .reg .u32 tid;
+    .reg .pred impossible_predicate;
+    mov.u32 tid, %tid.x; //? Special system registers start with `%`
+    setp.ne.u32 impossible_predicate, tid, 0xFFFFFFFF;
+    @impossible_predicate bra loop_exit;
+
+    // Write into memory:
+    .reg .u64 store_ptr;
+    mov.u64 store_ptr, 0;
+    st.global.f32 [store_ptr],      accum_0;
+    st.global.f32 [store_ptr+4],    accum_1;
+    st.global.f32 [store_ptr+8],    accum_2;
+    st.global.f32 [store_ptr+12],   accum_3;
+
+loop_exit:
+    ret;
+}
+
+.visible .entry tops_f16f32_sm70mma_8x8x4_loop128_ptx_kernel()
+{
+    // Accumulator registers used for both input and output of the MMA operation
+    .reg .b32 accum_0, accum_1, accum_2, accum_3,
+              accum_4, accum_5, accum_6, accum_7;
+
+    // Registers to hold packed 16-bit data for matrix a (4 registers)
+    .reg .b32 matrix_a_0, matrix_a_1, matrix_a_2, matrix_a_3;
+
+    // Registers to hold packed 16-bit data for matrix b (4 registers)
+    .reg .b32 matrix_b_0, matrix_b_1, matrix_b_2, matrix_b_3;
 
     // General-purpose registers for loop control and constant values
     .reg .b32 loop_counter, loop_limit, packed_const;
@@ -74,33 +151,25 @@
     mov.b32 matrix_a_1, packed_const;
     mov.b32 matrix_a_2, packed_const;
     mov.b32 matrix_a_3, packed_const;
-    mov.b32 matrix_a_4, packed_const;
-    mov.b32 matrix_a_5, packed_const;
-    mov.b32 matrix_a_6, packed_const;
-    mov.b32 matrix_a_7, packed_const;
 
     // Initialize matrix b registers with the packed constant
     mov.b32 matrix_b_0, packed_const;
     mov.b32 matrix_b_1, packed_const;
     mov.b32 matrix_b_2, packed_const;
     mov.b32 matrix_b_3, packed_const;
-    mov.b32 matrix_b_4, packed_const;
-    mov.b32 matrix_b_5, packed_const;
-    mov.b32 matrix_b_6, packed_const;
-    mov.b32 matrix_b_7, packed_const;
 
     // The main loop will repeat for 128 iterations
 loop_start:
     setp.ge.u32 exit_predicate, loop_counter, loop_limit;
     @exit_predicate bra loop_end;
 
-    wmma.mma.sync.aligned.row.col.m16n16k16.f16.f16 
-         { accum_0, accum_1, accum_2, accum_3 },
-         { matrix_a_0, matrix_a_1, matrix_a_2, matrix_a_3,
-           matrix_a_4, matrix_a_5, matrix_a_6, matrix_a_7 },
-         { matrix_b_0, matrix_b_1, matrix_b_2, matrix_b_3,
-           matrix_b_4, matrix_b_5, matrix_b_6, matrix_b_7 },
-         { accum_0, accum_1, accum_2, accum_3 };
+    mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32
+         { accum_0, accum_1, accum_2, accum_3,
+           accum_4, accum_5, accum_6, accum_7 },
+         { matrix_a_0, matrix_a_1 },
+         { matrix_b_0, matrix_b_1 },
+         { accum_0, accum_1, accum_2, accum_3,
+           accum_4, accum_5, accum_6, accum_7 };
 
     // Increment the loop counter
     add.u32 loop_counter, loop_counter, 1;
@@ -147,7 +216,8 @@ loop_exit:
  *    with both arguments in shared memory!
  *
  *  Because only one `.version` directive can be placed in each file, for newer
- *  kernels, go to `less_slow_sm90a.ptx`.
+ *  kernels, go to `less_slow_sm80.ptx` for Ampere and `less_slow_sm90a.ptx`
+ *  for Hopper.
  *
  *  @see PTX module-level directives:
  *  https://docs.nvidia.com/cuda/parallel-thread-execution/#ptx-module-directives
