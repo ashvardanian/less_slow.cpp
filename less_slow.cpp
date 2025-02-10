@@ -2046,15 +2046,67 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 #if _LESS_SLOW_WITH_CUDA
 #include <cuda.h>
 
+/**
+ *  Different generations of matrix multiplication instructions on GPUs use
+ *  different synchronization/cooperation scales across generations.
+ */
+enum class tensor_core_scale_t : int {
+    unknown_k = 0,
+
+    /**
+     *  Before Volta, individual CUDA cores would compute matrix multiplication
+     *  as many individual scalar FMA operations over tiles in shared cache.
+     *  Applies to SM levels @b <7.0.
+     */
+    single_k = 1,
+    /**
+     *  On Volta and newer, 8 consecutive threads compute the MMA together.
+     *  Applies to SM level @b ≥7.0.
+     */
+    quadpair_k = 8,
+    /**
+     *  On Ampere and newer, 32 consecutive threads in a single warp compute
+     *  WMMA together. Applies to SM level @b ≥8.0.
+     */
+    warp_k = 32,
+    /**
+     *  On Hopper and newer, 128 consecutive threads in 4 consecutive warps
+     *  compute larger Warp Group MMA together. Applies to SM level @b ≥9.0.
+     */
+    warpgroup_k = 128,
+
+};
+
+tensor_core_scale_t tensor_core_scale(int sm_capability) {
+    if (sm_capability >= 90) return tensor_core_scale_t::warpgroup_k;
+    if (sm_capability >= 80) return tensor_core_scale_t::warp_k;
+    if (sm_capability >= 70) return tensor_core_scale_t::quadpair_k;
+    return tensor_core_scale_t::single_k;
+}
+
+/**
+ *  @brief Runs the benchmark loop for precompiled CUDA C++ kernels using
+ *  the high-level @b runtime API. It counts TOPS (Tensor Operations Per
+ *  Second) as the number of scalar multiplications in $A * B$, ignoring
+ *  the $D$ additive part of $A * B + D$.
+ *
+ *  @param m,n,k Dimensions of matrices multiplied by one instruction.
+ *  @param required_capability GPU's Streaming Multiprocessor generation needed.
+ *  @param scale Number of threads in each block, computing MMA collectively.
+ */
 static void theoretic_tops_cuda(                   //
     bm::State &state, __global__ void (*kernel)(), //
     std::size_t m, std::size_t n, std::size_t k,   //
-    std::size_t repetitions, int required_capability) {
+    int required_capability,                       //
+    std::size_t repetitions,                       //
+    tensor_core_scale_t scale = tensor_core_scale_t::unknown_k) {
 
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, 0);
-    int const blocks = prop.multiProcessorCount;
-    int const threads_per_block = prop.warpSize;
+    cudaDeviceProp properties;
+    cudaGetDeviceProperties(&properties, 0);
+    int const blocks = properties.multiProcessorCount;
+    // On Hopper and newer, 4 warps need to synchronize WGMMAs.
+    int const threads_per_block = properties.warpSize * 4;
+    if (scale == tensor_core_scale_t::unknown_k) scale = tensor_core_scale(required_capability);
 
     for (auto _ : state) {
         // A typical CUDA kernel invocation would look like this:
@@ -2075,68 +2127,103 @@ static void theoretic_tops_cuda(                   //
         cudaDeviceSynchronize();
     }
 
+    std::size_t const threads = static_cast<std::size_t>(blocks * threads_per_block);
     std::size_t const tops_per_cycle = m * n * k * 2 * repetitions;
-    std::size_t const tops_per_gpu = tops_per_cycle * blocks; //? Warps compute each tile product collectively!
+    std::size_t const tops_per_gpu = tops_per_cycle * threads / static_cast<std::size_t>(scale);
     state.counters["TOP"] = benchmark::Counter(tops_per_gpu * state.iterations(), benchmark::Counter::kIsRate);
 }
 
-extern __global__ void tops_f16f16_sm70tc_16x16x16_loop128_cuda_kernel();
-extern __global__ void tops_f16f32_sm70tc_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_f16f16_sm70wmma_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_f16f32_sm70wmma_16x16x16_loop128_cuda_kernel();
 
-extern __global__ void tops_u8i32_sm75tc_16x16x16_loop128_cuda_kernel();
-extern __global__ void tops_u4i32_sm75tc_8x8x32_loop128_cuda_kernel();
-extern __global__ void tops_b1i32xor_sm75tc_8x8x128_loop128_cuda_kernel();
+BENCHMARK_CAPTURE(                                                                           //
+    theoretic_tops_cuda, f16f16_sm70wmma, tops_f16f16_sm70wmma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 70, 128, tensor_core_scale_t::warp_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                           //
+    theoretic_tops_cuda, f16f32_sm70wmma, tops_f16f32_sm70wmma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 70, 128, tensor_core_scale_t::warp_k)
+    ->MinTime(10);
 
-extern __global__ void tops_bf16f32_sm80tc_16x16x16_loop128_cuda_kernel();
-extern __global__ void tops_tf32f32_sm80tc_16x16x8_loop128_cuda_kernel();
-extern __global__ void tops_f64f64_sm80tc_8x8x4_loop128_cuda_kernel();
-extern __global__ void tops_b1i32and_sm80tc_8x8x128_loop128_cuda_kernel();
+extern __global__ void tops_u8i32_sm75wmma_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_u4i32_sm75wmma_8x8x32_loop128_cuda_kernel();
+extern __global__ void tops_b1i32xor_sm75wmma_8x8x128_loop128_cuda_kernel();
 
-BENCHMARK_CAPTURE(                                                                       //
-    theoretic_tops_cuda, f16f16_sm70tc, tops_f16f16_sm70tc_16x16x16_loop128_cuda_kernel, //
-    16, 16, 16, 128, 70)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                       //
-    theoretic_tops_cuda, f16f32_sm70tc, tops_f16f32_sm70tc_16x16x16_loop128_cuda_kernel, //
-    16, 16, 16, 128, 70)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                     //
-    theoretic_tops_cuda, u8i32_sm75tc, tops_u8i32_sm75tc_16x16x16_loop128_cuda_kernel, //
-    16, 16, 16, 128, 75)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                   //
-    theoretic_tops_cuda, u4i32_sm75tc, tops_u4i32_sm75tc_8x8x32_loop128_cuda_kernel, //
-    8, 8, 32, 128, 75)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                          //
-    theoretic_tops_cuda, b1i32xor_sm75tc, tops_b1i32xor_sm75tc_8x8x128_loop128_cuda_kernel, //
-    8, 8, 128, 128, 75)
-    ->MinTime(10);
 BENCHMARK_CAPTURE(                                                                         //
-    theoretic_tops_cuda, bf16f32_sm80tc, tops_bf16f32_sm80tc_16x16x16_loop128_cuda_kernel, //
-    16, 16, 16, 128, 80)
+    theoretic_tops_cuda, u8i32_sm75wmma, tops_u8i32_sm75wmma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 75, 128, tensor_core_scale_t::warp_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                       //
+    theoretic_tops_cuda, u4i32_sm75wmma, tops_u4i32_sm75wmma_8x8x32_loop128_cuda_kernel, //
+    8, 8, 32, 75, 128, tensor_core_scale_t::warp_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                              //
+    theoretic_tops_cuda, b1i32xor_sm75wmma, tops_b1i32xor_sm75wmma_8x8x128_loop128_cuda_kernel, //
+    8, 8, 128, 75, 128, tensor_core_scale_t::warp_k)
+    ->MinTime(10);
+
+extern __global__ void tops_bf16f32_sm80wmma_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_tf32f32_sm80wmma_16x16x8_loop128_cuda_kernel();
+extern __global__ void tops_f64f64_sm80wmma_8x8x4_loop128_cuda_kernel();
+extern __global__ void tops_b1i32and_sm80wmma_8x8x128_loop128_cuda_kernel();
+
+BENCHMARK_CAPTURE(                                                                             //
+    theoretic_tops_cuda, bf16f32_sm80wmma, tops_bf16f32_sm80wmma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 80, 128, tensor_core_scale_t::warp_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                            //
+    theoretic_tops_cuda, tf32f32_sm80wmma, tops_tf32f32_sm80wmma_16x16x8_loop128_cuda_kernel, //
+    16, 16, 8, 80, 128, tensor_core_scale_t::warp_k)
     ->MinTime(10);
 BENCHMARK_CAPTURE(                                                                        //
-    theoretic_tops_cuda, tf32f32_sm80tc, tops_tf32f32_sm80tc_16x16x8_loop128_cuda_kernel, //
-    16, 16, 8, 128, 80)
+    theoretic_tops_cuda, f64f64_sm80wmma, tops_f64f64_sm80wmma_8x8x4_loop128_cuda_kernel, //
+    8, 8, 4, 80, 128, tensor_core_scale_t::warp_k)
     ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                    //
-    theoretic_tops_cuda, f64f64_sm80tc, tops_f64f64_sm80tc_8x8x4_loop128_cuda_kernel, //
-    8, 8, 4, 128, 80)
-    ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                          //
-    theoretic_tops_cuda, b1i32and_sm80tc, tops_b1i32and_sm80tc_8x8x128_loop128_cuda_kernel, //
-    8, 8, 128, 128, 80)
+BENCHMARK_CAPTURE(                                                                              //
+    theoretic_tops_cuda, b1i32and_sm80wmma, tops_b1i32and_sm80wmma_8x8x128_loop128_cuda_kernel, //
+    8, 8, 128, 80, 128, tensor_core_scale_t::warp_k)
     ->MinTime(10);
 
-#include <filesystem>
+extern __global__ void tops_f16f32_sm90wgmma_64x256x16_loop128_cuda_kernel();
+extern __global__ void tops_bf16f32_sm90wgmma_64x256x16_loop128_cuda_kernel();
+extern __global__ void tops_tf32f32_sm90wgmma_64x256x16_loop128_cuda_kernel();
 
+BENCHMARK_CAPTURE(                                                                              //
+    theoretic_tops_cuda, f16f32_sm90wgmma, tops_f16f32_sm90wgmma_64x256x16_loop128_cuda_kernel, //
+    64, 256, 16, 90, 128, tensor_core_scale_t::warpgroup_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                                //
+    theoretic_tops_cuda, bf16f32_sm90wgmma, tops_bf16f32_sm90wgmma_64x256x16_loop128_cuda_kernel, //
+    64, 256, 16, 90, 128, tensor_core_scale_t::warpgroup_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                                //
+    theoretic_tops_cuda, tf32f32_sm90wgmma, tops_tf32f32_sm90wgmma_64x256x16_loop128_cuda_kernel, //
+    64, 256, 16, 90, 128, tensor_core_scale_t::warpgroup_k)
+    ->MinTime(10);
+
+#include <filesystem> // `std::filesystem::absolute` to locate PTX IR file
+
+/**
+ *  @brief Runs the benchmark loop for precompiled CUDA C++ kernels using
+ *  the low-level @b driver API. It counts TOPS (Tensor Operations Per
+ *  Second) as the number of scalar multiplications in $A * B$, ignoring
+ *  the $D$ additive part of $A * B + D$.
+ *
+ *  @param m,n,k Dimensions of matrices multiplied by one instruction.
+ *  @param required_capability GPU's Streaming Multiprocessor generation needed.
+ *
+ *  @param file_name The name of the @b `.ptx` file in current directory.
+ *  @param kernel_name The name of a specific @b `.visible` entry function.
+ *  @param scale Number of threads in each block, computing MMA collectively.
+ */
 static void theoretic_tops_ptx(                  //
     bm::State &state,                            //
     std::string file_name,                       //
     std::string kernel_name,                     //
     std::size_t m, std::size_t n, std::size_t k, //
-    std::size_t repetitions, int required_capability) {
+    int required_capability,                     //
+    std::size_t repetitions,                     //
+    tensor_core_scale_t scale = tensor_core_scale_t::unknown_k) {
 
     // Resolve the absolute path to the PTX file
     std::string ptx_file = file_name;
@@ -2233,17 +2320,23 @@ static void theoretic_tops_ptx(                  //
         return;
     }
 
-    // Set kernel launch configuration
+    // Set kernel launch configuration, same way as in `theoretic_tops_cuda`.
     dim3 grid_dim(num_sms);
-    dim3 block_dim(warp_size);
+    dim3 block_dim(warp_size * 4);
     void *kernel_args[] = {nullptr};
+
+    // We need shared memory for matrix multiplications on Hopper:
+    // - on V100 we have 96 KB per SM
+    // - on H100 we have 228 KB per SM
+    unsigned int shared_memory = 0; // 32 * 1024;
+    if (scale == tensor_core_scale_t::unknown_k) scale = tensor_core_scale(required_capability);
 
     for (auto _ : state) {
         result = cuLaunchKernel(                   //
             kernel,                                //
             grid_dim.x, grid_dim.y, grid_dim.z,    //
             block_dim.x, block_dim.y, block_dim.z, //
-            0, nullptr, kernel_args, nullptr);
+            shared_memory, nullptr, kernel_args, nullptr);
         if (result != CUDA_SUCCESS) {
             state.SkipWithError("Failed to launch the kernel: " + last_error_string());
             break;
@@ -2255,8 +2348,9 @@ static void theoretic_tops_ptx(                  //
         }
     }
 
+    std::size_t const threads = static_cast<std::size_t>(grid_dim.x * block_dim.x);
     std::size_t const tops_per_cycle = m * n * k * 2 * repetitions;
-    std::size_t const tops_per_gpu = tops_per_cycle * num_sms; //? Warps compute each tile product collectively!
+    std::size_t const tops_per_gpu = tops_per_cycle * threads / static_cast<std::size_t>(scale);
     state.counters["TOP"] = benchmark::Counter(tops_per_gpu * state.iterations(), benchmark::Counter::kIsRate);
 
     // Clean up
@@ -2264,46 +2358,58 @@ static void theoretic_tops_ptx(                  //
     cuCtxDestroy(context);
 }
 
-BENCHMARK_CAPTURE(                                                          //
-    theoretic_tops_ptx, f16f16_sm70tc,                                      //
-    "less_slow_sm70.ptx", "tops_f16f16_sm70tc_16x16x16_loop128_ptx_kernel", //
-    16, 16, 16, 128, 70)
-    ->MinTime(10);
-
-BENCHMARK_CAPTURE(                                                           //
-    theoretic_tops_ptx, f16f16_sm90tc,                                       //
-    "less_slow_sm90a.ptx", "tops_f16f16_sm90tc_16x16x16_loop128_ptx_kernel", //
-    16, 16, 16, 128, 90)
+BENCHMARK_CAPTURE(                                                        //
+    theoretic_tops_ptx, f16f16_sm70mma,                                   //
+    "less_slow_sm70.ptx", "tops_f16f16_sm70mma_8x8x4_loop128_ptx_kernel", //
+    16, 16, 16, 70, 128, tensor_core_scale_t::quadpair_k)
     ->MinTime(10);
 
 BENCHMARK_CAPTURE(                                                        //
-    theoretic_tops_ptx, f64f64_sm90tc,                                    //
-    "less_slow_sm90a.ptx", "tops_f64f64_sm90tc_8x8x4_loop128_ptx_kernel", //
-    8, 8, 4, 128, 90)
-    ->MinTime(10);
-
-BENCHMARK_CAPTURE(                                                           //
-    theoretic_tops_ptx, tf32f32_sm90tc,                                      //
-    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_16x16x8_loop128_ptx_kernel", //
-    16, 16, 8, 128, 90)
+    theoretic_tops_ptx, f16f32_sm70mma,                                   //
+    "less_slow_sm70.ptx", "tops_f16f32_sm70mma_8x8x4_loop128_ptx_kernel", //
+    16, 16, 16, 70, 128, tensor_core_scale_t::quadpair_k)
     ->MinTime(10);
 
 BENCHMARK_CAPTURE(                                                            //
-    theoretic_tops_ptx, tf32f32_sm90tc_wgmma_smallest,                        //
+    theoretic_tops_ptx, f16f16_sm80wmma,                                      //
+    "less_slow_sm80.ptx", "tops_f16f16_sm80wmma_16x16x16_loop128_ptx_kernel", //
+    16, 16, 16, 80, 128, tensor_core_scale_t::warp_k)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                            //
+    theoretic_tops_ptx, f16f32_sm80wmma,                                      //
+    "less_slow_sm80.ptx", "tops_f16f32_sm80wmma_16x16x16_loop128_ptx_kernel", //
+    16, 16, 16, 80, 128, tensor_core_scale_t::warp_k)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                        //
+    theoretic_tops_ptx, f64f64_sm80mma,                                   //
+    "less_slow_sm80.ptx", "tops_f64f64_sm80mma_8x8x4_loop128_ptx_kernel", //
+    8, 8, 4, 80, 128, tensor_core_scale_t::quadpair_k)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                            //
+    theoretic_tops_ptx, tf32f32_sm80wmma,                                     //
+    "less_slow_sm80.ptx", "tops_tf32f32_sm80wmma_16x16x8_loop128_ptx_kernel", //
+    16, 16, 8, 80, 128, tensor_core_scale_t::warp_k)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                            //
+    theoretic_tops_ptx, tf32f32_sm90wgmma_smallest,                           //
     "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n16k8_loop128_ptx_kernel", //
-    64, 16, 8, 128, 90)
+    64, 16, 8, 90, 128, tensor_core_scale_t::warpgroup_k)
     ->MinTime(10);
 
 BENCHMARK_CAPTURE(                                                             //
-    theoretic_tops_ptx, tf32f32_sm90tc_wgmma_largest,                          //
+    theoretic_tops_ptx, tf32f32_sm90wgmma,                                     //
     "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n256k8_loop128_ptx_kernel", //
-    64, 256, 8, 128, 90)
+    64, 256, 8, 90, 128)
     ->MinTime(10);
 
 BENCHMARK_CAPTURE(                                                                //
-    theoretic_tops_ptx, b1i32and_sm90tc_wgmma,                                    //
+    theoretic_tops_ptx, b1i32and_sm90wgmma,                                       //
     "less_slow_sm90a.ptx", "tops_b1i32and_sm90tc_m64n256k256_loop128_ptx_kernel", //
-    64, 256, 256, 128, 90)
+    64, 256, 256, 90, 128, tensor_core_scale_t::warpgroup_k)
     ->MinTime(10);
 
 /**

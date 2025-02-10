@@ -434,7 +434,7 @@ if(USE_NVIDIA_CCCL)
   # target_link_libraries(less_slow PRIVATE nvidia::cutlass::cutlass)
 
   # List the PTX files you want to copy
-  set(PTX_FILES less_slow_sm70.ptx less_slow_sm90a.ptx)
+  set(PTX_FILES less_slow_sm70.ptx less_slow_sm80.ptx less_slow_sm90a.ptx)
 
   # Loop over each PTX file and add a custom command to copy it
   foreach(PTX ${PTX_FILES})
