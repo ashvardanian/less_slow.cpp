@@ -41,8 +41,13 @@
  *  nicer by using the `<>` syntax to define many virtual registers without
  *  explicitly naming them! We can also explicitly define them as `.f16x2` to
  *  constrain the registers to packed half-precision pairs.
+ *
+ *  We can also scale from a Quadpair-level MMA to the Warp-level WMMA,
+ *  synchronizing more threads to process larger tiles, as the PTX docs
+ *  explicitly warn against using the `mma.sync.m8n8k4` to avoid performance
+ *  issues!
  */
-.visible .entry tops_f16f16_sm90tc_16x16x16_loop128_ptx_kernel()
+.visible .entry tops_f16f16_sm80wmma_16x16x16_loop128_ptx_kernel()
 {
     // Accumulator registers used for both input and output of the MMA operation
     // https://docs.nvidia.com/cuda/parallel-thread-execution/#parameterized-variable-names
@@ -127,15 +132,103 @@ loop_exit:
     ret;
 }
 
+.visible .entry tops_f16f32_sm80wmma_16x16x16_loop128_ptx_kernel()
+{
+    // Accumulator registers used for both input and output of the MMA operation
+    // https://docs.nvidia.com/cuda/parallel-thread-execution/#parameterized-variable-names
+    .reg .b32 accum<8>;
+
+    // Registers to hold packed 16-bit data for matrix A (8 registers)
+    .reg .f16x2 matrix_a<8>;
+
+    // Registers to hold packed 16-bit data for matrix B (8 registers)
+    .reg .f16x2 matrix_b<8>;
+
+    // General-purpose registers for loop control and constant values
+    .reg .b32 loop_counter, loop_limit, packed_const;
+
+    // Predicate register for conditional branching (loop exit)
+    .reg .pred exit_predicate;
+
+    // Set up loop counter and loop limit
+    mov.u32 loop_counter, 0;
+    mov.u32 loop_limit, 128;
+
+    // Zero-initialize the accumulators, as registers may contain noise
+    // https://docs.nvidia.com/cuda/parallel-thread-execution/#state-spaces
+    mov.f32 accum0, 0.0;
+    mov.f32 accum1, 0.0;
+    mov.f32 accum2, 0.0;
+    mov.f32 accum3, 0.0;
+
+    // Initialize constant for packed matrix data (placeholder)
+    mov.b32 packed_const, 0x00010001;
+
+    // Initialize matrix a registers with the packed constant
+    mov.b32 matrix_a0, packed_const;
+    mov.b32 matrix_a1, packed_const;
+    mov.b32 matrix_a2, packed_const;
+    mov.b32 matrix_a3, packed_const;
+    mov.b32 matrix_a4, packed_const;
+    mov.b32 matrix_a5, packed_const;
+    mov.b32 matrix_a6, packed_const;
+    mov.b32 matrix_a7, packed_const;
+
+    // Initialize matrix b registers with the packed constant
+    mov.b32 matrix_b0, packed_const;
+    mov.b32 matrix_b1, packed_const;
+    mov.b32 matrix_b2, packed_const;
+    mov.b32 matrix_b3, packed_const;
+    mov.b32 matrix_b4, packed_const;
+    mov.b32 matrix_b5, packed_const;
+    mov.b32 matrix_b6, packed_const;
+    mov.b32 matrix_b7, packed_const;
+
+    // The main loop will repeat for 128 iterations
+loop_start:
+    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
+    @exit_predicate bra loop_exit;
+
+    wmma.mma.sync.aligned.row.col.m16n16k16.f32.f32
+         { accum0, accum1, accum2, accum3,
+           accum4, accum5, accum6, accum7 },
+         { matrix_a0, matrix_a1, matrix_a2, matrix_a3,
+           matrix_a4, matrix_a5, matrix_a6, matrix_a7 },
+         { matrix_b0, matrix_b1, matrix_b2, matrix_b3,
+           matrix_b4, matrix_b5, matrix_b6, matrix_b7 },
+         { accum0, accum1, accum2, accum3,
+           accum4, accum5, accum6, accum7 };
+
+    // Increment the loop counter
+    add.u32 loop_counter, loop_counter, 1;
+
+    // Branch back to the beginning of the loop
+    bra loop_start;
+
+loop_exit:
+    // This barrier forces all asynchronous warp-group operations to complete.
+    bar.sync 0;
+
+    // Use volatile stores to force the accumulator values to be written out.
+    // This dummy write (to a global variable) makes the work observable and 
+    // prevents the multiplication  pipeline from being optimized out.
+    st.global.volatile.f32 [dummy_sink_f32],      accum0;
+    st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
+    st.global.volatile.f32 [dummy_sink_f32+8],    accum2;
+    st.global.volatile.f32 [dummy_sink_f32+12],   accum3;
+    ret;
+}
+
 /**
  *  Each new generation of Tensor Cores supports a wider palette of numeric
  *  types, "structured sparsity" modes, and asynchronous scheduling protocols.
  *
- *  For double-precision numbers, we can go down to a granularity as small as
- *  just 8x8x4 for `sm_80` or higher.
+ *  ! For double-precision numbers, the smallest granularity is 8x8x4.
+ *  ! Technically, it requires SM 8.0, but it's not a Warp-level MMA operation.
+ *  ! It's Quadpair-level MMA operation!
  */
 
-.visible .entry tops_f64f64_sm90tc_8x8x4_loop128_ptx_kernel()
+.visible .entry tops_f64f64_sm80mma_8x8x4_loop128_ptx_kernel()
 {
     // Registers to hold matrix A and B operands (each a single f64)
     .reg .f64 matrix_a, matrix_b;
@@ -209,7 +302,7 @@ loop_exit:
  *  is confusingly 19 bits wide! The synchronous variant would look familiar:
  */
 
- .visible .entry tops_tf32f32_sm90tc_16x16x8_loop128_ptx_kernel()
+ .visible .entry tops_tf32f32_sm80wmma_16x16x8_loop128_ptx_kernel()
 {
     // Accumulator registers used for both input and output of the MMA operation
     .reg .b32 accum<8>;
