@@ -603,7 +603,7 @@ __global__ void tops_f16f32_sm90wgmma_64x256x16_loop128_cuda_kernel() {
     std::uint64_t b_descriptor = wgmma_descriptor((std::uint64_t)b_shared, 128 * 256 / 8, 128, 0, 0);
     wgmma_fence();
     for (int i = 0; i != 128; ++i) {
-        wgmma_bf16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
+        wgmma_f16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
         wgmma_commit_group();
     }
     wgmma_sync_group();
