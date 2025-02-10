@@ -527,12 +527,12 @@ __device__ void wgmma_bf16f32_64x256x16(float r[128], std::uint64_t a_descriptor
 #endif
 }
 
-__device__ void wgmma_tf32f32_64x256x16(float r[128], std::uint64_t a_descriptor, std::uint64_t b_descriptor) {
+__device__ void wgmma_tf32f32_64x256x8(float r[128], std::uint64_t a_descriptor, std::uint64_t b_descriptor) {
     //! Unlike the `f16` and `bf16` instructions, the `tf32` has fewer operands,
     //! and can't transpose the input matrices!
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
     asm volatile( //
-        "wgmma.mma_async.sync.aligned.m64n256k16.f32.tf32.tf32 "
+        "wgmma.mma_async.sync.aligned.m64n256k8.f32.tf32.tf32 "
         "{"
         "%0, %1, %2, %3, %4, %5, %6, %7, "
         "%8, %9, %10, %11, %12, %13, %14, %15, "
@@ -574,15 +574,21 @@ __device__ void wgmma_tf32f32_64x256x16(float r[128], std::uint64_t a_descriptor
 #endif
 }
 
+__device__ void wgmma_fence() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+    asm volatile("wgmma.fence.sync.aligned;");
+#endif
+}
+
 __device__ void wgmma_commit_group() {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
     asm volatile("wgmma.commit_group.sync.aligned;");
 #endif
 }
 
-__device__ void wgmma_wait_group() {
+__device__ void wgmma_sync_group() {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
-    asm volatile("wgmma.wait_group.sync.aligned 1;");
+    asm volatile("wgmma.wait_group.sync.aligned 0;");
 #endif
 }
 
@@ -595,9 +601,13 @@ __global__ void tops_f16f32_sm90wgmma_64x256x16_loop128_cuda_kernel() {
     float c_registers[128] = {0.0f};
     std::uint64_t a_descriptor = wgmma_descriptor((std::uint64_t)a_shared, 128, 256, 0, 0);
     std::uint64_t b_descriptor = wgmma_descriptor((std::uint64_t)b_shared, 128 * 256 / 8, 128, 0, 0);
-    for (int i = 0; i != 128; ++i) wgmma_bf16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
-    wgmma_commit_group();
-    wgmma_wait_group();
+    wgmma_fence();
+    for (int i = 0; i != 128; ++i) {
+        wgmma_bf16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
+        wgmma_commit_group();
+    }
+    wgmma_sync_group();
+    if (threadIdx.x == 2147483647) *(std::uint16_t *)nullptr = c_registers[0];
 }
 
 __global__ void tops_bf16f32_sm90wgmma_64x256x16_loop128_cuda_kernel() {
@@ -609,25 +619,33 @@ __global__ void tops_bf16f32_sm90wgmma_64x256x16_loop128_cuda_kernel() {
     float c_registers[128] = {0.0f};
     std::uint64_t a_descriptor = wgmma_descriptor((std::uint64_t)a_shared, 128, 256, 0, 0);
     std::uint64_t b_descriptor = wgmma_descriptor((std::uint64_t)b_shared, 128 * 256 / 8, 128, 0, 0);
-    for (int i = 0; i != 128; ++i) wgmma_bf16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
-    wgmma_commit_group();
-    wgmma_wait_group();
+    wgmma_fence();
+    for (int i = 0; i != 128; ++i) {
+        wgmma_bf16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
+        wgmma_commit_group();
+    }
+    wgmma_sync_group();
+    if (threadIdx.x == 2147483647) *(std::uint16_t *)nullptr = c_registers[0];
 }
 
-__global__ void tops_tf32f32_sm90wgmma_64x256x16_loop128_cuda_kernel() {
-    // 64x256x16 is the largest tile size for `tf32` supported on Hopper.
+__global__ void tops_tf32f32_sm90wgmma_64x256x8_loop128_cuda_kernel() {
+    // 64x256x8 is the largest tile size for `tf32` supported on Hopper.
     // Four-byte representations should be used for storage. Each entry will
     // shifted right by 13 bits before multiplication.
-    __shared__ std::uint32_t a_shared[64][16];
-    __shared__ std::uint32_t b_shared[256][16];
+    __shared__ std::uint32_t a_shared[64][8];
+    __shared__ std::uint32_t b_shared[256][8];
 
     // TODO: Unlike smaller 2-byte floats, the stride sizes will be different here.
     float c_registers[128] = {0.0f};
     std::uint64_t a_descriptor = wgmma_descriptor((std::uint64_t)a_shared, 128, 256, 0, 0);
     std::uint64_t b_descriptor = wgmma_descriptor((std::uint64_t)b_shared, 128 * 256 / 8, 128, 0, 0);
-    for (int i = 0; i != 128; ++i) wgmma_bf16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
-    wgmma_commit_group();
-    wgmma_wait_group();
+    wgmma_fence();
+    for (int i = 0; i != 128; ++i) {
+        wgmma_tf32f32_64x256x8(c_registers, a_descriptor, b_descriptor);
+        wgmma_commit_group();
+    }
+    wgmma_sync_group();
+    if (threadIdx.x == 2147483647) *(std::uint32_t *)nullptr = c_registers[0];
 }
 
 #pragma endregion

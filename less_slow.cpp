@@ -2186,7 +2186,7 @@ BENCHMARK_CAPTURE(                                                              
 
 extern __global__ void tops_f16f32_sm90wgmma_64x256x16_loop128_cuda_kernel();
 extern __global__ void tops_bf16f32_sm90wgmma_64x256x16_loop128_cuda_kernel();
-extern __global__ void tops_tf32f32_sm90wgmma_64x256x16_loop128_cuda_kernel();
+extern __global__ void tops_tf32f32_sm90wgmma_64x256x8_loop128_cuda_kernel();
 
 BENCHMARK_CAPTURE(                                                                              //
     theoretic_tops_cuda, f16f32_sm90wgmma, tops_f16f32_sm90wgmma_64x256x16_loop128_cuda_kernel, //
@@ -2196,9 +2196,9 @@ BENCHMARK_CAPTURE(                                                              
     theoretic_tops_cuda, bf16f32_sm90wgmma, tops_bf16f32_sm90wgmma_64x256x16_loop128_cuda_kernel, //
     64, 256, 16, 90, 128, tensor_core_scale_t::warpgroup_k)
     ->MinTime(10);
-BENCHMARK_CAPTURE(                                                                                //
-    theoretic_tops_cuda, tf32f32_sm90wgmma, tops_tf32f32_sm90wgmma_64x256x16_loop128_cuda_kernel, //
-    64, 256, 16, 90, 128, tensor_core_scale_t::warpgroup_k)
+BENCHMARK_CAPTURE(                                                                               //
+    theoretic_tops_cuda, tf32f32_sm90wgmma, tops_tf32f32_sm90wgmma_64x256x8_loop128_cuda_kernel, //
+    64, 256, 8, 90, 128, tensor_core_scale_t::warpgroup_k)
     ->MinTime(10);
 
 #include <filesystem> // `std::filesystem::absolute` to locate PTX IR file
