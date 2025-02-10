@@ -351,6 +351,8 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_loop128_cuda_kernel() {
  *
  *  We can use CuTe to abstract away the right instructions, by defining small
  *  shared memory matrices and performing such repeated "atom" instantiations.
+ *  We can also write "inline PTX" in CUDA C++, the same way we can write
+ *  "inline assembly" on the host side C++.
  *
  *  @see "Fast Matrix-Multiplication with WGMMA on NVIDIA Hopper GPUs" by Colfax:
  *       https://research.colfax-intl.com/cutlass-tutorial-wgmma-hopper/
@@ -365,39 +367,79 @@ __global__ void tops_b1i32and_sm80tc_8x8x128_loop128_cuda_kernel() {
  *  @see "Blackwell Cluster Launch Control" in CUTLASS docs:
  *       https://github.com/NVIDIA/cutlass/blob/main/media/docs/blackwell_cluster_launch_control.md
  */
+__device__ std::uint64_t wgmma_descriptor(                                                //
+    std::uint64_t address,                                                                //
+    std::uint64_t leading_offset, std::uint64_t stride_offset, std::uint64_t base_offset, //
+    std::uint64_t swizzle) {
+    return ((address & 0x3FFFF) >> 4) | ((leading_offset >> 4) << 16) | ((stride_offset >> 4) << 32) |
+           (base_offset << 49) | (swizzle << 62);
+}
 
-#if 0
-#pragma region CuTe
-#include <cute/tensor.hpp>
-#include <cute/arch/mma.hpp>
-
-__global__ void cute_example() {
+__device__ void wgmma_bf16f32_64x256x16(float r[128], std::uint64_t a_descriptor, std::uint64_t b_descriptor) {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
-    using namespace cute;
-
-    // Create tensors with appropriate layouts
-    auto A = make_tensor<half>(Shape<_16, _8> {});  // 16x8 matrix
-    auto B = make_tensor<half>(Shape<_8, _8> {});   // 8x8 matrix
-    auto C = make_tensor<float>(Shape<_16, _8> {}); // 16x8 matrix for accumulation
-    auto D = make_tensor<float>(Shape<_16, _8> {}); // Output tensor
-
-    // Define MMA traits for fp16 input, fp32 output
-    using MMA = SM90_16x8x8_F32F16F16F32_TT; // TN means A is transposed, B is not
-    auto mma = make_tiled_mma(MMA {});
-
-    // Create a thread-specific MMA slice
-    auto thread_mma = mma.get_slice(threadIdx.x);
-
-    // Get partitioned fragments for this thread
-    auto frag_A = thread_mma.partition_fragment_A(A);
-    auto frag_B = thread_mma.partition_fragment_B(B);
-    auto frag_C = thread_mma.partition_fragment_C(C);
-    auto frag_D = thread_mma.partition_fragment_C(D);
-
-    // Execute MMA operation
-    thread_mma(frag_D, frag_A, frag_B, frag_C);
+    asm volatile( //
+        "wgmma.mma_async.sync.aligned.m64n256k16.f32.bf16.bf16 "
+        "{"
+        "%0, %1, %2, %3, %4, %5, %6, %7, "
+        "%8, %9, %10, %11, %12, %13, %14, %15, "
+        "%16, %17, %18, %19, %20, %21, %22, %23, "
+        "%24, %25, %26, %27, %28, %29, %30, %31, "
+        "%32, %33, %34, %35, %36, %37, %38, %39, "
+        "%40, %41, %42, %43, %44, %45, %46, %47, "
+        "%48, %49, %50, %51, %52, %53, %54, %55, "
+        "%56, %57, %58, %59, %60, %61, %62, %63, "
+        "%64, %65, %66, %67, %68, %69, %70, %71, "
+        "%72, %73, %74, %75, %76, %77, %78, %79, "
+        "%80, %81, %82, %83, %84, %85, %86, %87, "
+        "%88, %89, %90, %91, %92, %93, %94, %95, "
+        "%96, %97, %98, %99, %100, %101, %102, %103, "
+        "%104, %105, %106, %107, %108, %109, %110, %111, "
+        "%112, %113, %114, %115, %116, %117, %118, %119, "
+        "%120, %121, %122, %123, %124, %125, %126, %127"
+        "}, "
+        "%128, %129, "
+        "1, 1, 1, 0, 0;"
+        : "=f"(r[0]), "=f"(r[1]), "=f"(r[2]), "=f"(r[3]), "=f"(r[4]), "=f"(r[5]), "=f"(r[6]), "=f"(r[7]), "=f"(r[8]),
+          "=f"(r[9]), "=f"(r[10]), "=f"(r[11]), "=f"(r[12]), "=f"(r[13]), "=f"(r[14]), "=f"(r[15]), "=f"(r[16]),
+          "=f"(r[17]), "=f"(r[18]), "=f"(r[19]), "=f"(r[20]), "=f"(r[21]), "=f"(r[22]), "=f"(r[23]), "=f"(r[24]),
+          "=f"(r[25]), "=f"(r[26]), "=f"(r[27]), "=f"(r[28]), "=f"(r[29]), "=f"(r[30]), "=f"(r[31]), "=f"(r[32]),
+          "=f"(r[33]), "=f"(r[34]), "=f"(r[35]), "=f"(r[36]), "=f"(r[37]), "=f"(r[38]), "=f"(r[39]), "=f"(r[40]),
+          "=f"(r[41]), "=f"(r[42]), "=f"(r[43]), "=f"(r[44]), "=f"(r[45]), "=f"(r[46]), "=f"(r[47]), "=f"(r[48]),
+          "=f"(r[49]), "=f"(r[50]), "=f"(r[51]), "=f"(r[52]), "=f"(r[53]), "=f"(r[54]), "=f"(r[55]), "=f"(r[56]),
+          "=f"(r[57]), "=f"(r[58]), "=f"(r[59]), "=f"(r[60]), "=f"(r[61]), "=f"(r[62]), "=f"(r[63]), "=f"(r[64]),
+          "=f"(r[65]), "=f"(r[66]), "=f"(r[67]), "=f"(r[68]), "=f"(r[69]), "=f"(r[70]), "=f"(r[71]), "=f"(r[72]),
+          "=f"(r[73]), "=f"(r[74]), "=f"(r[75]), "=f"(r[76]), "=f"(r[77]), "=f"(r[78]), "=f"(r[79]), "=f"(r[80]),
+          "=f"(r[81]), "=f"(r[82]), "=f"(r[83]), "=f"(r[84]), "=f"(r[85]), "=f"(r[86]), "=f"(r[87]), "=f"(r[88]),
+          "=f"(r[89]), "=f"(r[90]), "=f"(r[91]), "=f"(r[92]), "=f"(r[93]), "=f"(r[94]), "=f"(r[95]), "=f"(r[96]),
+          "=f"(r[97]), "=f"(r[98]), "=f"(r[99]), "=f"(r[100]), "=f"(r[101]), "=f"(r[102]), "=f"(r[103]), "=f"(r[104]),
+          "=f"(r[105]), "=f"(r[106]), "=f"(r[107]), "=f"(r[108]), "=f"(r[109]), "=f"(r[110]), "=f"(r[111]),
+          "=f"(r[112]), "=f"(r[113]), "=f"(r[114]), "=f"(r[115]), "=f"(r[116]), "=f"(r[117]), "=f"(r[118]),
+          "=f"(r[119]), "=f"(r[120]), "=f"(r[121]), "=f"(r[122]), "=f"(r[123]), "=f"(r[124]), "=f"(r[125]),
+          "=f"(r[126]), "=f"(r[127])
+        : "l"(a_descriptor), "l"(b_descriptor));
 #endif
 }
 
-#pragma endregion // CuTe
+__device__ void wgmma_commit_group() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+    asm volatile("wgmma.commit_group.sync.aligned;");
 #endif
+}
+
+__device__ void wgmma_wait_group() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+    asm volatile("wgmma.wait_group.sync.aligned 1;");
+#endif
+}
+
+__global__ void tops_bf16f32_sm90tc_64x256x16_loop128_cuda_kernel() {
+    __shared__ __nv_bfloat16 a_shared[64][16];
+    __shared__ __nv_bfloat16 b_shared[256][16];
+
+    float c_registers[128] = {0.0f};
+    std::uint64_t a_descriptor = wgmma_descriptor((std::uint64_t)a_shared, 128, 256, 0, 0);
+    std::uint64_t b_descriptor = wgmma_descriptor((std::uint64_t)b_shared, 128 * 256 / 8, 128, 0, 0);
+    for (int i = 0; i != 128; ++i) wgmma_bf16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
+    wgmma_commit_group();
+    wgmma_wait_group();
+}
