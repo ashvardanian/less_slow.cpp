@@ -2400,6 +2400,18 @@ BENCHMARK_CAPTURE(                                                             /
     64, 256, 16, 90, 128, tensor_core_scale_t::warpgroup_k)
     ->MinTime(10);
 
+BENCHMARK_CAPTURE(                                                              //
+    theoretic_tops_ptx, bf16f32_sm90wgmma,                                      //
+    "less_slow_sm90a.ptx", "tops_bf16f32_sm90tc_m64n256k16_loop128_ptx_kernel", //
+    64, 256, 16, 90, 128, tensor_core_scale_t::warpgroup_k)
+    ->MinTime(10);
+
+BENCHMARK_CAPTURE(                                                             //
+    theoretic_tops_ptx, tf32f32_sm90wgmma,                                     //
+    "less_slow_sm90a.ptx", "tops_tf32f32_sm90tc_m64n256k8_loop128_ptx_kernel", //
+    64, 256, 8, 90, 128, tensor_core_scale_t::warpgroup_k)
+    ->MinTime(10);
+
 BENCHMARK_CAPTURE(                                                                //
     theoretic_tops_ptx, b1i32and_sm90wgmma,                                       //
     "less_slow_sm90a.ptx", "tops_b1i32and_sm90tc_m64n256k256_loop128_ptx_kernel", //
@@ -2414,8 +2426,8 @@ BENCHMARK_CAPTURE(                                                              
  *    number recommended in the datasheet. Similar for double-precision.
  *
  *  - The highest-precision "properly accelerated" type - TF32, will yield only
- *    @b 75 TOPs when using the old warp-level primitives, but will skyrocket
- *    to @b 300 TOPS when using the Warp-Group MMA, @b 60% of the recommended.
+ *    @b 25 TOPs when using the old Warp-level primitives, but will skyrocket
+ *    to @b 600 TOPS when using the Warp-Group-level MMA.
  */
 
 #endif
@@ -3124,14 +3136,14 @@ BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Co
  *
  *                    Datasheet    MMA kernels  cuBLAS
  *
- *  - `f64`           @b 67 T      @b 3.3 T     @b 60 T
- *  - `f32`           @b 67 T      @b 51 T      @b 49 T
- *  - `tf32`          @b 500 T     @b 21 T      -
- *  - `bf16`          @b 1'000 T   @b 51 T      -
- *  - `f16`           @b 1'000 T   -            @b 764 T
+ *  - `f64`           @b 67 T      @b 17 T      @b 60 T
+ *  - `f32`           @b 67 T      -            @b 49 T
+ *  - `tf32`          @b 500 T     @b 520 T     -
+ *  - `bf16`          @b 1'000 T   @b 1'047 T   -
+ *  - `f16`           @b 1'000 T   @b 1'056 T   @b 764 T
  *  - `i8` & `u8`     @b 2'000 T   -            @b 122 T
- *  - `b1` XOR-based  -            @b 39 T      -
- *  - `b1` AND-based  -            @b 143 T     -
+ *  - `b1` XOR-based  -            @b 79 T      -
+ *  - `b1` AND-based  -            @b 8'439 T   -
  *
  *  For comparison, on AMD MI 300X accelerators:
  *  - 80 T arithmetic and 160 T matrix multiplications for `f64`.
