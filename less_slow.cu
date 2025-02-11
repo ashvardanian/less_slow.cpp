@@ -23,6 +23,14 @@
  *  $ nvcc -arch=sm_90a -Xptxas -v -lineinfo -cubin -o less_slow_from_cu.cubin less_slow.cu
  *  $ cuobjdump -sass less_slow_from_cu.cubin | grep -i mma
  *
+ *  Assuming how aggressively NVCC unrolls loops and the number of kernels in
+ *  this file, you may want to deduplicate them:
+ *
+ *  $ cuobjdump -sass less_slow_from_cu.cubin | grep -i mma | \
+ *  $   sed -r 's/\/\*[^*]+\*\///g' | \
+ *  $   sed -r 's/^[[:space:]]+//; s/[[:space:]]+$//' | \
+ *  $   sort -u
+ *
  *  Keep in mind the following TC generations:
  *
  *  - Volta SM70: 1st generation of TCs, server V100 cards.

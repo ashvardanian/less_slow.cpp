@@ -13,13 +13,13 @@
  *  You can validate this file by asking the Nvidia PTX Assembler to compile it
  *  to `.cubin` for some target architecture:
  * 
- *  $ ptxas -o less_slow_from_ptx.cubin -arch=sm_80 less_slow_sm80.ptx
- *  $ cuobjdump -sass less_slow_from_ptx.cubin | grep -i mma
+ *  $ ptxas -o less_slow_sm80_from_ptx.cubin -arch=sm_80 less_slow_sm80.ptx
+ *  $ cuobjdump -sass less_slow_sm80_from_ptx.cubin | grep -i mma
  *
  *  Assuming how aggressively NVCC unrolls loops and the number of kernels in
  *  this file, you may want to deduplicate them:
  *
- *  $ cuobjdump -sass less_slow_from_ptx.cubin | grep -i mma | \
+ *  $ cuobjdump -sass less_slow_sm80_from_ptx.cubin | grep -i mma | \
  *  $   sed -r 's/\/\*[^*]+\*\///g' | \
  *  $   sed -r 's/^[[:space:]]+//; s/[[:space:]]+$//' | \
  *  $   sort -u
