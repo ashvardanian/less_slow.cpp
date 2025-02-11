@@ -75,26 +75,8 @@
 #include <cuda_fp8.h> // `__nv_fp8*` types
 #endif
 
-template <typename scalar_type_, std::size_t side_>
-struct small_square_matrix {
-    scalar_type_ scalars[side_][side_];
-};
-
-/**
- *  @brief  A CUDA kernel that computes the product of two small square matrices.
- *          Doesn't use any block/warp-level communication and optimizations.
- */
-template <typename scalar_type_, std::size_t side_>
-small_square_matrix<scalar_type_, side_> small_matmul_kernel_cuda( //
-    small_square_matrix<scalar_type_, side_> const &a,             //
-    small_square_matrix<scalar_type_, side_> const &b) {
-
-    small_square_matrix<scalar_type_, side_> c;
-    for (std::size_t i = 0; i != side_; ++i)
-        for (std::size_t j = 0; j != side_; ++j)
-            for (std::size_t k = 0; k != side_; ++k) c.scalars[i][j] += a.scalars[i][k] * b.scalars[k][j];
-    return c;
-}
+#pragma region - Basics
+#pragma region Parallelism and Computational Complex
 
 #include <thrust/sort.h> // `thrust::sort`
 
@@ -133,7 +115,11 @@ void reverse_and_sort_with_cub(std::uint32_t *device_pointer, std::size_t array_
     );
 }
 
-#pragma region Numerics
+#pragma endregion // Parallelism and Computational Complex
+#pragma endregion // Basics
+
+#pragma region - Numerics
+#pragma region Scalar Operations
 
 /**
  *  @brief  On-device @b Fused-Multiply-Add operator, that for most numeric
@@ -178,7 +164,6 @@ __device__ void tops_fma_cuda_kernel() {
 }
 
 __global__ void tops_f32f32_sm60fma_16x16x16_loop128_cuda_kernel() { tops_fma_cuda_kernel<float, float, 16, 128>(); }
-
 __global__ void tops_f64f64_sm60fma_16x16x16_loop128_cuda_kernel() { tops_fma_cuda_kernel<double, double, 16, 128>(); }
 
 __global__ void tops_f16f16_sm70fma_16x16x16_loop128_cuda_kernel() {
@@ -216,6 +201,83 @@ __global__ void tops_i32i32_sm60fma_16x16x16_loop128_cuda_kernel() {
 __global__ void tops_i64i64_sm60fma_16x16x16_loop128_cuda_kernel() {
     tops_fma_cuda_kernel<std::int64_t, std::int64_t, 16, 128>();
 }
+
+/**
+ *  Given the growing demand for such workloads, new Dynamic Programming
+ *  eXtensions @b (DPX) have been added on Hopper for various combinations
+ *  of { addition, min, max, ReLU } on 8-bit and 16-bit integer inputs.
+ *
+ *  Thus, @b Floyd-Warshall All-Pairs Shortest Path @b (APSP) algorithm can be
+ *  reformulated as @b Tropical-semiring matrix multiplications in Algebraic
+ *  Graph Theory.
+ *
+ *  It works for both positive and negative edge weights, but not in the
+ *  presence of negative cycles, so most people will realistically use the
+ *  16-bit unsigned edge weights with 32-bit unsigned accumulators.
+ *
+ *  @see "Floyd–Warshall algorithm" on Wikipedia: https://en.wikipedia.org/wiki/Floyd%E2%80%93Warshall_algorithm
+ *  @see "Boosting Dynamic Programming Performance Using NVIDIA Hopper GPU DPX
+ *       Instructions" by Nvidia:
+ *       https://developer.nvidia.com/blog/boosting-dynamic-programming-performance-using-nvidia-hopper-gpu-dpx-instructions/
+ */
+__global__ void tops_u16u32_sm90dpx_16x16x32_loop128_floyd_warshall_cuda_kernel() {
+    // Each pair of unsigned 16-bit inputs will be represented by a single `uint`.
+#if (__CUDA_ARCH__ >= 900)
+    struct floyd_warshall_semiring_t {
+        inline __device__ uint operator()(uint a, uint b, uint c) const noexcept { return __viaddmin_u16x2(a, b, c); }
+    };
+    tops_fma_cuda_kernel<uint, uint, 16, 128, floyd_warshall_semiring_t>();
+#endif
+}
+
+/**
+ *  Similarly, the @b Needleman-Wunsch algorithm in Bioinformatics is often
+ *  used for @b global alignment of fairly short protein or DNA & RNA strings.
+ *
+ *  @see "Needleman–Wunsch algorithm" on Wikipedia: https://en.wikipedia.org/wiki/Needleman%E2%80%93Wunsch_algorithm
+ */
+__global__ void tops_i16i32_sm90dpx_16x16x32_loop128_needleman_wunsch_cuda_kernel() {
+    // Each pair of signed 16-bit inputs will be represented by a single `uint`.
+#if (__CUDA_ARCH__ >= 900)
+    struct needleman_wunsch_semiring_t {
+        inline __device__ uint operator()(uint a, uint b, uint c) const noexcept { return __viaddmax_s16x2(a, b, c); }
+    };
+    tops_fma_cuda_kernel<uint, uint, 16, 128, needleman_wunsch_semiring_t>();
+#endif
+}
+
+/**
+ *  Similarly, the @b Needleman-Wunsch algorithm in Bioinformatics is often
+ *  used for @b local alignment of longer DNA & RNA strings. It also replaces
+ *  multiplication with addition, and addition with maximum, but also applies
+ *  the Rectified Linear Unit, to cut-off negative values.
+ *
+ *  Assuming the strings can easily be over 64 KB long, we should use the
+ *  larger 32-bit inputs for cost matrices.
+ *
+ *  @see "Smith–Waterman algorithm" on Wikipedia: https://en.wikipedia.org/wiki/Smith%E2%80%93Waterman_algorithm
+ */
+__global__ void tops_i32i32_sm90dpx_16x16x16_loop128_smith_waterman_cuda_kernel() {
+#if (__CUDA_ARCH__ >= 900)
+    struct smith_waterman_operator_t {
+        inline __device__ int operator()(int a, int b, int c) const noexcept { return __viaddmax_s32_relu(a, b, c); }
+    };
+    tops_fma_cuda_kernel<int, int, 16, 128, smith_waterman_operator_t>();
+#endif
+}
+
+/**
+ *  On H200, the following integer performance can be expected:
+ *
+ *  - Naive FMA for `i32` and `i64` inputs: 2.3 P
+ *  - Hopper DPX for Floyd-Warshall algorithm with `u16` and `u32`: 11 T
+ *  - Hopper DPX for Needleman-Wunsch algorithm with `i16` and `i32`: 11 T
+ *  - Hopper DPX for Smith-Waterman algorithm with `i32`: 27 T
+ */
+
+#pragma endregion // Scalar Operations
+
+#pragma region Tiled Matrix Multiplications
 
 /**
  *  Starting with Nvidia Volta GPUs, specialized "Tensor Cores" @b (TC) are
@@ -397,7 +459,7 @@ __global__ void tops_b1i32and_sm80wmma_8x8x128_loop128_cuda_kernel() {
 #endif
 }
 
-#pragma endregion
+#pragma endregion // Tiled Matrix Multiplications
 
 /**
  *  MMA is not the only family of tensor core instructions:
@@ -479,9 +541,8 @@ __global__ void tops_b1i32and_sm80wmma_8x8x128_loop128_cuda_kernel() {
  *      .m64n168k8, .m64n176k8, .m64n184k8, .m64n192k8,
  *      .m64n200k8, .m64n208k8, .m64n216k8, .m64n224k8,
  *      .m64n232k8, .m64n240k8, .m64n248k8, .m64n256k8
-
  */
-#pragma region Hopper
+#pragma region Tiled Matrix Multiplications Across Warps
 
 /**
  *  Ideally, both matrices A and B should be in shared memory. Both are
@@ -738,7 +799,7 @@ __global__ void tops_tf32f32_sm90wgmma_64x256x8_loop128_cuda_kernel() {
     if (threadIdx.x == 2147483647) *(std::uint32_t *)nullptr = c_registers[0];
 }
 
-#pragma endregion
+#pragma endregion // Tiled Matrix Multiplications Across Warps
 
 /**
  *
@@ -746,3 +807,5 @@ __global__ void tops_tf32f32_sm90wgmma_64x256x8_loop128_cuda_kernel() {
  *       https://github.com/NVIDIA/cutlass/blob/main/media/docs/blackwell_cluster_launch_control.md
  *
  */
+
+#pragma endregion // Numerics

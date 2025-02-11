@@ -2233,6 +2233,23 @@ BENCHMARK_CAPTURE(                                                              
     64, 256, 8, 90, 128, tensor_core_scale_t::warpgroup_k)
     ->MinTime(10);
 
+extern __global__ void tops_u16u32_sm90dpx_16x16x32_loop128_floyd_warshall_cuda_kernel();
+extern __global__ void tops_i16i32_sm90dpx_16x16x32_loop128_needleman_wunsch_cuda_kernel();
+extern __global__ void tops_i32i32_sm90dpx_16x16x16_loop128_smith_waterman_cuda_kernel();
+
+BENCHMARK_CAPTURE(                                                                                        //
+    theoretic_tops_cuda, u16u32_sm90dpx, tops_u16u32_sm90dpx_16x16x32_loop128_floyd_warshall_cuda_kernel, //
+    16, 16, 32, 90, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                                          //
+    theoretic_tops_cuda, i16i32_sm90dpx, tops_i16i32_sm90dpx_16x16x32_loop128_needleman_wunsch_cuda_kernel, //
+    16, 16, 32, 90, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                                        //
+    theoretic_tops_cuda, i32i32_sm90dpx, tops_i32i32_sm90dpx_16x16x16_loop128_smith_waterman_cuda_kernel, //
+    16, 16, 16, 90, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
+
 #include <filesystem> // `std::filesystem::absolute` to locate PTX IR file
 
 /**
