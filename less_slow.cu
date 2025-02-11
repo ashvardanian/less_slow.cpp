@@ -68,7 +68,7 @@
 #if (__CUDA_ARCH__ >= 700)
 #include <cuda_fp16.h> // `half` type
 #endif
-#if (__CUDA_ARCH__ >= 750)
+#if (__CUDA_ARCH__ >= 800)
 #include <cuda_bf16.h> // `__nv_bfloat16` type
 #endif
 #if (__CUDA_ARCH__ >= 900)
