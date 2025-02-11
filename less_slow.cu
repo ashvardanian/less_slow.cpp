@@ -273,21 +273,21 @@ __global__ void tops_i64i64_sm60fma_16x16x16_loop128_cuda_kernel() {
 template <typename input_type_, typename output_type_, int m_, int n_, int k_, int repetitions_ = 128>
 __device__ inline void tops_tc_cuda_kernel() {
     using namespace nvcuda;
-    wmma::fragment<wmma::matrix_a, m_, n_, k_, input_type_, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, m_, n_, k_, input_type_, wmma::col_major> b_frag;
-    wmma::fragment<wmma::accumulator, m_, n_, k_, output_type_> c_frag;
+    wmma::fragment<wmma::matrix_a, m_, n_, k_, input_type_, wmma::row_major> a_tile;
+    wmma::fragment<wmma::matrix_b, m_, n_, k_, input_type_, wmma::col_major> b_tile;
+    wmma::fragment<wmma::accumulator, m_, n_, k_, output_type_> c_tile;
 
     // To initialize, we can call:
     //
-    //      wmma::fill_fragment(a_frag, 1);
-    //      wmma::fill_fragment(b_frag, 1);
-    //      wmma::fill_fragment(c_frag, 0);
+    //      wmma::fill_fragment(a_tile, 1);
+    //      wmma::fill_fragment(b_tile, 1);
+    //      wmma::fill_fragment(c_tile, 0);
     //
     // To better saturate the ALU, we could unroll a few iterations:
-    for (int i = 0; i != repetitions_; ++i) wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+    for (int r = 0; r != repetitions_; ++r) wmma::mma_sync(c_tile, a_tile, b_tile, c_tile);
 
     // Impossible condition to prevent optimization
-    if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_frag, 16, wmma::mem_row_major);
+    if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_tile, 16, wmma::mem_row_major);
 }
 
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) //? Binary matrices require SM75 or higher
@@ -304,11 +304,11 @@ template <typename input_type_, typename output_type_, int m_, int n_, int k_, i
 __device__ inline void binary_tops_tc_cuda_kernel( //
     nvcuda::wmma::experimental::bmmaBitOp bit_op, nvcuda::wmma::experimental::bmmaAccumulateOp acc_op) {
     using namespace nvcuda;
-    wmma::fragment<wmma::matrix_a, m_, n_, k_, input_type_, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, m_, n_, k_, input_type_, wmma::col_major> b_frag;
-    wmma::fragment<wmma::accumulator, m_, n_, k_, output_type_> c_frag;
-    for (int i = 0; i != repetitions_; ++i) wmma::bmma_sync(c_frag, a_frag, b_frag, c_frag, bit_op, acc_op);
-    if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_frag, 16, wmma::mem_row_major);
+    wmma::fragment<wmma::matrix_a, m_, n_, k_, input_type_, wmma::row_major> a_tile;
+    wmma::fragment<wmma::matrix_b, m_, n_, k_, input_type_, wmma::col_major> b_tile;
+    wmma::fragment<wmma::accumulator, m_, n_, k_, output_type_> c_tile;
+    for (int r = 0; r != repetitions_; ++r) wmma::bmma_sync(c_tile, a_tile, b_tile, c_tile, bit_op, acc_op);
+    if (threadIdx.x == 2147483647) wmma::store_matrix_sync(nullptr, c_tile, 16, wmma::mem_row_major);
 }
 
 #endif
@@ -692,7 +692,7 @@ __global__ void tops_f16f32_sm90wgmma_64x256x16_loop128_cuda_kernel() {
     std::uint64_t a_descriptor = wgmma_descriptor((std::uint64_t)a_shared, 128, 256, 0, 0);
     std::uint64_t b_descriptor = wgmma_descriptor((std::uint64_t)b_shared, 128 * 256 / 8, 128, 0, 0);
     wgmma_fence();
-    for (int i = 0; i != 128; ++i) {
+    for (int r = 0; r != 128; ++r) {
         wgmma_f16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
         wgmma_commit_group();
     }
@@ -710,7 +710,7 @@ __global__ void tops_bf16f32_sm90wgmma_64x256x16_loop128_cuda_kernel() {
     std::uint64_t a_descriptor = wgmma_descriptor((std::uint64_t)a_shared, 128, 256, 0, 0);
     std::uint64_t b_descriptor = wgmma_descriptor((std::uint64_t)b_shared, 128 * 256 / 8, 128, 0, 0);
     wgmma_fence();
-    for (int i = 0; i != 128; ++i) {
+    for (int r = 0; r != 128; ++r) {
         wgmma_bf16f32_64x256x16(c_registers, a_descriptor, b_descriptor);
         wgmma_commit_group();
     }
@@ -730,7 +730,7 @@ __global__ void tops_tf32f32_sm90wgmma_64x256x8_loop128_cuda_kernel() {
     std::uint64_t a_descriptor = wgmma_descriptor((std::uint64_t)a_shared, 128, 256, 0, 0);
     std::uint64_t b_descriptor = wgmma_descriptor((std::uint64_t)b_shared, 128 * 256 / 8, 128, 0, 0);
     wgmma_fence();
-    for (int i = 0; i != 128; ++i) {
+    for (int r = 0; r != 128; ++r) {
         wgmma_tf32f32_64x256x8(c_registers, a_descriptor, b_descriptor);
         wgmma_commit_group();
     }
