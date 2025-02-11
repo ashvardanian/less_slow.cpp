@@ -334,7 +334,7 @@ endif()
 # https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_COMPILER_ID.html
 if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" OR CMAKE_CUDA_COMPILER_ID STREQUAL "NVHPC")
   set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  set_target_properties(less_slow PROPERTIES CUDA_ARCHITECTURES "70;75;80;89;90")
+  set_target_properties(less_slow PROPERTIES CUDA_ARCHITECTURES "70;75;80;89;90a")
   target_compile_options(less_slow PRIVATE
     -Wfatal-errors # Stop on first error
     -fopenmp # OpenMP support, also requires linking
@@ -434,7 +434,7 @@ if(USE_NVIDIA_CCCL)
   # target_link_libraries(less_slow PRIVATE nvidia::cutlass::cutlass)
 
   # List the PTX files you want to copy
-  set(PTX_FILES less_slow_sm70.ptx less_slow_sm90a.ptx)
+  set(PTX_FILES less_slow_sm70.ptx less_slow_sm80.ptx less_slow_sm90a.ptx)
 
   # Loop over each PTX file and add a custom command to copy it
   foreach(PTX ${PTX_FILES})
