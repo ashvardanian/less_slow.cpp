@@ -2133,9 +2133,36 @@ static void theoretic_tops_cuda(                   //
     state.counters["TOP"] = benchmark::Counter(tops_per_gpu * state.iterations(), benchmark::Counter::kIsRate);
 }
 
+extern __global__ void tops_f32f32_sm60fma_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_f64f64_sm60fma_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_i32i32_sm60fma_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_i64i64_sm60fma_16x16x16_loop128_cuda_kernel();
+
+BENCHMARK_CAPTURE(                                                                         //
+    theoretic_tops_cuda, f32f32_sm60fma, tops_f32f32_sm60fma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 60, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                         //
+    theoretic_tops_cuda, f64f64_sm60fma, tops_f64f64_sm60fma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 60, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                         //
+    theoretic_tops_cuda, i32i32_sm60fma, tops_i32i32_sm60fma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 60, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                         //
+    theoretic_tops_cuda, i64i64_sm60fma, tops_i64i64_sm60fma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 60, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
+
+extern __global__ void tops_f16f16_sm70fma_16x16x16_loop128_cuda_kernel();
 extern __global__ void tops_f16f16_sm70wmma_16x16x16_loop128_cuda_kernel();
 extern __global__ void tops_f16f32_sm70wmma_16x16x16_loop128_cuda_kernel();
 
+BENCHMARK_CAPTURE(                                                                         //
+    theoretic_tops_cuda, f16f16_sm60fma, tops_f16f16_sm70fma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 70, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
 BENCHMARK_CAPTURE(                                                                           //
     theoretic_tops_cuda, f16f16_sm70wmma, tops_f16f16_sm70wmma_16x16x16_loop128_cuda_kernel, //
     16, 16, 16, 70, 128, tensor_core_scale_t::warp_k)
@@ -2162,11 +2189,16 @@ BENCHMARK_CAPTURE(                                                              
     8, 8, 128, 75, 128, tensor_core_scale_t::warp_k)
     ->MinTime(10);
 
+extern __global__ void tops_bf16bf16_sm80fma_16x16x16_loop128_cuda_kernel();
 extern __global__ void tops_bf16f32_sm80wmma_16x16x16_loop128_cuda_kernel();
 extern __global__ void tops_tf32f32_sm80wmma_16x16x8_loop128_cuda_kernel();
 extern __global__ void tops_f64f64_sm80wmma_8x8x4_loop128_cuda_kernel();
 extern __global__ void tops_b1i32and_sm80wmma_8x8x128_loop128_cuda_kernel();
 
+BENCHMARK_CAPTURE(                                                                             //
+    theoretic_tops_cuda, bf16bf16_sm60fma, tops_bf16bf16_sm80fma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 75, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
 BENCHMARK_CAPTURE(                                                                             //
     theoretic_tops_cuda, bf16f32_sm80wmma, tops_bf16f32_sm80wmma_16x16x16_loop128_cuda_kernel, //
     16, 16, 16, 80, 128, tensor_core_scale_t::warp_k)

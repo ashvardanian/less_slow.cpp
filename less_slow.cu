@@ -136,6 +136,88 @@ void reverse_and_sort_with_cub(std::uint32_t *device_pointer, std::size_t array_
 #pragma region Numerics
 
 /**
+ *  @brief  On-device @b Fused-Multiply-Add operator, that for most numeric
+ *          types will be replaced by a single PTX instruction on most GPUs.
+ */
+struct fma_t {
+    template <typename scalar_type_>
+    inline __device__ scalar_type_ operator()(scalar_type_ a, scalar_type_ b, scalar_type_ c) const noexcept {
+        return c + a * b;
+    }
+};
+
+/**
+ *  To benchmark matrix multiplications throughput we could start with
+ *  a traditional GEMM kernel, fetching data into shared memory, and then
+ *  running tiled mat-mul. That, however, may end up benchmarking the L2
+ *  throughput, rather than the ALUs on device. So we start with a simpler
+ *  kernel, that operates over small tiles of data already in shared memory.
+ */
+template <typename input_type_, typename output_type_, int matrix_side_, int repetitions_,
+          typename fma_operator_ = fma_t>
+__device__ void tops_fma_cuda_kernel() {
+
+    // In‑register arrays, all allocated as local variables
+    input_type_ a_tile[matrix_side_][matrix_side_], b_tile[matrix_side_][matrix_side_];
+    output_type_ c_tile[matrix_side_][matrix_side_];
+
+    // Repeatedly perform FMA-like operations
+    fma_operator_ fma_operator;
+    for (int r = 0; r < repetitions_; ++r) {
+        for (int i = 0; i < matrix_side_; ++i)
+            for (int j = 0; j < matrix_side_; ++j)
+                for (int k = 0; k < matrix_side_; ++k)
+                    c_tile[i][j] = fma_operator(a_tile[i][k], b_tile[k][j], c_tile[i][j]);
+    }
+
+    // Prevent dead-code elimination by writing one result out
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        volatile output_type_ sink = c_tile[0][0]; // A dummy volatile store should be enough
+        (void)sink;
+    }
+}
+
+__global__ void tops_f32f32_sm60fma_16x16x16_loop128_cuda_kernel() { tops_fma_cuda_kernel<float, float, 16, 128>(); }
+
+__global__ void tops_f64f64_sm60fma_16x16x16_loop128_cuda_kernel() { tops_fma_cuda_kernel<double, double, 16, 128>(); }
+
+__global__ void tops_f16f16_sm70fma_16x16x16_loop128_cuda_kernel() {
+#if (__CUDA_ARCH__ >= 700)
+    struct f16_fma_t {
+        inline __device__ half operator()(half a, half b, half c) const noexcept { return __hfma(a, b, c); }
+    };
+    tops_fma_cuda_kernel<half, half, 16, 128, f16_fma_t>();
+#endif
+}
+
+__global__ void tops_bf16bf16_sm80fma_16x16x16_loop128_cuda_kernel() {
+#if (__CUDA_ARCH__ >= 800)
+    struct bf16_fma_t {
+        inline __device__ __nv_bfloat16 operator()(__nv_bfloat16 a, __nv_bfloat16 b, __nv_bfloat16 c) const noexcept {
+            return __hfma(a, b, c);
+        }
+    };
+    tops_fma_cuda_kernel<__nv_bfloat16, __nv_bfloat16, 16, 128, bf16_fma_t>();
+#endif
+}
+
+/**
+ *  Aside from floating-point numbers, similar operations are often performed
+ *  on integer inputs. If historically graphics cards struggled with those,
+ *  today they have outstanding performance and can be used in variety of
+ *  @b combinatorial problems from encryption and Ethereum mining to Graph
+ *  processing, Integer Programming, Bioinformatics, or more mainstream
+ *  @b AI-Inference of quantized models.
+ */
+__global__ void tops_i32i32_sm60fma_16x16x16_loop128_cuda_kernel() {
+    tops_fma_cuda_kernel<std::int32_t, std::int32_t, 16, 128>();
+}
+
+__global__ void tops_i64i64_sm60fma_16x16x16_loop128_cuda_kernel() {
+    tops_fma_cuda_kernel<std::int64_t, std::int64_t, 16, 128>();
+}
+
+/**
  *  Starting with Nvidia Volta GPUs, specialized "Tensor Cores" @b (TC) are
  *  added for faster matrix multiplications. These Tensor Cores are much faster
  *  than native CUDA implementation of dot-product operations and provide
