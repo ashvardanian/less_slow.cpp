@@ -222,6 +222,17 @@ __global__ void tops_u24u32_sm60fma_16x16x16_loop128_cuda_kernel() {
 }
 
 /**
+ *  With those instructions we can expect the following throughput on H200:
+ *
+ *  - `f64` FMA:        4.5 T
+ *  - `i64` FMA:        3.1 T
+ *  - `f32` FMA:        22 T
+ *  - `i32` FMA:        15.5 T      so we should always prefer 32-bit ops
+ *  - `u8u32` DP4A:     39.3 T
+ *  - `u24u32` UMUL:    13.4 T      not really better than `i32` FMA
+ *  - `f16` FMA:        12.2 T      on Volta
+ *  - `bf16` FMA:       12.2 T      on Ampere
+ *
  *  Given the growing demand for such workloads, new Dynamic Programming
  *  eXtensions @b (DPX) have been added on Hopper for various combinations
  *  of { addition, min, max, ReLU } on 8-bit and 16-bit integer inputs.
@@ -288,7 +299,7 @@ __global__ void tops_i32i32_sm90dpx_16x16x16_loop128_smith_waterman_cuda_kernel(
 /**
  *  On H200, the following integer performance can be expected:
  *
- *  - Naive FMA for `i32` and `i64` inputs: 2.3 P
+ *  - Naive FMA for `i32` and `i64` inputs: 3.1 T and 15.5 T
  *  - Hopper DPX for Floyd-Warshall algorithm with `u16` and `u32`: 11 T
  *  - Hopper DPX for Needleman-Wunsch algorithm with `i16` and `i32`: 11 T
  *  - Hopper DPX for Smith-Waterman algorithm with `i32`: 27 T
