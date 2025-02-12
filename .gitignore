@@ -7,6 +7,8 @@ build_release/
 
 # Temporary binaries
 /tmp/
-less_slow_from_ptx.cubin
 less_slow_from_cu.cubin
 less_slow_from_cu.ptx
+less_slow_sm70_from_ptx.cubin
+less_slow_sm80_from_ptx.cubin
+less_slow_sm90a_from_ptx.cubin

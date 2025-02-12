@@ -3,7 +3,7 @@
  *
  *  Micro-kernels for building a performance-first mindset for CUDA-capable
  *  GPUs using Parallel Thread eXecution (PTX) Intermediate Representation (IR) 
- *  for for Hopper-generation Nvidia GPUs and newer.
+ *  for for Hopper-generation Nvidia GPUs with Warp-Group-level MMA (WGMMA).
  * 
  *  ? You should start at `less_slow.cu` before reading this file.
  *  ? You should start at `less_slow_sm70.ptx` before reading this file.
@@ -13,13 +13,13 @@
  *  You can validate this file by asking the Nvidia PTX Assembler to compile it
  *  to `.cubin` for some target architecture:
  * 
- *  $ ptxas -o less_slow_from_ptx.cubin -arch=sm_90a less_slow_sm90a.ptx
- *  $ cuobjdump -sass less_slow_from_ptx.cubin | grep -i mma
+ *  $ ptxas -o less_slow_sm90a_from_ptx.cubin -arch=sm_90a less_slow_sm90a.ptx
+ *  $ cuobjdump -sass less_slow_sm90a_from_ptx.cubin | grep -i mma
  *
  *  Assuming how aggressively NVCC unrolls loops and the number of kernels in
  *  this file, you may want to deduplicate them:
  *
- *  $ cuobjdump -sass less_slow_from_ptx.cubin | grep -i mma | \
+ *  $ cuobjdump -sass less_slow_sm90a_from_ptx.cubin | grep -i mma | \
  *  $   sed -r 's/\/\*[^*]+\*\///g' | \
  *  $   sed -r 's/^[[:space:]]+//; s/[[:space:]]+$//' | \
  *  $   sort -u
@@ -32,382 +32,47 @@
  *  Let's define some global memory buffers, visible on both device and host
  *  side, to output multiplication results.
  */
-.visible .global .align 8 .f64 dummy_sink_f64[32];
 .visible .global .align 4 .s32 dummy_sink_s32[32];
 .visible .global .align 4 .f32 dummy_sink_f32[32];
 
-/**
- *  Our previous Volta kernel should work just fine here, but we can make it
- *  nicer by using the `<>` syntax to define many virtual registers without
- *  explicitly naming them! We can also explicitly define them as `.f16x2` to
- *  constrain the registers to packed half-precision pairs.
- */
-.visible .entry tops_f16f16_sm90tc_16x16x16_loop128_ptx_kernel()
-{
-    // Accumulator registers used for both input and output of the MMA operation
-    // https://docs.nvidia.com/cuda/parallel-thread-execution/#parameterized-variable-names
-    .reg .b32 accum<4>;
-
-    // Registers to hold packed 16-bit data for matrix A (8 registers)
-    .reg .f16x2 matrix_a<8>;
-
-    // Registers to hold packed 16-bit data for matrix B (8 registers)
-    .reg .f16x2 matrix_b<8>;
-
-    // General-purpose registers for loop control and constant values
-    .reg .b32 loop_counter, loop_limit, packed_const;
-
-    // Predicate register for conditional branching (loop exit)
-    .reg .pred exit_predicate;
-
-    // Set up loop counter and loop limit
-    mov.u32 loop_counter, 0;
-    mov.u32 loop_limit, 128;
-
-    // Zero-initialize the accumulators, as registers may contain noise
-    // https://docs.nvidia.com/cuda/parallel-thread-execution/#state-spaces
-    mov.f32 accum0, 0.0;
-    mov.f32 accum1, 0.0;
-    mov.f32 accum2, 0.0;
-    mov.f32 accum3, 0.0;
-
-    // Initialize constant for packed matrix data (placeholder)
-    mov.b32 packed_const, 0x00010001;
-
-    // Initialize matrix a registers with the packed constant
-    mov.b32 matrix_a0, packed_const;
-    mov.b32 matrix_a1, packed_const;
-    mov.b32 matrix_a2, packed_const;
-    mov.b32 matrix_a3, packed_const;
-    mov.b32 matrix_a4, packed_const;
-    mov.b32 matrix_a5, packed_const;
-    mov.b32 matrix_a6, packed_const;
-    mov.b32 matrix_a7, packed_const;
-
-    // Initialize matrix b registers with the packed constant
-    mov.b32 matrix_b0, packed_const;
-    mov.b32 matrix_b1, packed_const;
-    mov.b32 matrix_b2, packed_const;
-    mov.b32 matrix_b3, packed_const;
-    mov.b32 matrix_b4, packed_const;
-    mov.b32 matrix_b5, packed_const;
-    mov.b32 matrix_b6, packed_const;
-    mov.b32 matrix_b7, packed_const;
-
-    // The main loop will repeat for 128 iterations
-loop_start:
-    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
-    @exit_predicate bra loop_exit;
-
-    wmma.mma.sync.aligned.row.col.m16n16k16.f16.f16 
-         { accum0, accum1, accum2, accum3 },
-         { matrix_a0, matrix_a1, matrix_a2, matrix_a3,
-           matrix_a4, matrix_a5, matrix_a6, matrix_a7 },
-         { matrix_b0, matrix_b1, matrix_b2, matrix_b3,
-           matrix_b4, matrix_b5, matrix_b6, matrix_b7 },
-         { accum0, accum1, accum2, accum3 };
-
-    // Increment the loop counter
-    add.u32 loop_counter, loop_counter, 1;
-
-    // Branch back to the beginning of the loop
-    bra loop_start;
-
-loop_exit:
-    // This barrier forces all asynchronous warp-group operations to complete.
-    bar.sync 0;
-
-    // Use volatile stores to force the accumulator values to be written out.
-    // This dummy write (to a global variable) makes the work observable and 
-    // prevents the multiplication  pipeline from being optimized out.
-    st.global.volatile.f32 [dummy_sink_f32],      accum0;
-    st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
-    st.global.volatile.f32 [dummy_sink_f32+8],    accum2;
-    st.global.volatile.f32 [dummy_sink_f32+12],   accum3;
-    ret;
-}
-
-/**
- *  Each new generation of Tensor Cores supports a wider palette of numeric
- *  types, "structured sparsity" modes, and asynchronous scheduling protocols.
- *
- *  For double-precision numbers, we can go down to a granularity as small as
- *  just 8x8x4 for `sm_80` or higher.
- */
-
-.visible .entry tops_f64f64_sm90tc_8x8x4_loop128_ptx_kernel()
-{
-    // Registers to hold matrix A and B operands (each a single f64)
-    .reg .f64 matrix_a, matrix_b;
-
-    // Additive bias and accumulator registers used for both input and output of the MMA operation
-    .reg .f64 bias<2>, accum<2>;
-
-    // General-purpose registers for loop control
-    .reg .b32 loop_counter, loop_limit;
-
-    // Predicate register for conditional branching (loop exit)
-    .reg .pred exit_predicate;
-
-    // Set up loop counter and loop limit
-    mov.u32 loop_counter, 0;
-    mov.u32 loop_limit, 128;
-
-    // Zero-initialize the accumulator registers
-    mov.f64 accum0, 0.0;
-    mov.f64 accum1, 0.0;
-
-    // Initialize matrix A and B operands to one (double precision)
-    mov.f64 matrix_a, 1.0;
-    mov.f64 matrix_b, 1.0;
-
-    // Initialize the additive bias to zero
-    mov.f64 bias0, 0.0;
-    mov.f64 bias1, 0.0;
-
-    // The main loop will repeat for 128 iterations
-loop_start:
-    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
-    @exit_predicate bra loop_exit;
-
-    mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64
-         { accum0, accum1 },
-         { matrix_a },
-         { matrix_b },
-         { bias0, bias1 };
-
-    // Increment the loop counter
-    add.u32 loop_counter, loop_counter, 1;
-
-    // Branch back to the beginning of the loop
-    bra loop_start;
-
-loop_exit:
-    // This barrier forces all asynchronous warp-group operations to complete.
-    bar.sync 0;
-
-    // Use volatile stores to force the accumulator values to be written out.
-    // This dummy write (to a global variable) makes the work observable and 
-    // prevents the multiplication  pipeline from being optimized out.
-    st.global.volatile.f64 [dummy_sink_f64],       accum0;
-    st.global.volatile.f64 [dummy_sink_f64+8],     accum1;
-    ret;
-}
-
-/**
- *  Ridiculously, there are no Warp-Group-Asynchronous double-precision
- *  variants, but every other variant is present:
- *
- *  - `b1` operands wit `s32` accumulators
- *  - `u8` and `s8` operands with `s32` accumulators
- *  - `e4m3` and `e5m2` operands with `f16` and `f32` accumulators
- *  - `f16` operands with `f16` and `f32` accumulators
- *  - `bf16` operands with `f32` accumulators
- *  - `tf32` operands with `f32` accumulators
- *
- *  So the highest-precision properly accelerated type is the `tf32`, which
- *  is confusingly 19 bits wide! The synchronous variant would look familiar:
- */
-
- .visible .entry tops_tf32f32_sm90tc_16x16x8_loop128_ptx_kernel()
-{
-    // Accumulator registers used for both input and output of the MMA operation
-    .reg .b32 accum<8>;
-
-    // Registers to hold packed 16-bit data for matrix A
-    .reg .b32 matrix_a<4>;
-
-    // Registers to hold packed 16-bit data for matrix B
-    .reg .b32 matrix_b<4>;
-
-    // General-purpose registers for loop control and constant values
-    .reg .b32 loop_counter, loop_limit, packed_const;
-
-    // Predicate register for conditional branching (loop exit)
-    .reg .pred exit_predicate;
-
-    // Set up loop counter and loop limit
-    mov.u32 loop_counter, 0;
-    mov.u32 loop_limit, 128;
-
-    // Zero-initialize the accumulator registers
-    mov.f32 accum0, 0.0;
-    mov.f32 accum1, 0.0;
-    mov.f32 accum2, 0.0;
-    mov.f32 accum3, 0.0;
-    mov.f32 accum4, 0.0;
-    mov.f32 accum5, 0.0;
-    mov.f32 accum6, 0.0;
-    mov.f32 accum7, 0.0;
-
-    // Initialize constant for packed matrix data (placeholder)
-    mov.b32 packed_const, 0x00010001;
-
-    // Initialize matrix a registers with the packed constant
-    mov.b32 matrix_a0, packed_const;
-    mov.b32 matrix_a1, packed_const;
-
-    // Initialize matrix b registers with the packed constant
-    mov.b32 matrix_b0, packed_const;
-    mov.b32 matrix_b1, packed_const;
-
-    // The main loop will repeat for 128 iterations
-loop_start:
-    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
-    @exit_predicate bra loop_exit;
-
-    wmma.mma.sync.aligned.m16n16k8.row.col.f32.tf32.tf32.f32
-         { accum0, accum1, accum2, accum3,
-           accum4, accum5, accum6, accum7 },
-         { matrix_a0, matrix_a1, matrix_a2, matrix_a3 },
-         { matrix_b0, matrix_b1, matrix_b2, matrix_b3 },
-         { accum0, accum1, accum2, accum3,
-           accum4, accum5, accum6, accum7 };
-
-    // Increment the loop counter
-    add.u32 loop_counter, loop_counter, 1;
-
-    // Branch back to the beginning of the loop
-    bra loop_start;
-
-loop_exit:
-    // This barrier forces all asynchronous warp-group operations to complete.
-    bar.sync 0;
-
-    // Use volatile stores to force the accumulator values to be written out.
-    // This dummy write (to a global variable) makes the work observable and 
-    // prevents the multiplication  pipeline from being optimized out.
-    st.global.volatile.f32 [dummy_sink_f32],      accum0;
-    st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
-    st.global.volatile.f32 [dummy_sink_f32+8],    accum2;
-    st.global.volatile.f32 [dummy_sink_f32+12],   accum3;
-    ret;
-}
-
-/**
- *  The instruction syntax for Warp-Group asynchronous instructions is very
- *  different, as at least one of the operand matrices has to be in shared
- *  memory (not registers). It's documented as in 2 variants:
- *
- *      wgmma.mma_async.sync.aligned.shape.dtype.tf32.tf32
- *          d, a-desc, b-desc, scale-d, imm-scale-a, imm-scale-b;
- *      wgmma.mma_async.sync.aligned.shape.dtype.tf32.tf32
- *          d, a, b-desc, scale-d, imm-scale-a, imm-scale-b;
- *
- *  There is no "C" matrix involved at all, we are computing `D = A * B + D`.
- *  The A and B matrix descriptors are the properties of the matrix in shared
- *  memory. It is a 64-bit value contained with the following layout:
- *
- *      - 14 bits [0; 13]: start address
- *      - 14 bits [16; 29]: leading dimension byte offset
- *      - 14 bits [32; 45]: stride dimension byte offset
- *      - 3 bits [49; 51]: matrix base offset, valid only for "swizzling"
- *      - 2 bits [62; 63]: "swizzling" mode
- *
- *  Swizzling defines the order of the elements and can have 4 possible values:
- *
- *      0: no "swizzling" at all
- *      1: a 128-byte "swizzle" with a 1024 byte offset of a repeating pattern
- *      2: a 64-byte "swizzle" with a 512 byte offset of a repeating pattern
- *      3: a 32-byte "swizzle" with a 256 byte offset of a repeating pattern
- *
- *  The list of supported shapes is exhausting:
- *
- *      .m64n8k8, .m64n16k8, .m64n24k8, .m64n32k8,
- *      .m64n40k8, .m64n48k8, .m64n56k8, .m64n64k8,
- *      .m64n72k8, .m64n80k8, .m64n88k8, .m64n96k8,
- *      .m64n104k8, .m64n112k8, .m64n120k8, .m64n128k8,
- *      .m64n136k8, .m64n144k8, .m64n152k8, .m64n160k8,
- *      .m64n168k8, .m64n176k8, .m64n184k8, .m64n192k8,
- *      .m64n200k8, .m64n208k8, .m64n216k8, .m64n224k8,
- *      .m64n232k8, .m64n240k8, .m64n248k8, .m64n256k8
- *
- *  The `scale` parameters can be used to either negate the inputs, or disable
- *  additive bias accumulation in the output.
- */
-.visible .entry tops_tf32f32_sm90tc_m64n16k8_loop128_ptx_kernel()
-{
-    // Accumulator registers used for both input and output of this MMA
-    .reg .f32 accum<8>;
-
-    // Descriptors for matrix A and matrix B operands
-    .reg .b64 desc_a, desc_b;
-
-    // General-purpose registers for loop control
-    .reg .b32 loop_counter, loop_limit;
-
-    // Predicate register for conditional branching (loop exit)
-    .reg .pred exit_predicate;
-
-    // Set up loop counter and loop limit
-    mov.u32 loop_counter, 0;
-    mov.u32 loop_limit, 128;
-
-    // Zero-initialize the accumulator registers
-    mov.f32 accum0, 0.0;
-    mov.f32 accum1, 0.0;
-    mov.f32 accum2, 0.0;
-    mov.f32 accum3, 0.0;
-    mov.f32 accum4, 0.0;
-    mov.f32 accum5, 0.0;
-    mov.f32 accum6, 0.0;
-    mov.f32 accum7, 0.0;
-
-    // Initialize matrix descriptors with arbitrary placeholder values
-    mov.u64 desc_a, 0x0000000000000000;
-    mov.u64 desc_b, 0x0000000000000000;
-
-    // Enforce the ordered for Warp-Group instructions
-    wgmma.fence.sync.aligned;
-
-    // The main loop will repeat for 128 iterations
-loop_start:
-    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
-    @exit_predicate bra loop_exit;
-
-    wgmma.mma_async.sync.aligned.m64n16k8.f32.tf32.tf32
-         { accum0, accum1, accum2, accum3, accum4, accum5, accum6, accum7 },
-         desc_a,
-         desc_b,
-         0, -1, -1;
-
-    // Increment the loop counter
-    add.u32 loop_counter, loop_counter, 1;
-
-    // Branch back to the beginning of the loop
-    bra loop_start;
-
-loop_exit:
-    // Commit all prior uncommitted operations to the group and wait!
-    wgmma.commit_group.sync.aligned;
-    wgmma.wait_group.sync.aligned 0;
-
-    // Use volatile stores to force the accumulator values to be written out.
-    // This dummy write (to a global variable) makes the work observable and 
-    // prevents the multiplication  pipeline from being optimized out.
-    st.global.volatile.f32 [dummy_sink_f32],      accum0;
-    st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
-    st.global.volatile.f32 [dummy_sink_f32+8],    accum2;
-    st.global.volatile.f32 [dummy_sink_f32+12],   accum3;
-    ret;
-}
-
-/**
- *  This results in massive performance gains on Hopper:
- *  - 16x16x8 MMA computed by individual warps: 74 T
- *  - 64x16x8 WGMMA computed by four warps together: 300 T  
- *
- *  Will it get even better with larger matrices if we scale the second
- *  dimension from 16 to 256? It would require 128 accumulators.
- */
-
-.visible .entry tops_tf32f32_sm90tc_m64n256k8_loop128_ptx_kernel()
+.visible .entry tops_f16f32_sm90tc_m64n256k16_loop128_ptx_kernel()
 {
     // Accumulator registers used for both input and output of this MMA
     .reg .f32 accum<128>;
 
     // Descriptors for matrix A and matrix B operands
     .reg .b64 desc_a, desc_b;
+    
+    // F16 variables will be stored in B16 slots in 2D arrays:
+    // NVCC prefers to demote the slots down to `.b8` and uses `.align 2`
+    // to guarantee correct alignment.
+    .shared .b16 tile_a[64][16];
+    .shared .b16 tile_b[256][16];
+
+    // Define registers to store shared memory addresses
+    .reg .u64 addr_a, addr_b;
+
+    // Load the address of the shared memory tiles
+    mov.u64 addr_a, tile_a;             
+    cvta.shared.u64 addr_a, addr_a;  
+    mov.u64 addr_b, tile_b;
+    cvta.shared.u64 addr_b, addr_b;
+
+    // Shift address right by 4 bits
+    and.b64 addr_a, addr_a, 0x3FFFF;
+    and.b64 addr_b, addr_b, 0x3FFFF;
+    shr.u64 addr_a, addr_a, 4;
+    shr.u64 addr_b, addr_b, 4;
+    
+    // Define the shape of M x K matrix A
+    mov.u64 desc_a, addr_a;
+    or.b64  desc_a, desc_a, ((128 >> 4) << 16);     // Leading dimension
+    or.b64  desc_a, desc_a, ((256 >> 4) << 32);     // Stride dimension
+
+    // Define the shape of K x N matrix B
+    mov.u64 desc_b, addr_b;
+    or.b64  desc_b, desc_b, ((4096 >> 4) << 16); // Leading-dimension info
+    or.b64  desc_b, desc_b, ((128 >> 4) << 32);  // Stride info
 
     // General-purpose registers for loop control
     .reg .b32 loop_counter, loop_limit;
@@ -453,10 +118,271 @@ loop_exit:
     mov.f32 accum120, 0.0; mov.f32 accum121, 0.0; mov.f32 accum122, 0.0; mov.f32 accum123, 0.0;
     mov.f32 accum124, 0.0; mov.f32 accum125, 0.0; mov.f32 accum126, 0.0; mov.f32 accum127, 0.0;
     
-    // Initialize matrix descriptors with arbitrary placeholder values
-    mov.u64 desc_a, 0x0000000000000000;
-    mov.u64 desc_b, 0x0000000000000000;
+    // Enforce the ordered for Warp-Group instructions
+    wgmma.fence.sync.aligned;
 
+    // The main loop will repeat for 128 iterations
+loop_start:
+    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
+    @exit_predicate bra loop_exit;
+
+    wgmma.mma_async.sync.aligned.m64n256k16.f32.f16.f16
+         { accum0,  accum1,  accum2,  accum3,  accum4,  accum5,  accum6,  accum7,
+           accum8,  accum9,  accum10, accum11, accum12, accum13, accum14, accum15,
+           accum16, accum17, accum18, accum19, accum20, accum21, accum22, accum23,
+           accum24, accum25, accum26, accum27, accum28, accum29, accum30, accum31,
+           accum32, accum33, accum34, accum35, accum36, accum37, accum38, accum39,
+           accum40, accum41, accum42, accum43, accum44, accum45, accum46, accum47,
+           accum48, accum49, accum50, accum51, accum52, accum53, accum54, accum55,
+           accum56, accum57, accum58, accum59, accum60, accum61, accum62, accum63,
+           accum64, accum65, accum66, accum67, accum68, accum69, accum70, accum71,
+           accum72, accum73, accum74, accum75, accum76, accum77, accum78, accum79,
+           accum80, accum81, accum82, accum83, accum84, accum85, accum86, accum87,
+           accum88, accum89, accum90, accum91, accum92, accum93, accum94, accum95,
+           accum96, accum97, accum98, accum99, accum100, accum101, accum102, accum103,
+           accum104, accum105, accum106, accum107, accum108, accum109, accum110, accum111,
+           accum112, accum113, accum114, accum115, accum116, accum117, accum118, accum119,
+           accum120, accum121, accum122, accum123, accum124, accum125, accum126, accum127 },
+         desc_a,
+         desc_b,
+         1, 1, 1, 0, 0;
+    wgmma.commit_group.sync.aligned;
+    
+    // Increment the loop counter
+    add.u32 loop_counter, loop_counter, 1;
+
+    // Branch back to the beginning of the loop
+    bra loop_start;
+
+loop_exit:
+    // Zero argument means - wait for all committed WGMMAs to complete.
+    wgmma.wait_group.sync.aligned 0;
+
+    // Use volatile stores to force the accumulator values to be written out.
+    // This dummy write (to a global variable) makes the work observable and 
+    // prevents the multiplication  pipeline from being optimized out.
+    st.global.volatile.f32 [dummy_sink_f32],      accum0;
+    st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
+    st.global.volatile.f32 [dummy_sink_f32+8],    accum126;
+    st.global.volatile.f32 [dummy_sink_f32+12],   accum127;
+    ret;
+}
+
+.visible .entry tops_bf16f32_sm90tc_m64n256k16_loop128_ptx_kernel()
+{
+    // Accumulator registers used for both input and output of this MMA
+    .reg .f32 accum<128>;
+
+    // Descriptors for matrix A and matrix B operands
+    .reg .b64 desc_a, desc_b;
+    
+    // BF16 variables will be stored in B16 slots in 2D arrays:
+    // NVCC prefers to demote the slots down to `.b8` and uses `.align 2`
+    // to guarantee correct alignment.
+    .shared .b16 tile_a[64][16];
+    .shared .b16 tile_b[256][16];
+
+    // Define registers to store shared memory addresses
+    .reg .u64 addr_a, addr_b;
+
+    // Load the address of the shared memory tiles
+    mov.u64 addr_a, tile_a;             
+    cvta.shared.u64 addr_a, addr_a;  
+    mov.u64 addr_b, tile_b;
+    cvta.shared.u64 addr_b, addr_b;
+
+    // Shift address right by 4 bits
+    and.b64 addr_a, addr_a, 0x3FFFF;
+    and.b64 addr_b, addr_b, 0x3FFFF;
+    shr.u64 addr_a, addr_a, 4;
+    shr.u64 addr_b, addr_b, 4;
+    
+    // Define the shape of M x K matrix A
+    mov.u64 desc_a, addr_a;
+    or.b64  desc_a, desc_a, ((128 >> 4) << 16);     // Leading dimension
+    or.b64  desc_a, desc_a, ((256 >> 4) << 32);     // Stride dimension
+
+    // Define the shape of K x N matrix B
+    mov.u64 desc_b, addr_b;
+    or.b64  desc_b, desc_b, ((4096 >> 4) << 16); // Leading-dimension info
+    or.b64  desc_b, desc_b, ((128 >> 4) << 32);  // Stride info
+
+    // General-purpose registers for loop control
+    .reg .b32 loop_counter, loop_limit;
+
+    // Predicate register for conditional branching (loop exit)
+    .reg .pred exit_predicate;
+
+    // Set up loop counter and loop limit to fill accumulators
+    mov.u32 loop_counter, 0;
+    mov.u32 loop_limit, 128;
+
+    // Zero-initialize the accumulator registers:
+    mov.f32 accum0,  0.0;  mov.f32 accum1,  0.0;  mov.f32 accum2,  0.0;  mov.f32 accum3,  0.0;
+    mov.f32 accum4,  0.0;  mov.f32 accum5,  0.0;  mov.f32 accum6,  0.0;  mov.f32 accum7,  0.0;
+    mov.f32 accum8,  0.0;  mov.f32 accum9,  0.0;  mov.f32 accum10, 0.0;  mov.f32 accum11, 0.0;
+    mov.f32 accum12, 0.0;  mov.f32 accum13, 0.0;  mov.f32 accum14, 0.0;  mov.f32 accum15, 0.0;
+    mov.f32 accum16, 0.0;  mov.f32 accum17, 0.0;  mov.f32 accum18, 0.0;  mov.f32 accum19, 0.0;
+    mov.f32 accum20, 0.0;  mov.f32 accum21, 0.0;  mov.f32 accum22, 0.0;  mov.f32 accum23, 0.0;
+    mov.f32 accum24, 0.0;  mov.f32 accum25, 0.0;  mov.f32 accum26, 0.0;  mov.f32 accum27, 0.0;
+    mov.f32 accum28, 0.0;  mov.f32 accum29, 0.0;  mov.f32 accum30, 0.0;  mov.f32 accum31, 0.0;
+    mov.f32 accum32, 0.0;  mov.f32 accum33, 0.0;  mov.f32 accum34, 0.0;  mov.f32 accum35, 0.0;
+    mov.f32 accum36, 0.0;  mov.f32 accum37, 0.0;  mov.f32 accum38, 0.0;  mov.f32 accum39, 0.0;
+    mov.f32 accum40, 0.0;  mov.f32 accum41, 0.0;  mov.f32 accum42, 0.0;  mov.f32 accum43, 0.0;
+    mov.f32 accum44, 0.0;  mov.f32 accum45, 0.0;  mov.f32 accum46, 0.0;  mov.f32 accum47, 0.0;
+    mov.f32 accum48, 0.0;  mov.f32 accum49, 0.0;  mov.f32 accum50, 0.0;  mov.f32 accum51, 0.0;
+    mov.f32 accum52, 0.0;  mov.f32 accum53, 0.0;  mov.f32 accum54, 0.0;  mov.f32 accum55, 0.0;
+    mov.f32 accum56, 0.0;  mov.f32 accum57, 0.0;  mov.f32 accum58, 0.0;  mov.f32 accum59, 0.0;
+    mov.f32 accum60, 0.0;  mov.f32 accum61, 0.0;  mov.f32 accum62, 0.0;  mov.f32 accum63, 0.0;
+    mov.f32 accum64, 0.0;  mov.f32 accum65, 0.0;  mov.f32 accum66, 0.0;  mov.f32 accum67, 0.0;
+    mov.f32 accum68, 0.0;  mov.f32 accum69, 0.0;  mov.f32 accum70, 0.0;  mov.f32 accum71, 0.0;
+    mov.f32 accum72, 0.0;  mov.f32 accum73, 0.0;  mov.f32 accum74, 0.0;  mov.f32 accum75, 0.0;
+    mov.f32 accum76, 0.0;  mov.f32 accum77, 0.0;  mov.f32 accum78, 0.0;  mov.f32 accum79, 0.0;
+    mov.f32 accum80, 0.0;  mov.f32 accum81, 0.0;  mov.f32 accum82, 0.0;  mov.f32 accum83, 0.0;
+    mov.f32 accum84, 0.0;  mov.f32 accum85, 0.0;  mov.f32 accum86, 0.0;  mov.f32 accum87, 0.0;
+    mov.f32 accum88, 0.0;  mov.f32 accum89, 0.0;  mov.f32 accum90, 0.0;  mov.f32 accum91, 0.0;
+    mov.f32 accum92, 0.0;  mov.f32 accum93, 0.0;  mov.f32 accum94, 0.0;  mov.f32 accum95, 0.0;
+    mov.f32 accum96, 0.0;  mov.f32 accum97, 0.0;  mov.f32 accum98, 0.0;  mov.f32 accum99, 0.0;
+    mov.f32 accum100, 0.0; mov.f32 accum101, 0.0; mov.f32 accum102, 0.0; mov.f32 accum103, 0.0;
+    mov.f32 accum104, 0.0; mov.f32 accum105, 0.0; mov.f32 accum106, 0.0; mov.f32 accum107, 0.0;
+    mov.f32 accum108, 0.0; mov.f32 accum109, 0.0; mov.f32 accum110, 0.0; mov.f32 accum111, 0.0;
+    mov.f32 accum112, 0.0; mov.f32 accum113, 0.0; mov.f32 accum114, 0.0; mov.f32 accum115, 0.0;
+    mov.f32 accum116, 0.0; mov.f32 accum117, 0.0; mov.f32 accum118, 0.0; mov.f32 accum119, 0.0;
+    mov.f32 accum120, 0.0; mov.f32 accum121, 0.0; mov.f32 accum122, 0.0; mov.f32 accum123, 0.0;
+    mov.f32 accum124, 0.0; mov.f32 accum125, 0.0; mov.f32 accum126, 0.0; mov.f32 accum127, 0.0;
+    
+    // Enforce the ordered for Warp-Group instructions
+    wgmma.fence.sync.aligned;
+
+    // The main loop will repeat for 128 iterations
+loop_start:
+    setp.ge.u32 exit_predicate, loop_counter, loop_limit;
+    @exit_predicate bra loop_exit;
+
+    wgmma.mma_async.sync.aligned.m64n256k16.f32.bf16.bf16
+         { accum0,  accum1,  accum2,  accum3,  accum4,  accum5,  accum6,  accum7,
+           accum8,  accum9,  accum10, accum11, accum12, accum13, accum14, accum15,
+           accum16, accum17, accum18, accum19, accum20, accum21, accum22, accum23,
+           accum24, accum25, accum26, accum27, accum28, accum29, accum30, accum31,
+           accum32, accum33, accum34, accum35, accum36, accum37, accum38, accum39,
+           accum40, accum41, accum42, accum43, accum44, accum45, accum46, accum47,
+           accum48, accum49, accum50, accum51, accum52, accum53, accum54, accum55,
+           accum56, accum57, accum58, accum59, accum60, accum61, accum62, accum63,
+           accum64, accum65, accum66, accum67, accum68, accum69, accum70, accum71,
+           accum72, accum73, accum74, accum75, accum76, accum77, accum78, accum79,
+           accum80, accum81, accum82, accum83, accum84, accum85, accum86, accum87,
+           accum88, accum89, accum90, accum91, accum92, accum93, accum94, accum95,
+           accum96, accum97, accum98, accum99, accum100, accum101, accum102, accum103,
+           accum104, accum105, accum106, accum107, accum108, accum109, accum110, accum111,
+           accum112, accum113, accum114, accum115, accum116, accum117, accum118, accum119,
+           accum120, accum121, accum122, accum123, accum124, accum125, accum126, accum127 },
+         desc_a,
+         desc_b,
+         1, 1, 1, 0, 0;
+    wgmma.commit_group.sync.aligned;
+    
+    // Increment the loop counter
+    add.u32 loop_counter, loop_counter, 1;
+
+    // Branch back to the beginning of the loop
+    bra loop_start;
+
+loop_exit:
+    // Zero argument means - wait for all committed WGMMAs to complete.
+    wgmma.wait_group.sync.aligned 0;
+
+    // Use volatile stores to force the accumulator values to be written out.
+    // This dummy write (to a global variable) makes the work observable and 
+    // prevents the multiplication  pipeline from being optimized out.
+    st.global.volatile.f32 [dummy_sink_f32],      accum0;
+    st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
+    st.global.volatile.f32 [dummy_sink_f32+8],    accum126;
+    st.global.volatile.f32 [dummy_sink_f32+12],   accum127;
+    ret;
+}
+
+.visible .entry tops_tf32f32_sm90tc_m64n256k8_loop128_ptx_kernel()
+{
+    // Accumulator registers used for both input and output of this MMA
+    .reg .f32 accum<128>;
+
+    // Descriptors for matrix A and matrix B operands
+    .reg .b64 desc_a, desc_b;
+    
+    // TF32 (19-bits) variables will be stored in B32 slots in 2D arrays,
+    // and shifted right by 13 bits for arithmetics
+    .shared .b32 tile_a[64][8];
+    .shared .b32 tile_b[256][8];
+
+    // Define registers to store shared memory addresses
+    .reg .u64 addr_a, addr_b;
+
+    // Load the address of the shared memory tiles
+    mov.u64 addr_a, tile_a;             
+    cvta.shared.u64 addr_a, addr_a;  
+    mov.u64 addr_b, tile_b;
+    cvta.shared.u64 addr_b, addr_b;
+
+    // Shift address right by 4 bits
+    and.b64 addr_a, addr_a, 0x3FFFF;
+    and.b64 addr_b, addr_b, 0x3FFFF;
+    shr.u64 addr_a, addr_a, 4;
+    shr.u64 addr_b, addr_b, 4;
+    
+    // Define the shape of M x K matrix A
+    mov.u64 desc_a, addr_a;
+    or.b64  desc_a, desc_a, ((128 >> 4) << 16);     // Leading dimension
+    or.b64  desc_a, desc_a, ((256 >> 4) << 32);     // Stride dimension
+
+    // Define the shape of K x N matrix B
+    mov.u64 desc_b, addr_b;
+    or.b64  desc_b, desc_b, ((4096 >> 4) << 16); // Leading-dimension info
+    or.b64  desc_b, desc_b, ((128 >> 4) << 32);  // Stride info
+
+    // General-purpose registers for loop control
+    .reg .b32 loop_counter, loop_limit;
+
+    // Predicate register for conditional branching (loop exit)
+    .reg .pred exit_predicate;
+
+    // Set up loop counter and loop limit to fill accumulators
+    mov.u32 loop_counter, 0;
+    mov.u32 loop_limit, 128;
+
+    // Zero-initialize the accumulator registers:
+    mov.f32 accum0,  0.0;  mov.f32 accum1,  0.0;  mov.f32 accum2,  0.0;  mov.f32 accum3,  0.0;
+    mov.f32 accum4,  0.0;  mov.f32 accum5,  0.0;  mov.f32 accum6,  0.0;  mov.f32 accum7,  0.0;
+    mov.f32 accum8,  0.0;  mov.f32 accum9,  0.0;  mov.f32 accum10, 0.0;  mov.f32 accum11, 0.0;
+    mov.f32 accum12, 0.0;  mov.f32 accum13, 0.0;  mov.f32 accum14, 0.0;  mov.f32 accum15, 0.0;
+    mov.f32 accum16, 0.0;  mov.f32 accum17, 0.0;  mov.f32 accum18, 0.0;  mov.f32 accum19, 0.0;
+    mov.f32 accum20, 0.0;  mov.f32 accum21, 0.0;  mov.f32 accum22, 0.0;  mov.f32 accum23, 0.0;
+    mov.f32 accum24, 0.0;  mov.f32 accum25, 0.0;  mov.f32 accum26, 0.0;  mov.f32 accum27, 0.0;
+    mov.f32 accum28, 0.0;  mov.f32 accum29, 0.0;  mov.f32 accum30, 0.0;  mov.f32 accum31, 0.0;
+    mov.f32 accum32, 0.0;  mov.f32 accum33, 0.0;  mov.f32 accum34, 0.0;  mov.f32 accum35, 0.0;
+    mov.f32 accum36, 0.0;  mov.f32 accum37, 0.0;  mov.f32 accum38, 0.0;  mov.f32 accum39, 0.0;
+    mov.f32 accum40, 0.0;  mov.f32 accum41, 0.0;  mov.f32 accum42, 0.0;  mov.f32 accum43, 0.0;
+    mov.f32 accum44, 0.0;  mov.f32 accum45, 0.0;  mov.f32 accum46, 0.0;  mov.f32 accum47, 0.0;
+    mov.f32 accum48, 0.0;  mov.f32 accum49, 0.0;  mov.f32 accum50, 0.0;  mov.f32 accum51, 0.0;
+    mov.f32 accum52, 0.0;  mov.f32 accum53, 0.0;  mov.f32 accum54, 0.0;  mov.f32 accum55, 0.0;
+    mov.f32 accum56, 0.0;  mov.f32 accum57, 0.0;  mov.f32 accum58, 0.0;  mov.f32 accum59, 0.0;
+    mov.f32 accum60, 0.0;  mov.f32 accum61, 0.0;  mov.f32 accum62, 0.0;  mov.f32 accum63, 0.0;
+    mov.f32 accum64, 0.0;  mov.f32 accum65, 0.0;  mov.f32 accum66, 0.0;  mov.f32 accum67, 0.0;
+    mov.f32 accum68, 0.0;  mov.f32 accum69, 0.0;  mov.f32 accum70, 0.0;  mov.f32 accum71, 0.0;
+    mov.f32 accum72, 0.0;  mov.f32 accum73, 0.0;  mov.f32 accum74, 0.0;  mov.f32 accum75, 0.0;
+    mov.f32 accum76, 0.0;  mov.f32 accum77, 0.0;  mov.f32 accum78, 0.0;  mov.f32 accum79, 0.0;
+    mov.f32 accum80, 0.0;  mov.f32 accum81, 0.0;  mov.f32 accum82, 0.0;  mov.f32 accum83, 0.0;
+    mov.f32 accum84, 0.0;  mov.f32 accum85, 0.0;  mov.f32 accum86, 0.0;  mov.f32 accum87, 0.0;
+    mov.f32 accum88, 0.0;  mov.f32 accum89, 0.0;  mov.f32 accum90, 0.0;  mov.f32 accum91, 0.0;
+    mov.f32 accum92, 0.0;  mov.f32 accum93, 0.0;  mov.f32 accum94, 0.0;  mov.f32 accum95, 0.0;
+    mov.f32 accum96, 0.0;  mov.f32 accum97, 0.0;  mov.f32 accum98, 0.0;  mov.f32 accum99, 0.0;
+    mov.f32 accum100, 0.0; mov.f32 accum101, 0.0; mov.f32 accum102, 0.0; mov.f32 accum103, 0.0;
+    mov.f32 accum104, 0.0; mov.f32 accum105, 0.0; mov.f32 accum106, 0.0; mov.f32 accum107, 0.0;
+    mov.f32 accum108, 0.0; mov.f32 accum109, 0.0; mov.f32 accum110, 0.0; mov.f32 accum111, 0.0;
+    mov.f32 accum112, 0.0; mov.f32 accum113, 0.0; mov.f32 accum114, 0.0; mov.f32 accum115, 0.0;
+    mov.f32 accum116, 0.0; mov.f32 accum117, 0.0; mov.f32 accum118, 0.0; mov.f32 accum119, 0.0;
+    mov.f32 accum120, 0.0; mov.f32 accum121, 0.0; mov.f32 accum122, 0.0; mov.f32 accum123, 0.0;
+    mov.f32 accum124, 0.0; mov.f32 accum125, 0.0; mov.f32 accum126, 0.0; mov.f32 accum127, 0.0;
+    
     // Enforce the ordered for Warp-Group instructions
     wgmma.fence.sync.aligned;
 
@@ -484,8 +410,9 @@ loop_start:
            accum120, accum121, accum122, accum123, accum124, accum125, accum126, accum127 },
          desc_a,
          desc_b,
-         0, -1, -1;
-
+         1, 1, 1; //! We can't transpose TF32 inputs, so need to pass fewer arguments.
+    wgmma.commit_group.sync.aligned;
+    
     // Increment the loop counter
     add.u32 loop_counter, loop_counter, 1;
 
@@ -493,8 +420,7 @@ loop_start:
     bra loop_start;
 
 loop_exit:
-    // Commit all prior uncommitted operations to the group and wait!
-    wgmma.commit_group.sync.aligned;
+    // Zero argument means - wait for all committed WGMMAs to complete.
     wgmma.wait_group.sync.aligned 0;
 
     // Use volatile stores to force the accumulator values to be written out.
@@ -502,15 +428,15 @@ loop_exit:
     // prevents the multiplication  pipeline from being optimized out.
     st.global.volatile.f32 [dummy_sink_f32],      accum0;
     st.global.volatile.f32 [dummy_sink_f32+4],    accum1;
-    st.global.volatile.f32 [dummy_sink_f32+8],    accum2;
-    st.global.volatile.f32 [dummy_sink_f32+12],   accum3;
+    st.global.volatile.f32 [dummy_sink_f32+8],    accum126;
+    st.global.volatile.f32 [dummy_sink_f32+12],   accum127;
     ret;
 }
 
 /**
  *  This results in massive performance gains on Hopper:
  *  - 16x16x8 MMA computed by individual warps: 74 T
- *  - 64x16x8 WGMMA computed by four warps together: 300 T
+ *  - 64x16x8 WMMA computed by four warps together: 300 T
  *  - 64x256x8 WGMMA computed by four warps together: 4.7 P ?!
  *
  *  There are also "structured-sparse" variants of those instructions, in case
@@ -523,8 +449,37 @@ loop_exit:
     // Accumulator registers used for both input and output of the MMA operation
     .reg .s32 accum<128>;
 
-    // Descriptors for matrix A and matrix B operands (in shared memory)
+    // Descriptors for matrix A and matrix B operands
     .reg .b64 desc_a, desc_b;
+    
+    // B1 variables will be packed in byte-sized groups
+    .shared .b8 tile_a[64][32];
+    .shared .b8 tile_b[256][32];
+
+    // Define registers to store shared memory addresses
+    .reg .u64 addr_a, addr_b;
+
+    // Load the address of the shared memory tiles
+    mov.u64 addr_a, tile_a;             
+    cvta.shared.u64 addr_a, addr_a;  
+    mov.u64 addr_b, tile_b;
+    cvta.shared.u64 addr_b, addr_b;
+
+    // Shift address right by 4 bits
+    and.b64 addr_a, addr_a, 0x3FFFF;
+    and.b64 addr_b, addr_b, 0x3FFFF;
+    shr.u64 addr_a, addr_a, 4;
+    shr.u64 addr_b, addr_b, 4;
+    
+    // Define the shape of M x K matrix A
+    mov.u64 desc_a, addr_a;
+    or.b64  desc_a, desc_a, ((128 >> 4) << 16);     // Leading dimension
+    or.b64  desc_a, desc_a, ((256 >> 4) << 32);     // Stride dimension
+
+    // Define the shape of K x N matrix B
+    mov.u64 desc_b, addr_b;
+    or.b64  desc_b, desc_b, ((4096 >> 4) << 16); // Leading-dimension info
+    or.b64  desc_b, desc_b, ((128 >> 4) << 32);  // Stride info
 
     // General-purpose registers for loop control
     .reg .b32 loop_counter, loop_limit;
@@ -570,11 +525,6 @@ loop_exit:
     mov.s32 accum120, 0; mov.s32 accum121, 0; mov.s32 accum122, 0; mov.s32 accum123, 0;
     mov.s32 accum124, 0; mov.s32 accum125, 0; mov.s32 accum126, 0; mov.s32 accum127, 0;
 
-    // Initialize matrix descriptors with arbitrary placeholder values.
-    // In practice, these would be set to point to shared-memory regions containing your matrices.
-    mov.u64 desc_a, 0x0000000000000000;
-    mov.u64 desc_b, 0x0000000000000000;
-
     // Initialize scale flag (controls operand scaling or additive bias behavior)
     mov.pred scale_d, 1;
 
@@ -606,6 +556,7 @@ loop_start:
          desc_a,
          desc_b,
          scale_d;
+    wgmma.commit_group.sync.aligned;
 
     // Increment the loop counter
     add.u32 loop_counter, loop_counter, 1;
@@ -614,8 +565,7 @@ loop_start:
     bra loop_start;
 
 loop_exit:
-    // Commit all prior uncommitted operations to the group and wait!
-    wgmma.commit_group.sync.aligned;
+    // Zero argument means - wait for all committed WGMMAs to complete.
     wgmma.wait_group.sync.aligned 0;
 
     // Use volatile stores to force the accumulator values to be written out.
