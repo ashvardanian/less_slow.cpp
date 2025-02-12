@@ -147,6 +147,10 @@ __device__ void tops_fma_cuda_kernel() {
     input_type_ a_tile[matrix_side_][matrix_side_], b_tile[matrix_side_][matrix_side_];
     output_type_ c_tile[matrix_side_][matrix_side_];
 
+    // Initialize the accumulator with zeros
+    for (int i = 0; i < matrix_side_; ++i)
+        for (int j = 0; j < matrix_side_; ++j) a_tile[i][j] = b_tile[i][j] = i * matrix_side_ + j, c_tile[i][j] = 0;
+
     // Repeatedly perform FMA-like operations
     fma_operator_ fma_operator;
     for (int r = 0; r < repetitions_; ++r) {
