@@ -34,7 +34,8 @@ Some of the highlights include:
 - __CUDA C++, [PTX](https://en.wikipedia.org/wiki/Parallel_Thread_Execution) Intermediate Representations, and SASS__, and how do they differ from CPU code?
 - __How to choose between intrinsics, inline `asm`, and separate `.S` files__ for your performance-critical code?
 - __Tensor Cores & Memory__ differences on CPUs, and Volta, Ampere, Hopper, and Blackwell GPUs!
-- __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜
+- __How coding FPGA differs from GPU__ and what is High-Level Synthesis, Verilog, and VHDL? 🔜 #36
+- __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜 #31
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
 Follow the instructions below to run the code in your environment and compare it to the comments as you read through the source.
@@ -106,6 +107,23 @@ Alternatively, use the Linux `perf` tool for performance counter collection:
 
 ```sh
 sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF build_release/less_slow --benchmark_enable_random_interleaving=true --benchmark_filter=super_sort
+```
+
+## Project Structure
+
+The primary file of this repository is clearly the `less_slow.cpp` C++ file with CPU-side code.
+Several other files for different hardware-specific optimizations are created:
+
+```sh
+$ tree .
+.
+├── CMakeLists.txt          # Build & assembly instructions for all files
+├── less_slow.cpp           # Primary CPU-side benchmarking code with the majority of examples
+├── less_slow_amd64.S       # Hand-written Assembly kernels for 64-bit x86 CPUs
+├── less_slow_aarch64.S     # Hand-written Assembly kernels for 64-bit Arm CPUs
+├── less_slow.cu            # CUDA C++ examples for parallel algorithms for Nvidia GPUs
+├── less_slow_sm70.ptx      # Hand-written PTX IR kernels for Nvidia Volta GPUs
+└── less_slow_sm90a.ptx     # Hand-written PTX IR kernels for Nvidia Hopper GPUs
 ```
 
 ## Memes and References
