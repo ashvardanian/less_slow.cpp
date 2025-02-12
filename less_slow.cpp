@@ -2137,6 +2137,8 @@ extern __global__ void tops_f32f32_sm60fma_16x16x16_loop128_cuda_kernel();
 extern __global__ void tops_f64f64_sm60fma_16x16x16_loop128_cuda_kernel();
 extern __global__ void tops_i32i32_sm60fma_16x16x16_loop128_cuda_kernel();
 extern __global__ void tops_i64i64_sm60fma_16x16x16_loop128_cuda_kernel();
+extern __global__ void tops_u8u32_sm60fma_16x16x64_loop128_cuda_kernel();
+extern __global__ void tops_u24u32_sm60fma_16x16x16_loop128_cuda_kernel();
 
 BENCHMARK_CAPTURE(                                                                         //
     theoretic_tops_cuda, f32f32_sm60fma, tops_f32f32_sm60fma_16x16x16_loop128_cuda_kernel, //
@@ -2152,6 +2154,14 @@ BENCHMARK_CAPTURE(                                                              
     ->MinTime(10);
 BENCHMARK_CAPTURE(                                                                         //
     theoretic_tops_cuda, i64i64_sm60fma, tops_i64i64_sm60fma_16x16x16_loop128_cuda_kernel, //
+    16, 16, 16, 60, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                       //
+    theoretic_tops_cuda, u8u32_sm60fma, tops_u8u32_sm60fma_16x16x64_loop128_cuda_kernel, //
+    16, 16, 64, 60, 128, tensor_core_scale_t::single_k)
+    ->MinTime(10);
+BENCHMARK_CAPTURE(                                                                         //
+    theoretic_tops_cuda, u24u32_sm60fma, tops_u24u32_sm60fma_16x16x16_loop128_cuda_kernel, //
     16, 16, 16, 60, 128, tensor_core_scale_t::single_k)
     ->MinTime(10);
 

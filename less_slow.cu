@@ -157,7 +157,8 @@ __device__ void tops_fma_cuda_kernel() {
         for (int i = 0; i < matrix_side_; ++i)
             for (int j = 0; j < matrix_side_; ++j)
                 for (int k = 0; k < matrix_side_; ++k)
-                    c_tile[i][j] = fma_operator(a_tile[i][k], b_tile[k][j], c_tile[i][j]);
+                    // Assume the second matrix is transposed
+                    c_tile[i][j] = fma_operator(a_tile[i][k], b_tile[j][k], c_tile[i][j]);
     }
 
     // Prevent dead-code elimination by writing one result out
@@ -204,6 +205,20 @@ __global__ void tops_i32i32_sm60fma_16x16x16_loop128_cuda_kernel() {
 
 __global__ void tops_i64i64_sm60fma_16x16x16_loop128_cuda_kernel() {
     tops_fma_cuda_kernel<std::int64_t, std::int64_t, 16, 128>();
+}
+
+__global__ void tops_u8u32_sm60fma_16x16x64_loop128_cuda_kernel() {
+    struct dp4a_t {
+        inline __device__ uint operator()(uint a, uint b, uint c) const noexcept { return __dp4a(a, b, c); }
+    };
+    tops_fma_cuda_kernel<uint, uint, 16, 128, dp4a_t>();
+}
+
+__global__ void tops_u24u32_sm60fma_16x16x16_loop128_cuda_kernel() {
+    struct umul24_t {
+        inline __device__ uint operator()(uint a, uint b, uint c) const noexcept { return __umul24(a, b) + c; }
+    };
+    tops_fma_cuda_kernel<uint, uint, 16, 128, umul24_t>();
 }
 
 /**
