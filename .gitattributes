@@ -1,0 +1,3 @@
+# GitHub's Linguist doesn't properly classify many languages
+*.S linguist-language=Assembly
+*.ptx linguist-language=Assembly
