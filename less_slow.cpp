@@ -3131,11 +3131,149 @@ static void cublas_tops(bm::State &state) {
     cublas_check(cublasDestroy(handle));
 }
 
-// Register benchmarks
 BENCHMARK(cublas_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 BENCHMARK(cublas_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 BENCHMARK(cublas_tops<__half>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+
+/**
+ *  To use newer numeric types, cuBLAS API isn't enough. "cuBLASLt" provides a more flexible interface.
+ *  One of its' major changes is allowing input "scaling factors". Since SM89 one can provide a `CUDA_R_32F`
+ *  multiplier scalar for all of `CUDA_R_8F_E4M3` and `CUDA_R_8F_E5M2` inputs and since SM100 black-scaling
+ *  with different factors is also supported - a common technique used in extreme quantization both on
+ *  CPUs and GPUs.
+ *
+ *  @see    "Using the cuBLASLt API" docs: https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api
+ */
+#include <cublasLt.h>
+#include <cuda_fp8.h> // `__nv_fp8*` types
+
+template <typename scalar_type_>
+cudaDataType_t to_cuda_data_type() {
+    if constexpr (std::is_same<scalar_type_, __nv_fp8_e4m3>::value) return CUDA_R_8F_E4M3;
+    if constexpr (std::is_same<scalar_type_, __nv_fp8_e5m2>::value) return CUDA_R_8F_E5M2;
+    if constexpr (std::is_same<scalar_type_, float>::value) return CUDA_R_32F;
+    if constexpr (std::is_same<scalar_type_, std::int8_t>::value) return CUDA_R_8I;
+    if constexpr (std::is_same<scalar_type_, std::uint8_t>::value) return CUDA_R_8U;
+    throw std::invalid_argument("Unknown CUDA type");
+}
+
+template <typename scalar_type_>
+struct cuda_storage_type {
+    using scalar_type = scalar_type_;
+};
+
+template <>
+struct cuda_storage_type<__nv_fp8_e4m3> {
+    using scalar_type = __nv_fp8_storage_t;
+};
+
+template <>
+struct cuda_storage_type<__nv_fp8_e5m2> {
+    using scalar_type = __nv_fp8_storage_t;
+};
+
+template <typename input_scalar_type_, typename output_scalar_type_ = input_scalar_type_>
+static void cublaslt_tops(bm::State &state) {
+
+    // Matrix size and leading dimensions
+    std::size_t n = static_cast<std::size_t>(state.range(0));
+    int lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
+    constexpr bool same_type = std::is_same_v<input_scalar_type_, output_scalar_type_>;
+    cublasOperation_t a_transpose = CUBLAS_OP_N;
+    cublasOperation_t b_transpose = CUBLAS_OP_N;
+
+    // Unified memory for large matrices
+    using input_storage_type = typename cuda_storage_type<input_scalar_type_>::scalar_type;
+    unified_array<input_storage_type> a(n * n), b(n * n);
+    unified_array<output_scalar_type_> c(n * n), d(n * n);
+
+    // With unified memory, we don't even need Thrust to initialize the data
+    std::iota(a.begin(), a.end(), 0);
+    std::iota(b.begin(), b.end(), 0);
+    std::fill(c.begin(), c.end(), 0);
+    std::fill(d.begin(), d.end(), 0);
+
+    cublasLtHandle_t handle;
+    cublas_check(cublasLtCreate(&handle));
+
+    // Create the matmul descriptor.
+    cublasLtMatmulDesc_t descriptor = nullptr;
+    cublas_check(cublasLtMatmulDescCreate(&descriptor, CUBLAS_COMPUTE_32F, to_cuda_data_type<output_scalar_type_>()));
+    cublas_check(
+        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_TRANSA, &a_transpose, sizeof(a_transpose)));
+    cublas_check(
+        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_TRANSB, &b_transpose, sizeof(b_transpose)));
+
+    // Set per-tensor scaling attributes (using 1.0f as the default scaling factors).
+    float a_scale = 1.0f, b_scale = 1.0f, c_scale = 1.0f, d_scale = 1.0f;
+    cublas_check(
+        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &a_scale, sizeof(a_scale)));
+    cublas_check(
+        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &b_scale, sizeof(b_scale)));
+    cublas_check(
+        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_C_SCALE_POINTER, &c_scale, sizeof(c_scale)));
+    cublas_check(
+        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, &d_scale, sizeof(d_scale)));
+
+    // Create matrix layout descriptors for A, B, C, and D (output)
+    // https://github.com/NVIDIA/CUDALibrarySamples/blob/master/cuBLASLt/LtFp8Matmul/sample_cublasLt_LtFp8Matmul.cu
+    cublasLtMatrixLayout_t a_descriptor = nullptr, b_descriptor = nullptr, c_descriptor = nullptr,
+                           d_descriptor = nullptr;
+    cublas_check(cublasLtMatrixLayoutCreate(&a_descriptor, to_cuda_data_type<input_scalar_type_>(), n, n, lda));
+    cublas_check(cublasLtMatrixLayoutCreate(&b_descriptor, to_cuda_data_type<input_scalar_type_>(), n, n, ldb));
+    cublas_check(cublasLtMatrixLayoutCreate(&c_descriptor, to_cuda_data_type<output_scalar_type_>(), n, n, ldc));
+    cublas_check(cublasLtMatrixLayoutCreate(&d_descriptor, to_cuda_data_type<output_scalar_type_>(), n, n, ldc));
+
+    // Create a preference handle and set workspace limit (0 in this example).
+    cublasLtMatmulPreference_t preference = nullptr;
+    cublas_check(cublasLtMatmulPreferenceCreate(&preference));
+    std::size_t workspace_size = 0;
+    cublas_check(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                                      &workspace_size, sizeof(workspace_size)));
+
+    // Query the heuristic for the best available algorithm.
+    int heuristics_count = 0;
+    cublasLtMatmulHeuristicResult_t heuristic_result = {};
+    cublas_check(cublasLtMatmulAlgoGetHeuristic(handle, descriptor, a_descriptor, b_descriptor, c_descriptor,
+                                                d_descriptor, preference, 1, &heuristic_result, &heuristics_count));
+    if (heuristics_count == 0) throw std::runtime_error("No suitable heuristic found for cuBLASLt matmul");
+
+    // Define scaling factors (using FP32 scalars)
+    float alpha = 1.0f;
+    float beta = 0.0f;
+
+    for (auto _ : state) {
+
+        cublasLtMatmul(                                       //
+            handle, descriptor,                               //
+            &alpha,                                           //
+            a.begin(), a_descriptor, b.begin(), b_descriptor, //
+            &beta,                                            //
+            c.begin(), c_descriptor, d.begin(), d_descriptor, //
+            &heuristic_result.algo, nullptr, 0,               // No workspace
+            nullptr);                                         // Default stream
+
+        // Synchronize to ensure that the GEMM call completes before timing stops.
+        // Otherwise 10'000 calls will be scheduled and we will block forever until all complete!
+        cudaDeviceSynchronize();
+    }
+
+    std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.SetComplexityN(n);
+
+    // Cleanup
+    cublas_check(cublasLtMatrixLayoutDestroy(a_descriptor));
+    cublas_check(cublasLtMatrixLayoutDestroy(b_descriptor));
+    cublas_check(cublasLtMatrixLayoutDestroy(c_descriptor));
+    cublas_check(cublasLtMatrixLayoutDestroy(d_descriptor));
+    cublas_check(cublasLtMatmulDescDestroy(descriptor));
+    cublas_check(cublasLtDestroy(handle));
+}
+
+BENCHMARK(cublaslt_tops<__nv_fp8_e4m3, float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublaslt_tops<__nv_fp8_e5m2, float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 
 /**
  *  Here are the numbers one can expect on a Nvidia H200 GPUs:
@@ -3148,6 +3286,7 @@ BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Co
  *  - `bf16`          @b 1'000 T   @b 1'047 T   -
  *  - `f16`           @b 1'000 T   @b 1'056 T   @b 764 T
  *  - `i8` & `u8`     @b 2'000 T   -            @b 122 T
+ *  - `e4m3` & `e5m2` @b 2'000 T   -            -
  *  - `b1` XOR-based  -            @b 79 T      -
  *  - `b1` AND-based  -            @b 8'439 T   -
  *
