@@ -3051,6 +3051,12 @@ class unified_array {
 template <typename>
 struct dependent_false : std::false_type {};
 
+void cublas_check(cublasStatus_t status) {
+    if (status == CUBLAS_STATUS_SUCCESS) return;
+    throw std::runtime_error(std::string("cuBLAS error: ") + cublasGetStatusName(status) + " - " +
+                             cublasGetStatusString(status));
+}
+
 template <typename input_scalar_type_, typename output_scalar_type_ = input_scalar_type_>
 static void cublas_tops(bm::State &state) {
     // Matrix size and leading dimensions
@@ -3069,42 +3075,42 @@ static void cublas_tops(bm::State &state) {
 
     // cuBLAS handle
     cublasHandle_t handle;
-    cublasCreate(&handle);
+    cublas_check(cublasCreate(&handle));
 
     // Perform the GEMM operation
     // https://docs.nvidia.com/cuda/cublas/#cublas-t-gemm
     for (auto _ : state) {
         if constexpr (std::is_same_v<input_scalar_type_, float> && same_type) {
             input_scalar_type_ alpha = 1, beta = 0;
-            cublasSgemm(                                   //
+            cublas_check(cublasSgemm(                      //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
-                &beta, c.begin(), ldc);
+                &beta, c.begin(), ldc));
         }
         else if constexpr (std::is_same_v<input_scalar_type_, double> && same_type) {
             input_scalar_type_ alpha = 1, beta = 0;
-            cublasDgemm(                                   //
+            cublas_check(cublasDgemm(                      //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
-                &beta, c.begin(), ldc);
+                &beta, c.begin(), ldc));
         }
         else if constexpr (std::is_same_v<input_scalar_type_, __half> && same_type) {
             input_scalar_type_ alpha = 1, beta = 0;
-            cublasHgemm(                                   //
+            cublas_check(cublasHgemm(                      //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
-                &beta, c.begin(), ldc);
+                &beta, c.begin(), ldc));
         }
         else if constexpr (std::is_same_v<input_scalar_type_, int8_t> && std::is_same_v<output_scalar_type_, int32_t>) {
             // Scaling factors must correspond to the accumulator type
             // https://docs.nvidia.com/cuda/cublas/#cublasgemmex
             int32_t alpha_int = 1, beta_int = 0;
-            cublasGemmEx(                                  //
+            cublas_check(cublasGemmEx(                     //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha_int, a.begin(), CUDA_R_8I, lda,     //
                 b.begin(), CUDA_R_8I, ldb,                 //
                 &beta_int, c.begin(), CUDA_R_32I, ldc,     //
-                CUDA_R_32I, CUBLAS_GEMM_DEFAULT);
+                CUDA_R_32I, CUBLAS_GEMM_DEFAULT));
         }
         // Trigger a compile-time error for unsupported type combinations
         else {
@@ -3122,7 +3128,7 @@ static void cublas_tops(bm::State &state) {
     state.SetComplexityN(n);
 
     // Cleanup
-    cublasDestroy(handle);
+    cublas_check(cublasDestroy(handle));
 }
 
 // Register benchmarks
