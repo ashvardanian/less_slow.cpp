@@ -3147,6 +3147,7 @@ BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Co
  *  ! Even if `e4m3 * e4m3` scheme is used, very specific set of "C" and "D" types can be used.
  *  ! The "A" matrix must be transposed on Ada, Hopper, and Blackwell!
  *  ! For `FP4`, similarly the only consistently used configuration is `e2m1 * e2m1`.
+ *  ! The compute type must be `CUBLAS_COMPUTE_32F` for both single- and half-precision outputs.
  *
  *  @see    "Using the cuBLASLt API" docs: https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api
  *  @note   To avoid including the `<cuda_fp8.h>` header, we define alternatives to `__nv_fp8_e4m3` & `__nv_fp8_e5m2`.
@@ -3170,6 +3171,15 @@ cudaDataType_t to_cuda_data_type() {
     throw std::invalid_argument("Unknown CUDA type");
 }
 
+template <typename scalar_type_>
+cublasComputeType_t to_cublas_compute_type() {
+    if constexpr (std::is_same_v<scalar_type_, double>) return CUBLAS_COMPUTE_64F;
+    if constexpr (std::is_same_v<scalar_type_, float>) return CUBLAS_COMPUTE_32F;
+    if constexpr (std::is_same_v<scalar_type_, __half>) return CUBLAS_COMPUTE_16F;
+    if constexpr (std::is_same_v<scalar_type_, std::int32_t>) return CUBLAS_COMPUTE_32I;
+    throw std::invalid_argument("Unknown CUDA type");
+}
+
 template <typename input_scalar_type_, typename output_scalar_type_ = input_scalar_type_>
 static void cublaslt_tops(bm::State &state) {
 
@@ -3179,7 +3189,7 @@ static void cublaslt_tops(bm::State &state) {
     // requirements listed in Tensor Core Usage (i.e. pointers and matrix dimension must support
     // 16-byte alignment).
     if (n % 16 != 0) throw std::invalid_argument("Tensor side not properly aligned.");
-    int lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
+    int lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n), ldd = static_cast<int>(n);
 
     // "A" must be transposed and "B" non-transposed (The "TN" format) on Ada (compute capability 8.9),
     // Hopper (compute capability 9.0), and Blackwell GeForce (compute capability 12.x) GPUs.
@@ -3208,7 +3218,8 @@ static void cublaslt_tops(bm::State &state) {
 
     // Create the matmul descriptor.
     cublasLtMatmulDesc_t descriptor = nullptr;
-    cublas_check(cublasLtMatmulDescCreate(&descriptor, CUBLAS_COMPUTE_32F, to_cuda_data_type<output_scalar_type_>()));
+    cublas_check(cublasLtMatmulDescCreate(&descriptor, to_cublas_compute_type<float>(),
+                                          to_cuda_data_type<output_scalar_type_>()));
     cublas_check(
         cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_TRANSA, &a_transpose, sizeof(a_transpose)));
     cublas_check(
@@ -3230,7 +3241,7 @@ static void cublaslt_tops(bm::State &state) {
     cublas_check(cublasLtMatrixLayoutCreate(&a_descriptor, to_cuda_data_type<input_scalar_type_>(), n, n, lda));
     cublas_check(cublasLtMatrixLayoutCreate(&b_descriptor, to_cuda_data_type<input_scalar_type_>(), n, n, ldb));
     cublas_check(cublasLtMatrixLayoutCreate(&c_descriptor, to_cuda_data_type<output_scalar_type_>(), n, n, ldc));
-    cublas_check(cublasLtMatrixLayoutCreate(&d_descriptor, to_cuda_data_type<output_scalar_type_>(), n, n, ldc));
+    cublas_check(cublasLtMatrixLayoutCreate(&d_descriptor, to_cuda_data_type<output_scalar_type_>(), n, n, ldd));
 
     // Create a preference handle and set workspace limit (0 in this example).
     cublasLtMatmulPreference_t preference = nullptr;
@@ -3280,7 +3291,6 @@ static void cublaslt_tops(bm::State &state) {
 }
 
 BENCHMARK(cublaslt_tops<fp8_e4m3_t, float>)->RangeMultiplier(2)->Range(256, 16384)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublaslt_tops<fp8_e4m3_t, __half>)->RangeMultiplier(2)->Range(256, 16384)->Complexity(benchmark::oNCubed);
 
 /**
  *  Here are the numbers one can expect on a Nvidia H200 GPUs:
