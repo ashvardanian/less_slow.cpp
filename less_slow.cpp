@@ -3143,54 +3143,63 @@ BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Co
  *  with different factors is also supported - a common technique used in extreme quantization both on
  *  CPUs and GPUs.
  *
+ *  ! Both "A" and "B" inputs can't be `e5m2`, it's either `e4m3 * e4m3` or `e5m2 * e4m3`.
+ *  ! Even if `e4m3 * e4m3` scheme is used, very specific set of "C" and "D" types can be used.
+ *  ! The "A" matrix must be transposed on Ada, Hopper, and Blackwell!
+ *  ! For `FP4`, similarly the only consistently used configuration is `e2m1 * e2m1`.
+ *
  *  @see    "Using the cuBLASLt API" docs: https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api
+ *  @note   To avoid including the `<cuda_fp8.h>` header, we define alternatives to `__nv_fp8_e4m3` & `__nv_fp8_e5m2`.
  */
 #include <cublasLt.h>
-#include <cuda_fp8.h> // `__nv_fp8*` types
+
+enum fp8_e4m3_t : unsigned char {};
+enum fp8_e5m2_t : unsigned char {};
+enum fp4_e2m1_t : unsigned char {};
+static_assert(!std::is_same_v<fp8_e4m3_t, fp8_e5m2_t>);
 
 template <typename scalar_type_>
 cudaDataType_t to_cuda_data_type() {
-    if constexpr (std::is_same<scalar_type_, __nv_fp8_e4m3>::value) return CUDA_R_8F_E4M3;
-    if constexpr (std::is_same<scalar_type_, __nv_fp8_e5m2>::value) return CUDA_R_8F_E5M2;
-    if constexpr (std::is_same<scalar_type_, float>::value) return CUDA_R_32F;
-    if constexpr (std::is_same<scalar_type_, std::int8_t>::value) return CUDA_R_8I;
-    if constexpr (std::is_same<scalar_type_, std::uint8_t>::value) return CUDA_R_8U;
+    if constexpr (std::is_same_v<scalar_type_, fp8_e4m3_t>) return CUDA_R_8F_E4M3;
+    if constexpr (std::is_same_v<scalar_type_, fp8_e5m2_t>) return CUDA_R_8F_E5M2;
+    if constexpr (std::is_same_v<scalar_type_, fp4_e2m1_t>) return CUDA_R_4F_E2M1;
+    if constexpr (std::is_same_v<scalar_type_, float>) return CUDA_R_32F;
+    if constexpr (std::is_same_v<scalar_type_, __half>) return CUDA_R_16F;
+    if constexpr (std::is_same_v<scalar_type_, std::int8_t>) return CUDA_R_8I;
+    if constexpr (std::is_same_v<scalar_type_, std::uint8_t>) return CUDA_R_8U;
     throw std::invalid_argument("Unknown CUDA type");
 }
-
-template <typename scalar_type_>
-struct cuda_storage_type {
-    using scalar_type = scalar_type_;
-};
-
-template <>
-struct cuda_storage_type<__nv_fp8_e4m3> {
-    using scalar_type = __nv_fp8_storage_t;
-};
-
-template <>
-struct cuda_storage_type<__nv_fp8_e5m2> {
-    using scalar_type = __nv_fp8_storage_t;
-};
 
 template <typename input_scalar_type_, typename output_scalar_type_ = input_scalar_type_>
 static void cublaslt_tops(bm::State &state) {
 
     // Matrix size and leading dimensions
     std::size_t n = static_cast<std::size_t>(state.range(0));
+    // To use tensor- or block-scaled FP8 kernels, all matrix dimensions must meet the optimal
+    // requirements listed in Tensor Core Usage (i.e. pointers and matrix dimension must support
+    // 16-byte alignment).
+    if (n % 16 != 0) throw std::invalid_argument("Tensor side not properly aligned.");
     int lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n);
-    constexpr bool same_type = std::is_same_v<input_scalar_type_, output_scalar_type_>;
-    cublasOperation_t a_transpose = CUBLAS_OP_N;
-    cublasOperation_t b_transpose = CUBLAS_OP_N;
+
+    // "A" must be transposed and "B" non-transposed (The "TN" format) on Ada (compute capability 8.9),
+    // Hopper (compute capability 9.0), and Blackwell GeForce (compute capability 12.x) GPUs.
+    cublasOperation_t const a_transpose = CUBLAS_OP_T;
+    cublasOperation_t const b_transpose = CUBLAS_OP_N;
 
     // Unified memory for large matrices
-    using input_storage_type = typename cuda_storage_type<input_scalar_type_>::scalar_type;
-    unified_array<input_storage_type> a(n * n), b(n * n);
+    unified_array<input_scalar_type_> a(n * n), b(n * n);
     unified_array<output_scalar_type_> c(n * n), d(n * n);
 
-    // With unified memory, we don't even need Thrust to initialize the data
-    std::iota(a.begin(), a.end(), 0);
-    std::iota(b.begin(), b.end(), 0);
+    // With unified memory, we don't even need Thrust to initialize the data,
+    // but we can't use `std::iota` with `enum` types, as they don't provide
+    // an implicit conversion operator, so let's use a `std::transform` with
+    // a mutable lambda state:
+    {
+        std::uint64_t counter;
+        auto iota_lambda = [&counter](auto) mutable { return static_cast<input_scalar_type_>(counter++); };
+        counter = 0, std::transform(a.begin(), a.end(), a.begin(), iota_lambda);
+        counter = 0, std::transform(b.begin(), b.end(), b.begin(), iota_lambda);
+    }
     std::fill(c.begin(), c.end(), 0);
     std::fill(d.begin(), d.end(), 0);
 
@@ -3205,17 +3214,15 @@ static void cublaslt_tops(bm::State &state) {
     cublas_check(
         cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_TRANSB, &b_transpose, sizeof(b_transpose)));
 
-    // Set per-tensor scaling attributes (using 1.0f as the default scaling factors).
-    float a_scale = 1.0f, b_scale = 1.0f, c_scale = 1.0f, d_scale = 1.0f;
-    cublas_check(
-        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &a_scale, sizeof(a_scale)));
-    cublas_check(
-        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &b_scale, sizeof(b_scale)));
-    cublas_check(
-        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_C_SCALE_POINTER, &c_scale, sizeof(c_scale)));
-    cublas_check(
-        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, &d_scale, sizeof(d_scale)));
-
+    // We can also set the per-tensor scaling attributes, but they must be pre-allocated in the device memory!
+    // If not specified, or set to NULL, the scaling factor is assumed to be 1.
+    //
+    //      float a_scale = 1.0f, b_scale = 1.0f, c_scale = 1.0f, d_scale = 1.0f; //! Can't be on the host like this
+    //      cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &a_scale, sizeof(a_scale));
+    //      cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &b_scale, sizeof(b_scale));
+    //      cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_C_SCALE_POINTER, &c_scale, sizeof(c_scale));
+    //      cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, &d_scale, sizeof(d_scale));
+    //
     // Create matrix layout descriptors for A, B, C, and D (output)
     // https://github.com/NVIDIA/CUDALibrarySamples/blob/master/cuBLASLt/LtFp8Matmul/sample_cublasLt_LtFp8Matmul.cu
     cublasLtMatrixLayout_t a_descriptor = nullptr, b_descriptor = nullptr, c_descriptor = nullptr,
@@ -3241,7 +3248,7 @@ static void cublaslt_tops(bm::State &state) {
 
     // Define scaling factors (using FP32 scalars)
     float alpha = 1.0f;
-    float beta = 0.0f;
+    float beta = 0.0f; // Can be non-zero only starting with 12.0
 
     for (auto _ : state) {
 
@@ -3272,8 +3279,8 @@ static void cublaslt_tops(bm::State &state) {
     cublas_check(cublasLtDestroy(handle));
 }
 
-BENCHMARK(cublaslt_tops<__nv_fp8_e4m3, float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
-BENCHMARK(cublaslt_tops<__nv_fp8_e5m2, float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublaslt_tops<fp8_e4m3_t, float>)->RangeMultiplier(2)->Range(256, 16384)->Complexity(benchmark::oNCubed);
+BENCHMARK(cublaslt_tops<fp8_e4m3_t, __half>)->RangeMultiplier(2)->Range(256, 16384)->Complexity(benchmark::oNCubed);
 
 /**
  *  Here are the numbers one can expect on a Nvidia H200 GPUs:
@@ -3286,7 +3293,7 @@ BENCHMARK(cublaslt_tops<__nv_fp8_e5m2, float>)->RangeMultiplier(2)->Range(8, 163
  *  - `bf16`          @b 1'000 T   @b 1'047 T   -
  *  - `f16`           @b 1'000 T   @b 1'056 T   @b 764 T
  *  - `i8` & `u8`     @b 2'000 T   -            @b 122 T
- *  - `e4m3` & `e5m2` @b 2'000 T   -            -
+ *  - `e4m3`          @b 2'000 T   -            @b 1'338 T
  *  - `b1` XOR-based  -            @b 79 T      -
  *  - `b1` AND-based  -            @b 8'439 T   -
  *
