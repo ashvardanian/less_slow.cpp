@@ -769,6 +769,13 @@ static void sorting_with_cub(bm::State &state) {
         state.SetIterationTime(milliseconds / 1000.0f);
     }
 
+    // ! All of the following and above calls can fail, so consider checking the codes
+    // ! and using a different kernel launch mechanism: https://ashvardanian.com/posts/less-wrong-cuda-hello-world/
+    cudaEventDestroy(start_event);
+    cudaEventDestroy(stop_event);
+    cudaStreamDestroy(sorting_stream);
+    cudaFree(temporary_pointer);
+
     state.SetComplexityN(count);
     state.SetItemsProcessed(count * state.iterations());
     state.SetBytesProcessed(count * state.iterations() * sizeof(std::uint32_t));
@@ -1448,7 +1455,7 @@ f32x4x4_t f32x4x4_matmul_unrolled_kernel(f32x4x4_t const &a_matrix, f32x4x4_t co
     f32x4x4_t c_matrix;
     float const(&a)[4][4] = a_matrix.scalars;
     float const(&b)[4][4] = b_matrix.scalars;
-    float(&c)[4][4] = c_matrix.scalars;
+    float (&c)[4][4] = c_matrix.scalars;
 
     c[0][0] = a[0][0] * b[0][0] + a[0][1] * b[1][0] + a[0][2] * b[2][0] + a[0][3] * b[3][0];
     c[0][1] = a[0][0] * b[0][1] + a[0][1] * b[1][1] + a[0][2] * b[2][1] + a[0][3] * b[3][1];
