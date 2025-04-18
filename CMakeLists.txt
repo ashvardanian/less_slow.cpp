@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.25.2 FATAL_ERROR)
 # ------------------------------------------------------------------------------
 project(
     less_slow
-    VERSION 0.10.3
+    VERSION 0.10.4
     LANGUAGES C CXX ASM
     DESCRIPTION
         "Learning how to write Less Slow code, from numerical micro-kernels and SIMD to coroutines, ranges, and polymorphic state machines"
