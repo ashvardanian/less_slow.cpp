@@ -1231,6 +1231,29 @@ BENCHMARK(f64_sin_maclaurin_with_fast_math)->Iterations(1e7);
 #endif
 
 /**
+ *  Alternatively, we can just manually rearrange the arithmetic operations
+ *  using Horner's method for the same polynomial, which is only one of many
+ *  possible approximation schemes.
+ *
+ *  @see Horner's method: https://en.wikipedia.org/wiki/Horner%27s_method
+ *  @see Chebyshev polynomials: https://en.wikipedia.org/wiki/Chebyshev_polynomials
+ */
+
+static void f64_sin_maclaurin_with_horner(bm::State &state) {
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
+    constexpr double reciprocal_6 = 1.0 / 6.0;
+    constexpr double reciprocal_120 = 1.0 / 120.0;
+    for (auto _ : state) {
+        argument += step;
+        result = argument * (1.0 - (argument * argument) * (reciprocal_6 - (argument * argument) * reciprocal_120));
+        bm::DoNotOptimize(result);
+    }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
+}
+
+BENCHMARK(f64_sin_maclaurin_with_horner)->Iterations(1e7);
+
+/**
  *  Result: latency of @b 0.8ns - almost @b 40x faster than the standard
  *  on Intel, but on Arm the result remained unchanged, the same @b 1.1ns.
  *
