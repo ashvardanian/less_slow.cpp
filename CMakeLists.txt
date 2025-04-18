@@ -400,7 +400,7 @@ endif ()
 # Release vs. Debug flags via generator expressions
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     if (CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-        target_compile_options(less_slow PRIVATE -O3 -Wno-unused-but-set-variable -falign-functions=32)
+        target_compile_options(less_slow PRIVATE -O2 -Wno-unused-but-set-variable -falign-functions=32)
     endif ()
 
     if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
