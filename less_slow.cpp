@@ -465,8 +465,11 @@ BENCHMARK(sorting)->Args({8196, false})->Args({8196, true});
  *
  *  @see Feature testing macros: https://en.cppreference.com/w/cpp/utility/feature_test
  */
+#if !defined(USE_INTEL_TBB)
+#define USE_INTEL_TBB 1
+#endif // !defined(USE_INTEL_TBB)
 
-#if defined(__cpp_lib_parallel_algorithm)
+#if defined(__cpp_lib_parallel_algorithm) && USE_INTEL_TBB
 #include <execution> // `std::execution::par_unseq`
 
 template <typename execution_policy_>
@@ -548,7 +551,7 @@ BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
  *       by Bryce Adelstein Lelbach at CppCon 2016: https://youtu.be/Vck6kzWjY88
  */
 
-#endif // defined(__cpp_lib_parallel_algorithm)
+#endif // defined(__cpp_lib_parallel_algorithm) && USE_INTEL_TBB
 
 #if defined(_OPENMP)
 /**
@@ -803,7 +806,7 @@ BENCHMARK(sorting_with_cub)
  *  10% ot 50% performance improvements are typical for CUB.
  */
 
-#endif // _LESS_SLOW_WITH_CUDA
+#endif // USE_NVIDIA_CCCL
 
 #pragma endregion // Parallelism and Computational Complexity
 
@@ -1112,16 +1115,18 @@ BENCHMARK(rvo_impossible);
  *  research and graduate studies, yet its foundational concepts are more
  *  accessible than they seem. Let's start with one of the most basic operations
  *  — computing the @b sine of a number.
+ *
+ *  @note For simplicity, we will stick to the [-π/2, π/2] range of inputs.
  */
 #include <cmath> // `std::sin`
 
 static void f64_sin(bm::State &state) {
-    double argument = std::rand(), result = 0;
-    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 0.001));
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
+    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += step));
     state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
-BENCHMARK(f64_sin);
+BENCHMARK(f64_sin)->Iterations(1e7);
 
 /**
  *  Standard C library functions like `sin` and `sinf` are designed for maximum
@@ -1140,16 +1145,16 @@ BENCHMARK(f64_sin);
  */
 
 static void f64_sin_maclaurin(bm::State &state) {
-    double argument = std::rand(), result = 0;
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
     for (auto _ : state) {
-        argument += 0.001;
+        argument += step;
         result = argument - std::pow(argument, 3) / 6 + std::pow(argument, 5) / 120;
         bm::DoNotOptimize(result);
     }
     state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
-BENCHMARK(f64_sin_maclaurin);
+BENCHMARK(f64_sin_maclaurin)->Iterations(1e7);
 
 /**
  *  Result: latency reduction from @b 31ns down to @b 21ns on Intel.
@@ -1172,9 +1177,9 @@ BENCHMARK(f64_sin_maclaurin);
  */
 
 static void f64_sin_maclaurin_powless(bm::State &state) {
-    double argument = std::rand(), result = 0;
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
     for (auto _ : state) {
-        argument += 0.001;
+        argument += step;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
@@ -1182,7 +1187,7 @@ static void f64_sin_maclaurin_powless(bm::State &state) {
     state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
-BENCHMARK(f64_sin_maclaurin_powless);
+BENCHMARK(f64_sin_maclaurin_powless)->Iterations(1e7);
 
 /**
  *  Result: latency reduction to @b 2ns - a @b 15x speedup on Intel.
@@ -1197,10 +1202,6 @@ BENCHMARK(f64_sin_maclaurin_powless);
  *  - ICC: `-fp-model=fast`
  *  - MSVC: `/fp:fast`
  *
- *  The GCC syntax can be:
- *  - Old: `__attribute__((optimize("-ffast-math")))`
- *  - New: `[[gnu::optimize("-ffast-math")]]`
- *
  *  Among other things, this may reorder floating-point operations, ignoring
  *  that floating-point arithmetic isn't strictly associative. So if you have
  *  long chains of arithmetic operations, with a arguments significantly
@@ -1208,18 +1209,14 @@ BENCHMARK(f64_sin_maclaurin_powless);
  *
  *  @see "Beware of fast-math" by Simon Byrne: https://simonbyrne.github.io/notes/fastmath/
  */
-#if defined(__GNUC__) && !defined(__clang__)
-#define FAST_MATH [[gnu::optimize("-ffast-math")]]
-#elif defined(__clang__)
-#define FAST_MATH __attribute__((target("-ffast-math")))
-#else
-#define FAST_MATH
+#if defined(__GNUC__)
+#pragma float_control(precise, off, push)
 #endif
 
-FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
-    double argument = std::rand(), result = 0;
+static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
     for (auto _ : state) {
-        argument += 0.001;
+        argument += step;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
@@ -1227,7 +1224,34 @@ FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
     state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
-BENCHMARK(f64_sin_maclaurin_with_fast_math);
+BENCHMARK(f64_sin_maclaurin_with_fast_math)->Iterations(1e7);
+
+#if defined(__GNUC__)
+#pragma float_control(pop)
+#endif
+
+/**
+ *  Alternatively, we can just manually rearrange the arithmetic operations
+ *  using Horner's method for the same polynomial, which is only one of many
+ *  possible approximation schemes.
+ *
+ *  @see Horner's method: https://en.wikipedia.org/wiki/Horner%27s_method
+ *  @see Chebyshev polynomials: https://en.wikipedia.org/wiki/Chebyshev_polynomials
+ */
+
+static void f64_sin_maclaurin_with_horner(bm::State &state) {
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
+    constexpr double reciprocal_6 = 1.0 / 6.0;
+    constexpr double reciprocal_120 = 1.0 / 120.0;
+    for (auto _ : state) {
+        argument += step;
+        result = argument * (1.0 - (argument * argument) * (reciprocal_6 - (argument * argument) * reciprocal_120));
+        bm::DoNotOptimize(result);
+    }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
+}
+
+BENCHMARK(f64_sin_maclaurin_with_horner)->Iterations(1e7);
 
 /**
  *  Result: latency of @b 0.8ns - almost @b 40x faster than the standard
@@ -1235,7 +1259,8 @@ BENCHMARK(f64_sin_maclaurin_with_fast_math);
  *
  *  Advanced libraries like SimSIMD and SLEEF can achieve even better
  *  performance through SIMD-optimized implementations, sometimes trading
- *  accuracy or the breadth of the input range for speed.
+ *  accuracy or the breadth of the input range for speed. SLEEF also explicitly
+ *  differentiates 1 ULP (unit in the last place) and 3.5 ULP accuracy kernels.
  *
  *  @see SimSIMD repository: https://github.com/ashvardanian/simsimd
  *  @see SLEEF repository: https://github.com/shibatch/sleef
