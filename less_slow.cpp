@@ -636,14 +636,19 @@ BENCHMARK(sorting_with_openmp)
  *  @see NVCC Identification Macros docs:
  *       https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/#nvcc-identification-macro
  */
-#define _LESS_SLOW_WITH_CUDA 0
+#if !defined(USE_NVIDIA_CCCL)
 #if defined(__has_include)
 #if __has_include(<cuda_runtime.h>)
-#define _LESS_SLOW_WITH_CUDA 1
-#endif
-#endif
+#define USE_NVIDIA_CCCL 1
+#else
+#define USE_NVIDIA_CCCL 0
+#endif // __has_include(<cuda_runtime.h>)
+#else
+#define USE_NVIDIA_CCCL 0
+#endif // defined(__has_include)
+#endif // !defined(USE_NVIDIA_CCCL)
 
-#if _LESS_SLOW_WITH_CUDA
+#if USE_NVIDIA_CCCL
 
 /**
  *  Unlike STL, Thrust provides some very handy abstractions for sorting
@@ -798,7 +803,7 @@ BENCHMARK(sorting_with_cub)
  *  10% ot 50% performance improvements are typical for CUB.
  */
 
-#endif // _LESS_SLOW_WITH_CUDA
+#endif // USE_NVIDIA_CCCL
 
 #pragma endregion // Parallelism and Computational Complexity
 
@@ -2050,8 +2055,9 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 
 #pragma region GPGPU Programming
 
-#if _LESS_SLOW_WITH_CUDA
+#if USE_NVIDIA_CCCL
 #include <cuda.h>
+#include <cuda_runtime.h>
 
 /**
  *  Different generations of matrix multiplication instructions on GPUs use
@@ -3018,7 +3024,7 @@ BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity
  *  enough.
  */
 
-#if _LESS_SLOW_WITH_CUDA
+#if USE_NVIDIA_CCCL
 #include <cublas_v2.h>
 
 /**
@@ -3327,7 +3333,7 @@ BENCHMARK(cublaslt_tops<fp8_e4m3_t, float>)->RangeMultiplier(2)->Range(256, 1638
  *  - 10 P for `i8` matrix multiplications into `i32`.
  */
 
-#endif // _LESS_SLOW_WITH_CUDA
+#endif // USE_NVIDIA_CCCL
 
 #pragma endregion // Memory Bound Linear Algebra
 
