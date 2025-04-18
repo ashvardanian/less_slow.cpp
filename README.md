@@ -21,7 +21,7 @@ Some of the highlights include:
 - __Multiplying matrices?__ Check how a 3x3x3 GEMM can be 70% slower than 4x4x4, despite 60% fewer ops.
 - __Scaling AI?__ Measure the gap between theoretical [ALU](https://en.wikipedia.org/wiki/Arithmetic_logic_unit) throughput and your [BLAS](https://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms).
 - __How many if conditions are too many?__ Test your CPU's branch predictor with just 10 lines of code.
-- __Prefer recursion to iteration?__ Measure the depth at which your algorithm with [`SEGFAULT`](https://en.wikipedia.org/wiki/Segmentation_fault).
+- __Prefer recursion to iteration?__ Measure the depth at which your algorithm will [`SEGFAULT`](https://en.wikipedia.org/wiki/Segmentation_fault).
 - __Why avoid exceptions?__ Take `std::error_code` or [`std::variant`](https://en.cppreference.com/w/cpp/utility/variant)-like wrappers?
 - __Scaling to many cores?__ Learn how to use [OpenMP](https://en.wikipedia.org/wiki/OpenMP), Intel's oneTBB, or your custom thread pool.
 - __How to handle [JSON](https://www.json.org/json-en.html) avoiding memory allocations?__ Is it easier with C++ 20 or old-school C 99 tools?
@@ -82,6 +82,13 @@ The build will pull and compile several third-party dependencies from the source
 - Chris Kohlhoff's [ASIO](https://github.com/chriskohlhoff/asio) as a [networking TS](https://en.cppreference.com/w/cpp/experimental/networking) extension.
 - Nvidia's [CCCL](https://github.com/nvidia/cccl) for GPU-accelerated algorithms.
 - Nvidia's [CUTLASS](https://github.com/nvidia/cutlass) for GPU-accelerated Linear Algebra.
+
+To build without Parallel STL, Intel TBB, and CUDA:
+
+```sh
+cmake -B build_release -D CMAKE_BUILD_TYPE=Release -D USE_INTEL_TBB=OFF -D USE_NVIDIA_CCCL=OFF
+cmake --build build_release --config Release
+```
 
 To control the output or run specific benchmarks, use the following flags:
 
