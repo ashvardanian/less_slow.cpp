@@ -465,8 +465,11 @@ BENCHMARK(sorting)->Args({8196, false})->Args({8196, true});
  *
  *  @see Feature testing macros: https://en.cppreference.com/w/cpp/utility/feature_test
  */
+#if !defined(USE_INTEL_TBB)
+#define USE_INTEL_TBB 1
+#endif // !defined(USE_INTEL_TBB)
 
-#if defined(__cpp_lib_parallel_algorithm)
+#if defined(__cpp_lib_parallel_algorithm) && USE_INTEL_TBB
 #include <execution> // `std::execution::par_unseq`
 
 template <typename execution_policy_>
@@ -548,7 +551,7 @@ BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
  *       by Bryce Adelstein Lelbach at CppCon 2016: https://youtu.be/Vck6kzWjY88
  */
 
-#endif // defined(__cpp_lib_parallel_algorithm)
+#endif // defined(__cpp_lib_parallel_algorithm) && USE_INTEL_TBB
 
 #if defined(_OPENMP)
 /**
