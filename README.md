@@ -15,7 +15,7 @@ The topics range from basic micro-kernels executing in a few nanoseconds to more
 Some of the highlights include:
 
 - __100x cheaper random inputs?!__ Discover how input generation sometimes costs more than the algorithm.
-- __40x faster trigonometry:__ Speed-up standard library functions like [`std::sin`](https://en.cppreference.com/w/cpp/numeric/math/sin) in just 3 lines of code.
+- __1% error in trigonometry at 1/40 cost:__ Approximate STL functions like [`std::sin`](https://en.cppreference.com/w/cpp/numeric/math/sin) in just 3 lines of code.
 - __4x faster lazy-logic__ with custom [`std::ranges`](https://en.cppreference.com/w/cpp/ranges) and iterators!
 - __Compiler optimizations beyond `-O3`:__ Learn about less obvious flags and techniques for another 2x speedup.
 - __Multiplying matrices?__ Check how a 3x3x3 GEMM can be 70% slower than 4x4x4, despite 60% fewer ops.
