@@ -1,15 +1,17 @@
-# Learning to Write _Less Slow_ C, C++, and Assembly Code
+# Playing Around _Less Slow_ Coding Practices for C++, C, and Assembly Code
 
-> The benchmarks in this repository don't aim to cover every topic entirely, but they help form a mindset and intuition for performance-oriented software design.
-> It also provides an example of using some non-[STL](https://en.wikipedia.org/wiki/Standard_Template_Library) but de facto standard libraries in C++, importing them via CMake, and compiling from source.
-> For higher-level abstractions and languages, check out [`less_slow.rs`](https://github.com/ashvardanian/less_slow.rs) and [`less_slow.py`](https://github.com/ashvardanian/less_slow.py).
+> The benchmarks in this repository don’t aim to cover every topic entirely, but they help form a mindset and intuition for performance-oriented software design.  
+> It also provides an example of using some non-[STL](https://en.wikipedia.org/wiki/Standard_Template_Library) but de facto standard libraries in C++, importing them via CMake and compiling from source.  
+> For higher-level abstractions and languages, check out [`less_slow.rs`](https://github.com/ashvardanian/less_slow.rs) and [`less_slow.py`](https://github.com/ashvardanian/less_slow.py).  
+> I needed many of these measurements to reconsider my own coding habits, but hopefully they’re helpful to others as well.  
+> Most of the code is organized in very long, ordered, and `#pragma`-sectioned files — not necessarily the preferred form for everyone.
 
-Much modern code suffers from common pitfalls, such as bugs, security vulnerabilities, and __performance bottlenecks__.
-University curricula often teach outdated concepts, while bootcamps oversimplify crucial software development principles.
+Much of modern code suffers from common pitfalls — bugs, security vulnerabilities, and __performance bottlenecks__.  
+University curricula and coding bootcamps tend to stick to traditional coding styles and standard features, rarely exposing the more fun, unusual, and efficient design opportunities.
 
 ![Less Slow C++](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/less_slow.cpp.jpg?raw=true)
 
-This repository offers practical examples of writing efficient C and C++ code.
+This repository offers practical minimalistic examples of writing efficient C and C++ code.
 It leverages C++20 features and is designed primarily for GCC and Clang compilers on Linux, though it may work on other platforms.
 The topics range from basic micro-kernels executing in a few nanoseconds to more complex constructs involving parallel algorithms, coroutines, and polymorphism.
 Some of the highlights include:
