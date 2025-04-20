@@ -1352,7 +1352,7 @@ BENCHMARK(integral_division_with_doubles);
  *  while the internal logic remains identical.
  */
 
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__)
 
 #if defined(__x86_64__) || defined(__i386__)
 [[gnu::target("arch=core2")]]

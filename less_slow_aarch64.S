@@ -3,21 +3,27 @@
 # Micro-kernels for building a performance-first mindset for 64-bit ARM (NEON).
 # ----------------------------------------------------------------------------
 
-    .section .text
-    .global i32_add_asm_kernel
+#ifdef __APPLE__
+    #define SYMBOL_NAME(name) _##name  // Add underscore on macOS
+#else
+    #define SYMBOL_NAME(name) name     // No underscore on GNU-based systems
+#endif
+
+    .text
+    .global SYMBOL_NAME(i32_add_asm_kernel)
     
-    .global tops_f64_neon_asm_kernel
-    .global tops_f32_neon_asm_kernel
-    .global tops_f16_neon_asm_kernel
-    .global tops_bf16_neon_asm_kernel
-    .global tops_i8_neon_asm_kernel
-    .global tops_u8_neon_asm_kernel
+    .global SYMBOL_NAME(tops_f64_neon_asm_kernel)
+    .global SYMBOL_NAME(tops_f32_neon_asm_kernel)
+    .global SYMBOL_NAME(tops_f16_neon_asm_kernel)
+    .global SYMBOL_NAME(tops_bf16_neon_asm_kernel)
+    .global SYMBOL_NAME(tops_i8_neon_asm_kernel)
+    .global SYMBOL_NAME(tops_u8_neon_asm_kernel)
 
 # ----------------------------------------------------------------------------
 # Simple function that adds two 32-bit integers. 
 # AArch64 ABI: W0 = 'a', W1 = 'b'. Return in W0.
 # ----------------------------------------------------------------------------
-i32_add_asm_kernel:
+SYMBOL_NAME(i32_add_asm_kernel):
     add     w0, w0, w1
     ret
 
@@ -26,7 +32,7 @@ i32_add_asm_kernel:
 # Each FMLA vD.2d, vN.2d, vM.2d => 2 multiplies + 2 adds = 4 FLOPs.
 # We'll do 10 instructions => 10 × 4 = 40 FLOPs total, returning 40 in W0.
 # ----------------------------------------------------------------------------
-tops_f64_neon_asm_kernel:
+SYMBOL_NAME(tops_f64_neon_asm_kernel):
     fmla    v0.2d,  v1.2d,  v2.2d
     fmla    v3.2d,  v4.2d,  v5.2d
     fmla    v6.2d,  v7.2d,  v8.2d
@@ -47,7 +53,7 @@ tops_f64_neon_asm_kernel:
 # Let's do 10 instructions => 10 × 8 = 80 FLOPs total.
 # Return 80 in W0.
 # ----------------------------------------------------------------------------
-tops_f32_neon_asm_kernel:
+SYMBOL_NAME(tops_f32_neon_asm_kernel):
     fmla    v0.4s,  v1.4s,  v2.4s
     fmla    v3.4s,  v4.4s,  v5.4s
     fmla    v6.4s,  v7.4s,  v8.4s
@@ -68,7 +74,7 @@ tops_f32_neon_asm_kernel:
 # Each FMLA vD.8h, vN.8h, vM.8h => 8 multiplies + 8 adds = 16 FLOPs.
 # We'll do 10 instructions => 160 FLOPs total, returning 160 in W0.
 # ----------------------------------------------------------------------------
-tops_f16_neon_asm_kernel:
+SYMBOL_NAME(tops_f16_neon_asm_kernel):
     fmla    v0.8h,  v1.8h,  v2.8h
     fmla    v3.8h,  v4.8h,  v5.8h
     fmla    v6.8h,  v7.8h,  v8.8h
@@ -89,7 +95,7 @@ tops_f16_neon_asm_kernel:
 # bfmmla  vD.4s, vN.8h, vM.8h => 8 multiplies + 8 adds = 16 FLOPs.
 # We'll do 10 instructions => 160 FLOPs total, returning 160 in W0.
 # ----------------------------------------------------------------------------
-tops_bf16_neon_asm_kernel:
+SYMBOL_NAME(tops_bf16_neon_asm_kernel):
     bfmmla  v0.4s,  v1.8h,  v2.8h
     bfmmla  v3.4s,  v4.8h,  v5.8h
     bfmmla  v6.4s,  v7.8h,  v8.8h
@@ -110,7 +116,7 @@ tops_bf16_neon_asm_kernel:
 # sdot vD.4s, vN.16b, vM.16b => 16 multiplies + 16 adds = 32 FLOPs.
 # We'll do 10 instructions => 320 FLOPs total, returning 320 in W0.
 # ----------------------------------------------------------------------------
-tops_i8_neon_asm_kernel:
+SYMBOL_NAME(tops_i8_neon_asm_kernel):
     sdot    v0.4s,  v1.16b,  v2.16b
     sdot    v3.4s,  v4.16b,  v5.16b
     sdot    v6.4s,  v7.16b,  v8.16b
@@ -131,7 +137,7 @@ tops_i8_neon_asm_kernel:
 # udot vD.4s, vN.16b, vM.16b => 16 multiplies + 16 adds = 32 FLOPs.
 # We'll do 10 instructions => 320 FLOPs total, returning 320 in W0.
 # ----------------------------------------------------------------------------
-tops_u8_neon_asm_kernel:
+SYMBOL_NAME(tops_u8_neon_asm_kernel):
     udot    v0.4s,  v1.16b,  v2.16b
     udot    v3.4s,  v4.16b,  v5.16b
     udot    v6.4s,  v7.16b,  v8.16b
@@ -148,5 +154,7 @@ tops_u8_neon_asm_kernel:
 
 # ----------------------------------------------------------------------------
 # Tell the linker/assembler that we do NOT need an executable stack:
+#ifdef __linux__
     .section .note.GNU-stack, "", @progbits
+#endif
 # ----------------------------------------------------------------------------
