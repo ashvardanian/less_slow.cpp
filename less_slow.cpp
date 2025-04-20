@@ -401,18 +401,13 @@ class aligned_array {
     std::size_t alignment_ = 0;
 
   public:
-#if defined(_MSC_VER) //! MSVC doesn't support `std::aligned_alloc` yet
-    aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size) {
-        data_ = static_cast<type_ *>(_aligned_malloc(sizeof(type_) * size_, alignment));
-        if (!data_) throw std::bad_alloc();
-    }
-    ~aligned_array() noexcept { _aligned_free(data_); }
-#else
     aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size), alignment_(alignment) {
-        data_ = (type_ *)::operator new(sizeof(type_) * size, std::align_val_t(alignment));
+        // With `std::aligned_alloc` in C++17, an exception won't be raised, which may be preferred in
+        // some environments. MSVC was late to adopt it, and developers would often use a combination
+        // of lower-level `posix_memalign` and `_aligned_malloc`/`_aligned_free` across Unix and Windows.
+        data_ = (type_ *)::operator new(sizeof(type_) * size_, std::align_val_t(alignment_));
     }
     ~aligned_array() noexcept { ::operator delete(data_, sizeof(type_) * size_, std::align_val_t(alignment_)); }
-#endif
 
     aligned_array(aligned_array const &) = delete;
     aligned_array &operator=(aligned_array const &) = delete;
