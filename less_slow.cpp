@@ -398,6 +398,7 @@ class aligned_array {
 
     type_ *data_ = nullptr;
     std::size_t size_ = 0;
+    std::size_t alignment_ = 0;
 
   public:
 #if defined(_MSC_VER) //! MSVC doesn't support `std::aligned_alloc` yet
@@ -407,11 +408,10 @@ class aligned_array {
     }
     ~aligned_array() noexcept { _aligned_free(data_); }
 #else
-    aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size) {
-        data_ = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size_));
-        if (!data_) throw std::bad_alloc();
+    aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size), alignment_(alignment) {
+        data_ = (type_ *)::operator new(sizeof(type_) * size, std::align_val_t(alignment));
     }
-    ~aligned_array() noexcept { std::free(data_); }
+    ~aligned_array() noexcept { ::operator delete(data_, sizeof(type_) * size_, std::align_val_t(alignment_)); }
 #endif
 
     aligned_array(aligned_array const &) = delete;
