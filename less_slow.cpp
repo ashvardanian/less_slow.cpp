@@ -2628,8 +2628,8 @@ class strided_ptr {
     strided_ptr operator--(int) noexcept { strided_ptr temp = *this; --(*this); return temp; }
     strided_ptr &operator+=(difference_type offset) noexcept { data_ += offset * stride_; return *this; }
     strided_ptr &operator-=(difference_type offset) noexcept { data_ -= offset * stride_; return *this; }
-    strided_ptr operator+(difference_type offset) noexcept { strided_ptr temp = *this; return temp += offset; }
-    strided_ptr operator-(difference_type offset) noexcept { strided_ptr temp = *this; return temp -= offset; }
+    strided_ptr operator+(difference_type offset) const noexcept { strided_ptr temp = *this; return temp += offset; }
+    strided_ptr operator-(difference_type offset) const noexcept { strided_ptr temp = *this; return temp -= offset; }
     friend difference_type operator-(strided_ptr const &a, strided_ptr const &b) noexcept { assert(a.stride_ == b.stride_); return (a.data_ - b.data_) / static_cast<difference_type>(a.stride_); }
     friend bool operator==(strided_ptr const &a, strided_ptr const &b) noexcept { return a.data_ == b.data_; }
     friend bool operator<(strided_ptr const &a, strided_ptr const &b) noexcept { return a.data_ < b.data_; }
