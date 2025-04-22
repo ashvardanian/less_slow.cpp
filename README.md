@@ -24,7 +24,7 @@ Some of the highlights include:
 - __Scaling AI?__ Measure the gap between theoretical [ALU](https://en.wikipedia.org/wiki/Arithmetic_logic_unit) throughput and your [BLAS](https://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms).
 - __How many if conditions are too many?__ Test your CPU's branch predictor with just 10 lines of code.
 - __Prefer recursion to iteration?__ Measure the depth at which your algorithm will [`SEGFAULT`](https://en.wikipedia.org/wiki/Segmentation_fault).
-- __Why avoid exceptions?__ Take `std::error_code` or [`std::variant`](https://en.cppreference.com/w/cpp/utility/variant)-like wrappers?
+- __Why avoid exceptions?__ Take `std::error_code` or [`std::variant`](https://en.cppreference.com/w/cpp/utility/variant)-like [ADTs](https://en.wikipedia.org/wiki/Algebraic_data_type)?
 - __Scaling to many cores?__ Learn how to use [OpenMP](https://en.wikipedia.org/wiki/OpenMP), Intel's oneTBB, or your custom thread pool.
 - __How to handle [JSON](https://www.json.org/json-en.html) avoiding memory allocations?__ Is it easier with C++ 20 or old-school C 99 tools?
 - __How to properly use STL's associative containers__ with custom keys and transparent comparators?
@@ -90,6 +90,18 @@ To build without Parallel STL, Intel TBB, and CUDA:
 
 ```sh
 cmake -B build_release -D CMAKE_BUILD_TYPE=Release -D USE_INTEL_TBB=OFF -D USE_NVIDIA_CCCL=OFF
+cmake --build build_release --config Release
+```
+
+To build on MacOS, pulling key dependencies from [Homebrew](https://brew.sh):
+
+```sh
+brew install openblas
+cmake -B build_release \
+      -D CMAKE_BUILD_TYPE=Release \
+      -D CMAKE_C_FLAGS="-I$(brew --prefix openblas)/include" \
+      -D CMAKE_CXX_FLAGS="-I$(brew --prefix openblas)/include" \
+      -D CMAKE_EXE_LINKER_FLAGS="-L$(brew --prefix openblas)/lib"
 cmake --build build_release --config Release
 ```
 
