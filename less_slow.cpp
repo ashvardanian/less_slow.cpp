@@ -6038,7 +6038,7 @@ struct log_printf_t {
         // `std::chrono::high_resolution_clock` is usually just an alias to either `system_clock` or
         // `steady_clock`. There is debate on whether using it is a good idea at all.
         // https://en.cppreference.com/w/cpp/chrono/high_resolution_clock
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) || defined(__APPLE__)
         auto now = std::chrono::system_clock::now();
 #else
         auto now = std::chrono::high_resolution_clock::now();
@@ -6069,7 +6069,10 @@ struct log_printf_t {
 
 BENCHMARK(logging<log_printf_t>)->Name("log_printf")->MinTime(2);
 
-#if !defined(_MSC_VER)
+/**
+ *  Formatting `std::chrono` with `std::format` fails on both Windows and MacOS.
+ */
+#if !defined(_MSC_VER) && !defined(__APPLE__)
 #if defined(__cpp_lib_format)
 #include <format> // `std::format_to_n`
 
