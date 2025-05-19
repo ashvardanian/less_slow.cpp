@@ -2904,6 +2904,20 @@ std::size_t parse_size_string(std::string const &str) {
 #pragma endregion // Non Uniform Memory Access
 
 #pragma region Memory Bound Linear Algebra
+
+#if !defined(USE_BLAS)
+#if defined(__has_include)
+#if __has_include(<cblas.h>)
+#define USE_BLAS 1
+#else
+#define USE_BLAS 0
+#endif // __has_include(<cblas.h>)
+#else
+#define USE_BLAS 0
+#endif // defined(__has_include)
+#endif // !defined(USE_BLAS)
+
+#if USE_BLAS
 #include <cblas.h>
 /**
  *  ! OpenBLAS defines a `SIZE` macro for internal use, which conflicts with `fmt`
@@ -2946,6 +2960,8 @@ static void cblas_tops(bm::State &state) {
 
 BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+
+#endif // USE_BLAS
 
 /**
  *  Eigen is a high-level C++ library for linear algebra that provides a

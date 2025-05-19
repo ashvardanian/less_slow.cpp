@@ -86,10 +86,10 @@ The build will pull and compile several third-party dependencies from the source
 - Nvidia's [CCCL](https://github.com/nvidia/cccl) for GPU-accelerated algorithms.
 - Nvidia's [CUTLASS](https://github.com/nvidia/cutlass) for GPU-accelerated Linear Algebra.
 
-To build without Parallel STL, Intel TBB, and CUDA:
+To build without Parallel STL, Intel TBB, BLAS, and CUDA:
 
 ```sh
-cmake -B build_release -D CMAKE_BUILD_TYPE=Release -D USE_INTEL_TBB=OFF -D USE_NVIDIA_CCCL=OFF
+cmake -B build_release -D CMAKE_BUILD_TYPE=Release -D USE_INTEL_TBB=OFF -D USE_NVIDIA_CCCL=OFF -D USE_BLAS=OFF
 cmake --build build_release --config Release
 ```
 

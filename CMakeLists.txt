@@ -72,11 +72,22 @@ else ()
     set(_SHOULD_USE_INTEL_TBB OFF)
 endif ()
 
+# Probe for BLAS support
+set(CMAKE_FIND_LIBRARY_PREFIXES ";lib")
+find_package(BLAS QUIET)
+if (BLAS_FOUND)
+    set(_SHOULD_USE_BLAS ON)
+else ()
+    set(_SHOULD_USE_BLAS OFF)
+endif ()
+
 option(USE_INTEL_TBB "Use Intel TBB for parallel STL algorithms" ${_SHOULD_USE_INTEL_TBB})
 option(USE_NVIDIA_CCCL "Use Nvidia CCCL for CUDA acceleration" ${_SHOULD_USE_NVIDIA_CCCL})
+option(USE_BLAS "Use BLAS for linear algebra" ${_SHOULD_USE_BLAS})
 
 message(STATUS "USE_INTEL_TBB: ${USE_INTEL_TBB}")
 message(STATUS "USE_NVIDIA_CCCL: ${USE_NVIDIA_CCCL}")
+message(STATUS "USE_BLAS: ${USE_BLAS}")
 
 # ------------------------------------------------------------------------------
 # Dependencies
@@ -102,13 +113,14 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
 # ~~~
 #
 # Moreover, CMake sometimes fails to find it on Windows: https://stackoverflow.com/a/78335726/2766161
-set(CMAKE_FIND_LIBRARY_PREFIXES ";lib")
-find_package(BLAS REQUIRED)
+if (USE_BLAS)
+    find_package(BLAS REQUIRED)
 
-include(CheckFunctionExists)
-check_function_exists(openblas_set_num_threads LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
-if (LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
-    add_definitions(-DLESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
+    include(CheckFunctionExists)
+    check_function_exists(openblas_set_num_threads LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
+    if (LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
+        add_definitions(-D LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
+    endif ()
 endif ()
 
 # GTest (required by Google Benchmark)
@@ -346,7 +358,7 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64|x64")
 elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64|arm64")
     if (APPLE)
         set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -march=armv8.6-a+bf16")
-    endif()
+    endif ()
     set_source_files_properties(less_slow_aarch64.S PROPERTIES LANGUAGE ASM)
     target_sources(less_slow PRIVATE less_slow_aarch64.S)
 endif ()
@@ -431,6 +443,7 @@ endif ()
 # ------------------------------------------------------------------------------
 target_compile_definitions(less_slow PRIVATE USE_NVIDIA_CCCL=$<BOOL:${USE_NVIDIA_CCCL}>)
 target_compile_definitions(less_slow PRIVATE USE_INTEL_TBB=$<BOOL:${USE_INTEL_TBB}>)
+target_compile_definitions(less_slow PRIVATE USE_BLAS=$<BOOL:${USE_BLAS}>)
 target_link_libraries(
     less_slow
     PRIVATE Threads::Threads
@@ -448,8 +461,11 @@ target_link_libraries(
             absl::flat_hash_map
             nlohmann_json::nlohmann_json
             Eigen3::Eigen
-            ${BLAS_LIBRARIES}
 )
+
+if (USE_BLAS)
+    target_link_libraries(less_slow PRIVATE ${BLAS_LIBRARIES})
+endif ()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # target_include_directories(less_slow PRIVATE ${LIBURING_INCLUDE_DIRS})
