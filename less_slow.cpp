@@ -996,6 +996,129 @@ static void branch_cost(bm::State &state) {
 
 BENCHMARK(branch_cost)->RangeMultiplier(4)->Range(256, 32 * 1024);
 
+/**
+ *  It's hard to reason if the above code should compile into a conditional move or a jump,
+ *  so let's define explicit inline assembly kernels and compare both.
+ */
+#if defined(__GNUC__) && !defined(__clang__) //! GCC/Clang inline asm note in your code, keep MSVC out
+
+#if defined(__x86_64__) || defined(__i386__)
+
+static void branch_cost_cmov(bm::State &state) {
+    auto const count = static_cast<std::size_t>(state.range(0));
+    aligned_array<std::int32_t> random_values(count);
+    std::generate_n(random_values.begin(), count, &std::rand);
+    std::int32_t variable = 0;
+    std::size_t iteration = 0;
+
+    for (auto _ : state) {
+        std::int32_t const random = random_values[(++iteration) & (count - 1)];
+        std::int32_t sum; // early-clobber temp for LEA result
+
+        asm volatile(                            //
+            "leal (%[var],%[rnd],1), %[sum]\n\t" // sum := variable + random
+            "imull %[rnd], %[var]\n\t"           // var := variable * random
+            "testl $1, %[rnd]\n\t"               // if (random & 1) var := sum
+            "cmovne %[sum], %[var]\n\t"
+            : [var] "+r"(variable), [sum] "=&r"(sum)
+            : [rnd] "r"(random)
+            : "cc");
+        bm::DoNotOptimize(variable);
+    }
+}
+
+static void branch_cost_jump(bm::State &state) {
+    auto const count = static_cast<std::size_t>(state.range(0));
+    aligned_array<std::int32_t> random_values(count);
+    std::generate_n(random_values.begin(), count, &std::rand);
+    std::int32_t variable = 0;
+    std::size_t iteration = 0;
+
+    for (auto _ : state) {
+        std::int32_t const random = random_values[(++iteration) & (count - 1)];
+
+        asm volatile( //
+            "testl $1, %[rnd]\n\t"
+            "jnz 1f\n\t"               // if odd -> jump to add
+            "imull %[rnd], %[var]\n\t" // even: var *= rnd
+            "jmp 2f\n\t"
+            "1:\n\t"
+            "addl %[rnd], %[var]\n\t" // odd:  var += rnd
+            "2:\n\t"
+            : [var] "+r"(variable)
+            : [rnd] "r"(random)
+            : "cc");
+        bm::DoNotOptimize(variable);
+    }
+}
+
+BENCHMARK(branch_cost_cmov)->RangeMultiplier(4)->Range(256, 32 * 1024);
+BENCHMARK(branch_cost_jump)->RangeMultiplier(4)->Range(256, 32 * 1024);
+
+#elif defined(__aarch64__)
+
+static void branch_cost_csel(bm::State &state) {
+    auto const count = static_cast<std::size_t>(state.range(0));
+    aligned_array<std::int32_t> random_values(count);
+    std::generate_n(random_values.begin(), count, &std::rand);
+    std::int32_t variable = 0;
+    std::size_t iteration = 0;
+
+    for (auto _ : state) {
+        std::int32_t const random = random_values[(++iteration) & (count - 1)];
+        std::int32_t sum;
+
+        asm volatile(                           //
+            "add %w[sum], %w[var], %w[rnd]\n\t" // sum := variable + random
+            "mul %w[var], %w[var], %w[rnd]\n\t" // var := variable * random
+            "tst %w[rnd], #1\n\t"               // if (random & 1) var := sum
+            "csel %w[var], %w[sum], %w[var], NE\n\t"
+            : [var] "+r"(variable), [sum] "=&r"(sum)
+            : [rnd] "r"(random)
+            : "cc");
+        bm::DoNotOptimize(variable);
+    }
+}
+
+static void branch_cost_branch(bm::State &state) {
+    auto const count = static_cast<std::size_t>(state.range(0));
+    aligned_array<std::int32_t> random_values(count);
+    std::generate_n(random_values.begin(), count, &std::rand);
+    std::int32_t variable = 0;
+    std::size_t iteration = 0;
+
+    for (auto _ : state) {
+        std::int32_t const random = random_values[(++iteration) & (count - 1)];
+
+        asm volatile( //
+            "tst %w[rnd], #1\n\t"
+            "b.ne 1f\n\t"                       // if odd -> jump to add
+            "mul %w[var], %w[var], %w[rnd]\n\t" // even: var *= rnd
+            "b 2f\n\t"
+            "1:\n\t"
+            "add %w[var], %w[var], %w[rnd]\n\t" // odd:  var += rnd
+            "2:\n\t"
+            : [var] "+r"(variable)
+            : [rnd] "r"(random)
+            : "cc");
+        bm::DoNotOptimize(variable);
+    }
+}
+
+BENCHMARK(branch_cost_csel)->RangeMultiplier(4)->Range(256, 32 * 1024);
+BENCHMARK(branch_cost_branch)->RangeMultiplier(4)->Range(256, 32 * 1024);
+
+#endif
+
+#endif // __GNUC__ && !__clang__
+
+/**
+ *  Results are quite interesting. On Intel:
+ *  - `branch_cost` up to 4K runs at @b 0.7ns, beyond that it jumps to @b 3.7ns.
+ *  - `branch_cost_cmov` consistently runs at @b 1.3ns, regardless of the size.
+ *  - `branch_cost_jump` has similar, but slightly worse performance than `branch_cost`.
+ */
+
 #pragma endregion // Branch Prediction
 
 #pragma region Cache Misses
@@ -1069,28 +1192,54 @@ BENCHMARK(cache_misses_cost<access_order_t::random>)
  *  value. This optimization is crucial for performance, especially when dealing
  *  with heavy objects.
  */
-#include <optional> // `std::optional`
+struct heavy_t {
+    std::uint64_t data[8];
 
-std::optional<std::string> make_heavy_object_mutable() {
-    std::string x(1024, 'x');
+    heavy_t() noexcept { std::iota(data, data + 8, 0); }
+
+    heavy_t(heavy_t &&) { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+    heavy_t(heavy_t const &) { std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
+    heavy_t &operator=(heavy_t &&) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return *this;
+    }
+    heavy_t &operator=(heavy_t const &) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        return *this;
+    }
+};
+
+heavy_t make_heavy_object() { return heavy_t {}; }
+
+heavy_t make_named_heavy_object() {
+    heavy_t const x; //! Even with `const`, RVO is possible
     return x;
 }
 
-std::optional<std::string> make_heavy_object_immutable() {
-    std::string const x(1024, 'x'); //! `const` is the only difference
-    return x;
+heavy_t make_conditional_heavy_object() {
+    heavy_t x;
+    heavy_t &x1 = x;
+    heavy_t &x2 = x;
+    static std::size_t counter = 0; //! Condition prevents RVO
+    if (counter++ % 2 == 0) { return x1; }
+    else { return x2; }
 }
 
-static void rvo_friendly(bm::State &state) {
-    for (auto _ : state) bm::DoNotOptimize(make_heavy_object_mutable());
+static void rvo_trivial(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(make_heavy_object());
 }
 
-static void rvo_impossible(bm::State &state) {
-    for (auto _ : state) bm::DoNotOptimize(make_heavy_object_immutable());
+static void rvo_likely(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(make_named_heavy_object());
 }
 
-BENCHMARK(rvo_friendly);
-BENCHMARK(rvo_impossible);
+static void rvo_banned(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(make_conditional_heavy_object());
+}
+
+BENCHMARK(rvo_trivial);
+BENCHMARK(rvo_likely);
+BENCHMARK(rvo_banned);
 
 /**
  *  Despite intuition, marking a local object as `const` hurts our performance.
