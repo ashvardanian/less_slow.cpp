@@ -308,6 +308,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(YaoyuanGuoYYJSON)
 
+# Daniel Lemire's simdjson for SIMD-accelerated JSON parsing
+FetchContent_Declare(
+    DanielLemireSimdJSON
+    GIT_REPOSITORY https://github.com/simdjson/simdjson.git
+    GIT_TAG v3.13.0
+)
+FetchContent_MakeAvailable(DanielLemireSimdJSON)
+
 # Chris Karloff's ASIO standalone, avoiding Boost... integration is a bit tricky:
 # https://github.com/cpm-cmake/CPM.cmake/blob/master/examples/asio-standalone/CMakeLists.txt
 FetchContent_Declare(
@@ -454,6 +462,7 @@ target_link_libraries(
             unifex
             stringzilla
             yyjson
+            simdjson
             ctre
             asio
             # There is no `absl` shortcut:

@@ -5221,6 +5221,124 @@ BENCHMARK(json_nlohmann<arena_json, exception_handling_t::noexcept_k>)
     ->Threads(physical_cores());
 
 /**
+ *  simdjson is designed for high-performance JSON parsing using SIMD instructions.
+ *  It provides On-Demand parsing which is particularly efficient for selective data extraction.
+ */
+#include <simdjson.h>
+
+bool contains_xss_in_simdjson_ondemand(simdjson::ondemand::value element) noexcept {
+
+    // Handle objects
+    if (element.type() == simdjson::ondemand::json_type::object) {
+        simdjson::ondemand::object obj;
+        if (element.get_object().get(obj) == simdjson::SUCCESS) {
+            for (auto sub : obj) {
+                simdjson::ondemand::value val;
+                if (sub.value().get(val) == simdjson::SUCCESS)
+                    if (contains_xss_in_simdjson_ondemand(val)) return true;
+            }
+        }
+        return false;
+    }
+    // Handle arrays
+    else if (element.type() == simdjson::ondemand::json_type::array) {
+        simdjson::ondemand::array arr;
+        if (element.get_array().get(arr) == simdjson::SUCCESS) {
+            for (auto sub : arr) {
+                simdjson::ondemand::value val;
+                if (sub.get(val) == simdjson::SUCCESS)
+                    if (contains_xss_in_simdjson_ondemand(val)) return true;
+            }
+        }
+        return false;
+    }
+    // Handle strings
+    else if (element.type() == simdjson::ondemand::json_type::string) {
+        std::string_view str;
+        if (element.get_string().get(str) == simdjson::SUCCESS)
+            return str.find("<script>alert('XSS')</script>") != std::string_view::npos;
+    }
+    return false;
+}
+
+bool contains_xss_in_simdjson_dom(simdjson::dom::element element) noexcept {
+    if (element.is_object()) {
+        for (auto [key, val] : element.get_object())
+            if (contains_xss_in_simdjson_dom(val)) return true;
+    }
+    else if (element.is_array()) {
+        for (auto val : element.get_array())
+            if (contains_xss_in_simdjson_dom(val)) return true;
+    }
+    else if (element.is_string()) {
+        std::string_view str = element.get_string();
+        return str.find("<script>alert('XSS')</script>") != std::string_view::npos;
+    }
+    return false;
+}
+
+static void json_simdjson_ondemand(bm::State &state) {
+    std::size_t bytes_processed = 0;
+    std::size_t iteration = 0;
+
+    // Pre-allocate padded strings outside the hot path
+    simdjson::padded_string padded_strings[3] = {
+        simdjson::padded_string(packets_json[0]),
+        simdjson::padded_string(packets_json[1]),
+        simdjson::padded_string(packets_json[2]),
+    };
+
+    // On-demand parser reuses internal buffers
+    simdjson::ondemand::parser parser;
+    simdjson::ondemand::document doc;
+
+    for (auto _ : state) {
+        std::size_t const packet_index = iteration++ % 3;
+        bytes_processed += packets_json[packet_index].size();
+
+        auto error = parser.iterate(padded_strings[packet_index]).get(doc);
+        if (error == simdjson::SUCCESS) {
+            simdjson::ondemand::value root;
+            if (doc.get_value().get(root) == simdjson::SUCCESS)
+                bm::DoNotOptimize(contains_xss_in_simdjson_ondemand(root));
+        }
+    }
+
+    state.SetBytesProcessed(bytes_processed);
+}
+
+static void json_simdjson_dom(bm::State &state) {
+    std::size_t bytes_processed = 0;
+    std::size_t iteration = 0;
+
+    // Pre-allocate padded strings outside the hot path
+    simdjson::padded_string padded_strings[3] = {
+        simdjson::padded_string(packets_json[0]),
+        simdjson::padded_string(packets_json[1]),
+        simdjson::padded_string(packets_json[2]),
+    };
+
+    // Reuse the state
+    simdjson::dom::parser parser;
+    simdjson::dom::element doc;
+
+    for (auto _ : state) {
+        std::size_t const packet_index = iteration++ % 3;
+        bytes_processed += packets_json[packet_index].size();
+
+        auto error = parser.parse(padded_strings[packet_index]).get(doc);
+        if (error == simdjson::SUCCESS) bm::DoNotOptimize(contains_xss_in_simdjson_dom(doc));
+    }
+
+    state.SetBytesProcessed(bytes_processed);
+}
+
+BENCHMARK(json_simdjson_ondemand)->MinTime(10)->Name("json_simdjson<ondemand>");
+BENCHMARK(json_simdjson_dom)->MinTime(10)->Name("json_simdjson<dom>");
+BENCHMARK(json_simdjson_ondemand)->MinTime(10)->Name("json_simdjson<ondemand>")->Threads(physical_cores());
+BENCHMARK(json_simdjson_dom)->MinTime(10)->Name("json_simdjson<dom>")->Threads(physical_cores());
+
+/**
  *  The results for the single-threaded case and the multi-threaded case without
  *  Simultaneous Multi-Threading @b (SMT), with 96 threads on 96 Sapphire Rapids
  *  cores, are as follows:

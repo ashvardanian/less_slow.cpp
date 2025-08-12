@@ -68,6 +68,7 @@
     "Lelbach",
     "Lemire",
     "Lib",
+    "libopenblas",
     "LIBPFM",
     "libunifex",
     "liburing",
@@ -273,5 +274,7 @@
     "variant": "cpp",
     "vector": "cpp",
     "version": "cpp"
-  }
+  },
+  "C_Cpp.errorSquiggles": "disabled",
+  "cSpell.enabled": false
 }
