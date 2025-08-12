@@ -1329,13 +1329,23 @@ BENCHMARK(integral_division_by_const);
  *  Since 64-bit doubles can exactly represent all 32-bit signed integers,
  *  this method introduces @b no precision loss, making it a safe and efficient
  *  alternative when division performance is critical.
+ *
+ *  - The `float` can fit 24-bit integers exactly in its significand/mantissa.
+ *  - The `double` can fit 52-bit integers exactly in its significand/mantissa.
  */
+static void integral_division_with_floats(bm::State &state) {
+    std::int32_t a = std::rand(), b = std::rand(), c = 0;
+    for (auto _ : state)
+        bm::DoNotOptimize(c = static_cast<std::int32_t>(static_cast<float>(++a) / static_cast<float>(++b)));
+}
+
 static void integral_division_with_doubles(bm::State &state) {
     std::int32_t a = std::rand(), b = std::rand(), c = 0;
     for (auto _ : state)
         bm::DoNotOptimize(c = static_cast<std::int32_t>(static_cast<double>(++a) / static_cast<double>(++b)));
 }
 
+BENCHMARK(integral_division_with_floats);
 BENCHMARK(integral_division_with_doubles);
 
 /**
