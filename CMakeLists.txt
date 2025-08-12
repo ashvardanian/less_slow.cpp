@@ -127,7 +127,7 @@ endif ()
 FetchContent_Declare(
     GoogleTest
     GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG v1.15.2
+    GIT_TAG v1.17.0
 )
 FetchContent_MakeAvailable(GoogleTest)
 
@@ -135,7 +135,7 @@ FetchContent_MakeAvailable(GoogleTest)
 FetchContent_Declare(
     GoogleBenchmark
     GIT_REPOSITORY https://github.com/google/benchmark.git
-    GIT_TAG v1.9.1
+    GIT_TAG v1.9.4
 )
 
 # Suppress building tests/docs/etc. for faster builds:
@@ -235,7 +235,7 @@ endif ()
 FetchContent_Declare(
     VictorZverovichFMT
     GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-    GIT_TAG 11.1.2
+    GIT_TAG 11.2.0
 )
 FetchContent_MakeAvailable(VictorZverovichFMT)
 
@@ -271,7 +271,7 @@ FetchContent_MakeAvailable(MetaLibUnifEx)
 FetchContent_Declare(
     AshVardanianStringZilla
     GIT_REPOSITORY https://github.com/ashvardanian/stringzilla
-    GIT_TAG v3.12.5
+    GIT_TAG v3.12.6
 )
 FetchContent_MakeAvailable(AshVardanianStringZilla)
 
@@ -288,7 +288,7 @@ FetchContent_MakeAvailable(HanaDusikovaCTRE)
 FetchContent_Declare(
     GoogleAbseil
     GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
-    GIT_TAG 20240722.0 # LTS version
+    GIT_TAG 20250512.1 # LTS version
 )
 FetchContent_MakeAvailable(GoogleAbseil)
 
@@ -296,7 +296,7 @@ FetchContent_MakeAvailable(GoogleAbseil)
 FetchContent_Declare(
     NielsLohmannJSON
     GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.3
+    GIT_TAG v3.12.0
 )
 FetchContent_MakeAvailable(NielsLohmannJSON)
 
@@ -304,7 +304,7 @@ FetchContent_MakeAvailable(NielsLohmannJSON)
 FetchContent_Declare(
     YaoyuanGuoYYJSON
     GIT_REPOSITORY https://github.com/ibireme/yyjson.git
-    GIT_TAG 0.10.0
+    GIT_TAG 0.11.1
 )
 FetchContent_MakeAvailable(YaoyuanGuoYYJSON)
 
