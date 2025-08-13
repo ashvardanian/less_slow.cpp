@@ -987,10 +987,10 @@ static void branch_cost(bm::State &state) {
     for (auto _ : state) {
         std::int32_t random = random_values[(++iteration) & (count - 1)];
         bm::DoNotOptimize( //
-            variable =     //
-            (random & 1)   //
+            variable =     // ! Fun fact: multiplication compiles to a jump,
+            (random & 1)   // ! but replacing with a bitwise operation results in a conditional move.
                 ? (variable + random)
-                : (variable * random));
+                : (variable ^ random));
     }
 }
 
@@ -1017,7 +1017,7 @@ static void branch_cost_cmov(bm::State &state) {
 
         asm volatile(                            //
             "leal (%[var],%[rnd],1), %[sum]\n\t" // sum := variable + random
-            "imull %[rnd], %[var]\n\t"           // var := variable * random
+            "xorl %[rnd], %[var]\n\t"            // var := variable ^ random
             "testl $1, %[rnd]\n\t"               // if (random & 1) var := sum
             "cmovne %[sum], %[var]\n\t"
             : [var] "+r"(variable), [sum] "=&r"(sum)
@@ -1039,8 +1039,8 @@ static void branch_cost_jump(bm::State &state) {
 
         asm volatile( //
             "testl $1, %[rnd]\n\t"
-            "jnz 1f\n\t"               // if odd -> jump to add
-            "imull %[rnd], %[var]\n\t" // even: var *= rnd
+            "jnz 1f\n\t"              // if odd -> jump to add
+            "xorl %[rnd], %[var]\n\t" // even: var ^= rnd
             "jmp 2f\n\t"
             "1:\n\t"
             "addl %[rnd], %[var]\n\t" // odd:  var += rnd
@@ -1070,7 +1070,7 @@ static void branch_cost_csel(bm::State &state) {
 
         asm volatile(                           //
             "add %w[sum], %w[var], %w[rnd]\n\t" // sum := variable + random
-            "mul %w[var], %w[var], %w[rnd]\n\t" // var := variable * random
+            "eor %w[var], %w[var], %w[rnd]\n\t" // var := variable ^ random
             "tst %w[rnd], #1\n\t"               // if (random & 1) var := sum
             "csel %w[var], %w[sum], %w[var], NE\n\t"
             : [var] "+r"(variable), [sum] "=&r"(sum)
@@ -1093,7 +1093,7 @@ static void branch_cost_branch(bm::State &state) {
         asm volatile( //
             "tst %w[rnd], #1\n\t"
             "b.ne 1f\n\t"                       // if odd -> jump to add
-            "mul %w[var], %w[var], %w[rnd]\n\t" // even: var *= rnd
+            "eor %w[var], %w[var], %w[rnd]\n\t" // even: var ^= rnd
             "b 2f\n\t"
             "1:\n\t"
             "add %w[var], %w[var], %w[rnd]\n\t" // odd:  var += rnd
