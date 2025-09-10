@@ -1,28 +1,30 @@
-# Learning to Write _Less Slow_ C, C++, and Assembly Code
+# Playing Around _Less Slow_ Coding Practices for C++, CUDA, and Assembly Code
 
 > The benchmarks in this repository don't aim to cover every topic entirely, but they help form a mindset and intuition for performance-oriented software design.
-> It also provides an example of using some non-[STL](https://en.wikipedia.org/wiki/Standard_Template_Library) but de facto standard libraries in C++, importing them via CMake, and compiling from source.
+> It also provides an example of using some non-[STL](https://en.wikipedia.org/wiki/Standard_Template_Library) but de facto standard libraries in C++, importing them via CMake and compiling from source.
 > For higher-level abstractions and languages, check out [`less_slow.rs`](https://github.com/ashvardanian/less_slow.rs) and [`less_slow.py`](https://github.com/ashvardanian/less_slow.py).
+> I needed many of these measurements to reconsider my own coding habits, but hopefully they're helpful to others as well.
+> Most of the code is organized in very long, ordered, and nested `#pragma` sections — not necessarily the preferred form for everyone.
 
-Much modern code suffers from common pitfalls, such as bugs, security vulnerabilities, and __performance bottlenecks__.
-University curricula often teach outdated concepts, while bootcamps oversimplify crucial software development principles.
+Much of modern code suffers from common pitfalls — bugs, security vulnerabilities, and __performance bottlenecks__.
+University curricula and coding bootcamps tend to stick to traditional coding styles and standard features, rarely exposing the more fun, unusual, and potentially efficient design opportunities.
+This repository explores just that.
 
 ![Less Slow C++](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/less_slow.cpp.jpg?raw=true)
 
-This repository offers practical examples of writing efficient C and C++ code.
-It leverages C++20 features and is designed primarily for GCC and Clang compilers on Linux, though it may work on other platforms.
+The code leverages C++20 and CUDA features and is designed primarily for GCC, Clang, and NVCC compilers on Linux, though it may work on other platforms.
 The topics range from basic micro-kernels executing in a few nanoseconds to more complex constructs involving parallel algorithms, coroutines, and polymorphism.
 Some of the highlights include:
 
 - __100x cheaper random inputs?!__ Discover how input generation sometimes costs more than the algorithm.
-- __40x faster trigonometry:__ Speed-up standard library functions like [`std::sin`](https://en.cppreference.com/w/cpp/numeric/math/sin) in just 3 lines of code.
+- __1% error in trigonometry at 1/40 cost:__ Approximate STL functions like [`std::sin`](https://en.cppreference.com/w/cpp/numeric/math/sin) in just 3 lines of code.
 - __4x faster lazy-logic__ with custom [`std::ranges`](https://en.cppreference.com/w/cpp/ranges) and iterators!
 - __Compiler optimizations beyond `-O3`:__ Learn about less obvious flags and techniques for another 2x speedup.
 - __Multiplying matrices?__ Check how a 3x3x3 GEMM can be 70% slower than 4x4x4, despite 60% fewer ops.
 - __Scaling AI?__ Measure the gap between theoretical [ALU](https://en.wikipedia.org/wiki/Arithmetic_logic_unit) throughput and your [BLAS](https://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms).
 - __How many if conditions are too many?__ Test your CPU's branch predictor with just 10 lines of code.
-- __Prefer recursion to iteration?__ Measure the depth at which your algorithm with [`SEGFAULT`](https://en.wikipedia.org/wiki/Segmentation_fault).
-- __Why avoid exceptions?__ Take `std::error_code` or [`std::variant`](https://en.cppreference.com/w/cpp/utility/variant)-like wrappers?
+- __Prefer recursion to iteration?__ Measure the depth at which your algorithm will [`SEGFAULT`](https://en.wikipedia.org/wiki/Segmentation_fault).
+- __Why avoid exceptions?__ Take `std::error_code` or [`std::variant`](https://en.cppreference.com/w/cpp/utility/variant)-like [ADTs](https://en.wikipedia.org/wiki/Algebraic_data_type)?
 - __Scaling to many cores?__ Learn how to use [OpenMP](https://en.wikipedia.org/wiki/OpenMP), Intel's oneTBB, or your custom thread pool.
 - __How to handle [JSON](https://www.json.org/json-en.html) avoiding memory allocations?__ Is it easier with C++ 20 or old-school C 99 tools?
 - __How to properly use STL's associative containers__ with custom keys and transparent comparators?
@@ -34,9 +36,11 @@ Some of the highlights include:
 - __CUDA C++, [PTX](https://en.wikipedia.org/wiki/Parallel_Thread_Execution) Intermediate Representations, and SASS__, and how do they differ from CPU code?
 - __How to choose between intrinsics, inline `asm`, and separate `.S` files__ for your performance-critical code?
 - __Tensor Cores & Memory__ differences on CPUs, and Volta, Ampere, Hopper, and Blackwell GPUs!
-- __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜
+- __How coding FPGA differs from GPU__ and what is High-Level Synthesis, Verilog, and VHDL? 🔜 #36
+- __What are Encrypted Enclaves__ and what's the latency of Intel SGX, AMD SEV, and ARM Realm? 🔜 #31
 
 To read, jump to the [`less_slow.cpp` source file](https://github.com/ashvardanian/less_slow.cpp/blob/main/less_slow.cpp) and read the code snippets and comments.
+Keep in mind, that most modern IDEs have a navigation bar to help you view and jump between `#pragma region` sections.
 Follow the instructions below to run the code in your environment and compare it to the comments as you read through the source.
 
 ## Running the Benchmarks
@@ -54,9 +58,10 @@ If you are familiar with C++ and want to review code and measurements as you rea
 git clone https://github.com/ashvardanian/less_slow.cpp.git # Clone the repository
 cd less_slow.cpp                                            # Change the directory
 
-sudo apt-get install build-essential cmake g++              # Install default build tools
-sudo apt-get install pkg-config liburing-dev                # Install liburing for kernel-bypass
-sudo apt-get install libopenblas-base                       # Install numerics libraries
+pip install cmake --upgrade                                 # PyPI has a newer version of CMake
+sudo apt-get install -y build-essential g++                 # Install default build tools
+sudo apt-get install -y pkg-config liburing-dev             # Install liburing for kernel-bypass
+sudo apt-get install -y libopenblas-base                    # Install numerics libraries
 
 cmake -B build_release -D CMAKE_BUILD_TYPE=Release          # Generate the build files
 cmake --build build_release --config Release                # Build the project
@@ -80,6 +85,25 @@ The build will pull and compile several third-party dependencies from the source
 - Chris Kohlhoff's [ASIO](https://github.com/chriskohlhoff/asio) as a [networking TS](https://en.cppreference.com/w/cpp/experimental/networking) extension.
 - Nvidia's [CCCL](https://github.com/nvidia/cccl) for GPU-accelerated algorithms.
 - Nvidia's [CUTLASS](https://github.com/nvidia/cutlass) for GPU-accelerated Linear Algebra.
+
+To build without Parallel STL, Intel TBB, BLAS, and CUDA:
+
+```sh
+cmake -B build_release -D CMAKE_BUILD_TYPE=Release -D USE_INTEL_TBB=OFF -D USE_NVIDIA_CCCL=OFF -D USE_BLAS=OFF
+cmake --build build_release --config Release
+```
+
+To build on MacOS, pulling key dependencies from [Homebrew](https://brew.sh):
+
+```sh
+brew install openblas
+cmake -B build_release \
+      -D CMAKE_BUILD_TYPE=Release \
+      -D CMAKE_C_FLAGS="-I$(brew --prefix openblas)/include" \
+      -D CMAKE_CXX_FLAGS="-I$(brew --prefix openblas)/include" \
+      -D CMAKE_EXE_LINKER_FLAGS="-L$(brew --prefix openblas)/lib"
+cmake --build build_release --config Release
+```
 
 To control the output or run specific benchmarks, use the following flags:
 
@@ -106,6 +130,23 @@ Alternatively, use the Linux `perf` tool for performance counter collection:
 
 ```sh
 sudo perf stat taskset 0xEFFFEFFFEFFFEFFFEFFFEFFFEFFFEFFF build_release/less_slow --benchmark_enable_random_interleaving=true --benchmark_filter=super_sort
+```
+
+## Project Structure
+
+The primary file of this repository is clearly the `less_slow.cpp` C++ file with CPU-side code.
+Several other files for different hardware-specific optimizations are created:
+
+```sh
+$ tree .
+.
+├── CMakeLists.txt          # Build & assembly instructions for all files
+├── less_slow.cpp           # Primary CPU-side benchmarking code with the majority of examples
+├── less_slow_amd64.S       # Hand-written Assembly kernels for 64-bit x86 CPUs
+├── less_slow_aarch64.S     # Hand-written Assembly kernels for 64-bit Arm CPUs
+├── less_slow.cu            # CUDA C++ examples for parallel algorithms for Nvidia GPUs
+├── less_slow_sm70.ptx      # Hand-written PTX IR kernels for Nvidia Volta GPUs
+└── less_slow_sm90a.ptx     # Hand-written PTX IR kernels for Nvidia Hopper GPUs
 ```
 
 ## Memes and References

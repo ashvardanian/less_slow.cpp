@@ -398,21 +398,16 @@ class aligned_array {
 
     type_ *data_ = nullptr;
     std::size_t size_ = 0;
+    std::size_t alignment_ = 0;
 
   public:
-#if defined(_MSC_VER) //! MSVC doesn't support `std::aligned_alloc` yet
-    aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size) {
-        data_ = static_cast<type_ *>(_aligned_malloc(sizeof(type_) * size_, alignment));
-        if (!data_) throw std::bad_alloc();
+    aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size), alignment_(alignment) {
+        // With `std::aligned_alloc` in C++17, an exception won't be raised, which may be preferred in
+        // some environments. MSVC was late to adopt it, and developers would often use a combination
+        // of lower-level `posix_memalign` and `_aligned_malloc`/`_aligned_free` across Unix and Windows.
+        data_ = (type_ *)::operator new(sizeof(type_) * size_, std::align_val_t(alignment_));
     }
-    ~aligned_array() noexcept { _aligned_free(data_); }
-#else
-    aligned_array(std::size_t size, std::size_t alignment = 64) : size_(size) {
-        data_ = static_cast<type_ *>(std::aligned_alloc(alignment, sizeof(type_) * size_));
-        if (!data_) throw std::bad_alloc();
-    }
-    ~aligned_array() noexcept { std::free(data_); }
-#endif
+    ~aligned_array() noexcept { ::operator delete(data_, sizeof(type_) * size_, std::align_val_t(alignment_)); }
 
     aligned_array(aligned_array const &) = delete;
     aligned_array &operator=(aligned_array const &) = delete;
@@ -465,8 +460,11 @@ BENCHMARK(sorting)->Args({8196, false})->Args({8196, true});
  *
  *  @see Feature testing macros: https://en.cppreference.com/w/cpp/utility/feature_test
  */
+#if !defined(USE_INTEL_TBB)
+#define USE_INTEL_TBB 1
+#endif // !defined(USE_INTEL_TBB)
 
-#if defined(__cpp_lib_parallel_algorithm)
+#if defined(__cpp_lib_parallel_algorithm) && USE_INTEL_TBB
 #include <execution> // `std::execution::par_unseq`
 
 template <typename execution_policy_>
@@ -548,7 +546,7 @@ BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
  *       by Bryce Adelstein Lelbach at CppCon 2016: https://youtu.be/Vck6kzWjY88
  */
 
-#endif // defined(__cpp_lib_parallel_algorithm)
+#endif // defined(__cpp_lib_parallel_algorithm) && USE_INTEL_TBB
 
 #if defined(_OPENMP)
 /**
@@ -636,14 +634,19 @@ BENCHMARK(sorting_with_openmp)
  *  @see NVCC Identification Macros docs:
  *       https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/#nvcc-identification-macro
  */
-#define _LESS_SLOW_WITH_CUDA 0
+#if !defined(USE_NVIDIA_CCCL)
 #if defined(__has_include)
 #if __has_include(<cuda_runtime.h>)
-#define _LESS_SLOW_WITH_CUDA 1
-#endif
-#endif
+#define USE_NVIDIA_CCCL 1
+#else
+#define USE_NVIDIA_CCCL 0
+#endif // __has_include(<cuda_runtime.h>)
+#else
+#define USE_NVIDIA_CCCL 0
+#endif // defined(__has_include)
+#endif // !defined(USE_NVIDIA_CCCL)
 
-#if _LESS_SLOW_WITH_CUDA
+#if USE_NVIDIA_CCCL
 
 /**
  *  Unlike STL, Thrust provides some very handy abstractions for sorting
@@ -769,6 +772,13 @@ static void sorting_with_cub(bm::State &state) {
         state.SetIterationTime(milliseconds / 1000.0f);
     }
 
+    // ! All of the following and above calls can fail, so consider checking the codes
+    // ! and using a different kernel launch mechanism: https://ashvardanian.com/posts/less-wrong-cuda-hello-world/
+    cudaEventDestroy(start_event);
+    cudaEventDestroy(stop_event);
+    cudaStreamDestroy(sorting_stream);
+    cudaFree(temporary_pointer);
+
     state.SetComplexityN(count);
     state.SetItemsProcessed(count * state.iterations());
     state.SetBytesProcessed(count * state.iterations() * sizeof(std::uint32_t));
@@ -791,7 +801,7 @@ BENCHMARK(sorting_with_cub)
  *  10% ot 50% performance improvements are typical for CUB.
  */
 
-#endif // _LESS_SLOW_WITH_CUDA
+#endif // USE_NVIDIA_CCCL
 
 #pragma endregion // Parallelism and Computational Complexity
 
@@ -977,14 +987,137 @@ static void branch_cost(bm::State &state) {
     for (auto _ : state) {
         std::int32_t random = random_values[(++iteration) & (count - 1)];
         bm::DoNotOptimize( //
-            variable =     //
-            (random & 1)   //
+            variable =     // ! Fun fact: multiplication compiles to a jump,
+            (random & 1)   // ! but replacing with a bitwise operation results in a conditional move.
                 ? (variable + random)
-                : (variable * random));
+                : (variable ^ random));
     }
 }
 
 BENCHMARK(branch_cost)->RangeMultiplier(4)->Range(256, 32 * 1024);
+
+/**
+ *  It's hard to reason if the above code should compile into a conditional move or a jump,
+ *  so let's define explicit inline assembly kernels and compare both.
+ */
+#if defined(__GNUC__) && !defined(__clang__) //! GCC/Clang inline asm note in your code, keep MSVC out
+
+#if defined(__x86_64__) || defined(__i386__)
+
+static void branch_cost_cmov(bm::State &state) {
+    auto const count = static_cast<std::size_t>(state.range(0));
+    aligned_array<std::int32_t> random_values(count);
+    std::generate_n(random_values.begin(), count, &std::rand);
+    std::int32_t variable = 0;
+    std::size_t iteration = 0;
+
+    for (auto _ : state) {
+        std::int32_t const random = random_values[(++iteration) & (count - 1)];
+        std::int32_t sum; // early-clobber temp for LEA result
+
+        asm volatile(                            //
+            "leal (%[var],%[rnd],1), %[sum]\n\t" // sum := variable + random
+            "xorl %[rnd], %[var]\n\t"            // var := variable ^ random
+            "testl $1, %[rnd]\n\t"               // if (random & 1) var := sum
+            "cmovne %[sum], %[var]\n\t"
+            : [var] "+r"(variable), [sum] "=&r"(sum)
+            : [rnd] "r"(random)
+            : "cc");
+        bm::DoNotOptimize(variable);
+    }
+}
+
+static void branch_cost_jump(bm::State &state) {
+    auto const count = static_cast<std::size_t>(state.range(0));
+    aligned_array<std::int32_t> random_values(count);
+    std::generate_n(random_values.begin(), count, &std::rand);
+    std::int32_t variable = 0;
+    std::size_t iteration = 0;
+
+    for (auto _ : state) {
+        std::int32_t const random = random_values[(++iteration) & (count - 1)];
+
+        asm volatile( //
+            "testl $1, %[rnd]\n\t"
+            "jnz 1f\n\t"              // if odd -> jump to add
+            "xorl %[rnd], %[var]\n\t" // even: var ^= rnd
+            "jmp 2f\n\t"
+            "1:\n\t"
+            "addl %[rnd], %[var]\n\t" // odd:  var += rnd
+            "2:\n\t"
+            : [var] "+r"(variable)
+            : [rnd] "r"(random)
+            : "cc");
+        bm::DoNotOptimize(variable);
+    }
+}
+
+BENCHMARK(branch_cost_cmov)->RangeMultiplier(4)->Range(256, 32 * 1024);
+BENCHMARK(branch_cost_jump)->RangeMultiplier(4)->Range(256, 32 * 1024);
+
+#elif defined(__aarch64__)
+
+static void branch_cost_csel(bm::State &state) {
+    auto const count = static_cast<std::size_t>(state.range(0));
+    aligned_array<std::int32_t> random_values(count);
+    std::generate_n(random_values.begin(), count, &std::rand);
+    std::int32_t variable = 0;
+    std::size_t iteration = 0;
+
+    for (auto _ : state) {
+        std::int32_t const random = random_values[(++iteration) & (count - 1)];
+        std::int32_t sum;
+
+        asm volatile(                           //
+            "add %w[sum], %w[var], %w[rnd]\n\t" // sum := variable + random
+            "eor %w[var], %w[var], %w[rnd]\n\t" // var := variable ^ random
+            "tst %w[rnd], #1\n\t"               // if (random & 1) var := sum
+            "csel %w[var], %w[sum], %w[var], NE\n\t"
+            : [var] "+r"(variable), [sum] "=&r"(sum)
+            : [rnd] "r"(random)
+            : "cc");
+        bm::DoNotOptimize(variable);
+    }
+}
+
+static void branch_cost_branch(bm::State &state) {
+    auto const count = static_cast<std::size_t>(state.range(0));
+    aligned_array<std::int32_t> random_values(count);
+    std::generate_n(random_values.begin(), count, &std::rand);
+    std::int32_t variable = 0;
+    std::size_t iteration = 0;
+
+    for (auto _ : state) {
+        std::int32_t const random = random_values[(++iteration) & (count - 1)];
+
+        asm volatile( //
+            "tst %w[rnd], #1\n\t"
+            "b.ne 1f\n\t"                       // if odd -> jump to add
+            "eor %w[var], %w[var], %w[rnd]\n\t" // even: var ^= rnd
+            "b 2f\n\t"
+            "1:\n\t"
+            "add %w[var], %w[var], %w[rnd]\n\t" // odd:  var += rnd
+            "2:\n\t"
+            : [var] "+r"(variable)
+            : [rnd] "r"(random)
+            : "cc");
+        bm::DoNotOptimize(variable);
+    }
+}
+
+BENCHMARK(branch_cost_csel)->RangeMultiplier(4)->Range(256, 32 * 1024);
+BENCHMARK(branch_cost_branch)->RangeMultiplier(4)->Range(256, 32 * 1024);
+
+#endif
+
+#endif // __GNUC__ && !__clang__
+
+/**
+ *  Results are quite interesting. On Intel:
+ *  - `branch_cost` up to 4K runs at @b 0.7ns, beyond that it jumps to @b 3.7ns.
+ *  - `branch_cost_cmov` consistently runs at @b 1.3ns, regardless of the size.
+ *  - `branch_cost_jump` has similar, but slightly worse performance than `branch_cost`.
+ */
 
 #pragma endregion // Branch Prediction
 
@@ -1059,28 +1192,54 @@ BENCHMARK(cache_misses_cost<access_order_t::random>)
  *  value. This optimization is crucial for performance, especially when dealing
  *  with heavy objects.
  */
-#include <optional> // `std::optional`
+struct heavy_t {
+    std::uint64_t data[8];
 
-std::optional<std::string> make_heavy_object_mutable() {
-    std::string x(1024, 'x');
+    heavy_t() noexcept { std::iota(data, data + 8, 0); }
+
+    heavy_t(heavy_t &&) { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+    heavy_t(heavy_t const &) { std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
+    heavy_t &operator=(heavy_t &&) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return *this;
+    }
+    heavy_t &operator=(heavy_t const &) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        return *this;
+    }
+};
+
+heavy_t make_heavy_object() { return heavy_t {}; }
+
+heavy_t make_named_heavy_object() {
+    heavy_t const x; //! Even with `const`, RVO is possible
     return x;
 }
 
-std::optional<std::string> make_heavy_object_immutable() {
-    std::string const x(1024, 'x'); //! `const` is the only difference
-    return x;
+heavy_t make_conditional_heavy_object() {
+    heavy_t x;
+    heavy_t &x1 = x;
+    heavy_t &x2 = x;
+    static std::size_t counter = 0; //! Condition prevents RVO
+    if (counter++ % 2 == 0) { return x1; }
+    else { return x2; }
 }
 
-static void rvo_friendly(bm::State &state) {
-    for (auto _ : state) bm::DoNotOptimize(make_heavy_object_mutable());
+static void rvo_trivial(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(make_heavy_object());
 }
 
-static void rvo_impossible(bm::State &state) {
-    for (auto _ : state) bm::DoNotOptimize(make_heavy_object_immutable());
+static void rvo_likely(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(make_named_heavy_object());
 }
 
-BENCHMARK(rvo_friendly);
-BENCHMARK(rvo_impossible);
+static void rvo_banned(bm::State &state) {
+    for (auto _ : state) bm::DoNotOptimize(make_conditional_heavy_object());
+}
+
+BENCHMARK(rvo_trivial);
+BENCHMARK(rvo_likely);
+BENCHMARK(rvo_banned);
 
 /**
  *  Despite intuition, marking a local object as `const` hurts our performance.
@@ -1100,16 +1259,18 @@ BENCHMARK(rvo_impossible);
  *  research and graduate studies, yet its foundational concepts are more
  *  accessible than they seem. Let's start with one of the most basic operations
  *  — computing the @b sine of a number.
+ *
+ *  @note For simplicity, we will stick to the [-π/2, π/2] range of inputs.
  */
 #include <cmath> // `std::sin`
 
 static void f64_sin(bm::State &state) {
-    double argument = std::rand(), result = 0;
-    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += 0.001));
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
+    for (auto _ : state) bm::DoNotOptimize(result = std::sin(argument += step));
     state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
-BENCHMARK(f64_sin);
+BENCHMARK(f64_sin)->Iterations(1e7);
 
 /**
  *  Standard C library functions like `sin` and `sinf` are designed for maximum
@@ -1128,16 +1289,16 @@ BENCHMARK(f64_sin);
  */
 
 static void f64_sin_maclaurin(bm::State &state) {
-    double argument = std::rand(), result = 0;
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
     for (auto _ : state) {
-        argument += 0.001;
+        argument += step;
         result = argument - std::pow(argument, 3) / 6 + std::pow(argument, 5) / 120;
         bm::DoNotOptimize(result);
     }
     state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
-BENCHMARK(f64_sin_maclaurin);
+BENCHMARK(f64_sin_maclaurin)->Iterations(1e7);
 
 /**
  *  Result: latency reduction from @b 31ns down to @b 21ns on Intel.
@@ -1160,9 +1321,9 @@ BENCHMARK(f64_sin_maclaurin);
  */
 
 static void f64_sin_maclaurin_powless(bm::State &state) {
-    double argument = std::rand(), result = 0;
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
     for (auto _ : state) {
-        argument += 0.001;
+        argument += step;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
@@ -1170,7 +1331,7 @@ static void f64_sin_maclaurin_powless(bm::State &state) {
     state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
-BENCHMARK(f64_sin_maclaurin_powless);
+BENCHMARK(f64_sin_maclaurin_powless)->Iterations(1e7);
 
 /**
  *  Result: latency reduction to @b 2ns - a @b 15x speedup on Intel.
@@ -1185,10 +1346,6 @@ BENCHMARK(f64_sin_maclaurin_powless);
  *  - ICC: `-fp-model=fast`
  *  - MSVC: `/fp:fast`
  *
- *  The GCC syntax can be:
- *  - Old: `__attribute__((optimize("-ffast-math")))`
- *  - New: `[[gnu::optimize("-ffast-math")]]`
- *
  *  Among other things, this may reorder floating-point operations, ignoring
  *  that floating-point arithmetic isn't strictly associative. So if you have
  *  long chains of arithmetic operations, with a arguments significantly
@@ -1196,18 +1353,14 @@ BENCHMARK(f64_sin_maclaurin_powless);
  *
  *  @see "Beware of fast-math" by Simon Byrne: https://simonbyrne.github.io/notes/fastmath/
  */
-#if defined(__GNUC__) && !defined(__clang__)
-#define FAST_MATH [[gnu::optimize("-ffast-math")]]
-#elif defined(__clang__)
-#define FAST_MATH __attribute__((target("-ffast-math")))
-#else
-#define FAST_MATH
+#if defined(__GNUC__)
+#pragma float_control(precise, off, push)
 #endif
 
-FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
-    double argument = std::rand(), result = 0;
+static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
     for (auto _ : state) {
-        argument += 0.001;
+        argument += step;
         result = (argument) - (argument * argument * argument) / 6.0 +
                  (argument * argument * argument * argument * argument) / 120.0;
         bm::DoNotOptimize(result);
@@ -1215,7 +1368,34 @@ FAST_MATH static void f64_sin_maclaurin_with_fast_math(bm::State &state) {
     state.SetBytesProcessed(state.iterations() * sizeof(double));
 }
 
-BENCHMARK(f64_sin_maclaurin_with_fast_math);
+BENCHMARK(f64_sin_maclaurin_with_fast_math)->Iterations(1e7);
+
+#if defined(__GNUC__)
+#pragma float_control(pop)
+#endif
+
+/**
+ *  Alternatively, we can just manually rearrange the arithmetic operations
+ *  using Horner's method for the same polynomial, which is only one of many
+ *  possible approximation schemes.
+ *
+ *  @see Horner's method: https://en.wikipedia.org/wiki/Horner%27s_method
+ *  @see Chebyshev polynomials: https://en.wikipedia.org/wiki/Chebyshev_polynomials
+ */
+
+static void f64_sin_maclaurin_with_horner(bm::State &state) {
+    double argument = -M_PI_2, step = M_PI / 1e7, result = 0;
+    constexpr double reciprocal_6 = 1.0 / 6.0;
+    constexpr double reciprocal_120 = 1.0 / 120.0;
+    for (auto _ : state) {
+        argument += step;
+        result = argument * (1.0 - (argument * argument) * (reciprocal_6 - (argument * argument) * reciprocal_120));
+        bm::DoNotOptimize(result);
+    }
+    state.SetBytesProcessed(state.iterations() * sizeof(double));
+}
+
+BENCHMARK(f64_sin_maclaurin_with_horner)->Iterations(1e7);
 
 /**
  *  Result: latency of @b 0.8ns - almost @b 40x faster than the standard
@@ -1223,7 +1403,8 @@ BENCHMARK(f64_sin_maclaurin_with_fast_math);
  *
  *  Advanced libraries like SimSIMD and SLEEF can achieve even better
  *  performance through SIMD-optimized implementations, sometimes trading
- *  accuracy or the breadth of the input range for speed.
+ *  accuracy or the breadth of the input range for speed. SLEEF also explicitly
+ *  differentiates 1 ULP (unit in the last place) and 3.5 ULP accuracy kernels.
  *
  *  @see SimSIMD repository: https://github.com/ashvardanian/simsimd
  *  @see SLEEF repository: https://github.com/shibatch/sleef
@@ -1297,13 +1478,23 @@ BENCHMARK(integral_division_by_const);
  *  Since 64-bit doubles can exactly represent all 32-bit signed integers,
  *  this method introduces @b no precision loss, making it a safe and efficient
  *  alternative when division performance is critical.
+ *
+ *  - The `float` can fit 24-bit integers exactly in its significand/mantissa.
+ *  - The `double` can fit 52-bit integers exactly in its significand/mantissa.
  */
+static void integral_division_with_floats(bm::State &state) {
+    std::int32_t a = std::rand(), b = std::rand(), c = 0;
+    for (auto _ : state)
+        bm::DoNotOptimize(c = static_cast<std::int32_t>(static_cast<float>(++a) / static_cast<float>(++b)));
+}
+
 static void integral_division_with_doubles(bm::State &state) {
     std::int32_t a = std::rand(), b = std::rand(), c = 0;
     for (auto _ : state)
         bm::DoNotOptimize(c = static_cast<std::int32_t>(static_cast<double>(++a) / static_cast<double>(++b)));
 }
 
+BENCHMARK(integral_division_with_floats);
 BENCHMARK(integral_division_with_doubles);
 
 /**
@@ -1320,7 +1511,7 @@ BENCHMARK(integral_division_with_doubles);
  *  while the internal logic remains identical.
  */
 
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__)
 
 #if defined(__x86_64__) || defined(__i386__)
 [[gnu::target("arch=core2")]]
@@ -1448,7 +1639,7 @@ f32x4x4_t f32x4x4_matmul_unrolled_kernel(f32x4x4_t const &a_matrix, f32x4x4_t co
     f32x4x4_t c_matrix;
     float const(&a)[4][4] = a_matrix.scalars;
     float const(&b)[4][4] = b_matrix.scalars;
-    float(&c)[4][4] = c_matrix.scalars;
+    float (&c)[4][4] = c_matrix.scalars;
 
     c[0][0] = a[0][0] * b[0][0] + a[0][1] * b[1][0] + a[0][2] * b[2][0] + a[0][3] * b[3][0];
     c[0][1] = a[0][0] * b[0][1] + a[0][1] * b[1][1] + a[0][2] * b[2][1] + a[0][3] * b[3][1];
@@ -2043,8 +2234,9 @@ BENCHMARK_CAPTURE(theoretic_tops, i7_amx_avx512, tops_i7_amx_avx512fma_asm_kerne
 
 #pragma region GPGPU Programming
 
-#if _LESS_SLOW_WITH_CUDA
+#if USE_NVIDIA_CCCL
 #include <cuda.h>
+#include <cuda_runtime.h>
 
 /**
  *  Different generations of matrix multiplication instructions on GPUs use
@@ -2654,8 +2846,8 @@ class strided_ptr {
     strided_ptr operator--(int) noexcept { strided_ptr temp = *this; --(*this); return temp; }
     strided_ptr &operator+=(difference_type offset) noexcept { data_ += offset * stride_; return *this; }
     strided_ptr &operator-=(difference_type offset) noexcept { data_ -= offset * stride_; return *this; }
-    strided_ptr operator+(difference_type offset) noexcept { strided_ptr temp = *this; return temp += offset; }
-    strided_ptr operator-(difference_type offset) noexcept { strided_ptr temp = *this; return temp -= offset; }
+    strided_ptr operator+(difference_type offset) const noexcept { strided_ptr temp = *this; return temp += offset; }
+    strided_ptr operator-(difference_type offset) const noexcept { strided_ptr temp = *this; return temp -= offset; }
     friend difference_type operator-(strided_ptr const &a, strided_ptr const &b) noexcept { assert(a.stride_ == b.stride_); return (a.data_ - b.data_) / static_cast<difference_type>(a.stride_); }
     friend bool operator==(strided_ptr const &a, strided_ptr const &b) noexcept { return a.data_ == b.data_; }
     friend bool operator<(strided_ptr const &a, strided_ptr const &b) noexcept { return a.data_ < b.data_; }
@@ -2930,6 +3122,20 @@ std::size_t parse_size_string(std::string const &str) {
 #pragma endregion // Non Uniform Memory Access
 
 #pragma region Memory Bound Linear Algebra
+
+#if !defined(USE_BLAS)
+#if defined(__has_include)
+#if __has_include(<cblas.h>)
+#define USE_BLAS 1
+#else
+#define USE_BLAS 0
+#endif // __has_include(<cblas.h>)
+#else
+#define USE_BLAS 0
+#endif // defined(__has_include)
+#endif // !defined(USE_BLAS)
+
+#if USE_BLAS
 #include <cblas.h>
 /**
  *  ! OpenBLAS defines a `SIZE` macro for internal use, which conflicts with `fmt`
@@ -2972,6 +3178,8 @@ static void cblas_tops(bm::State &state) {
 
 BENCHMARK(cblas_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 BENCHMARK(cblas_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+
+#endif // USE_BLAS
 
 /**
  *  Eigen is a high-level C++ library for linear algebra that provides a
@@ -3070,7 +3278,7 @@ BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity
  *  enough.
  */
 
-#if _LESS_SLOW_WITH_CUDA
+#if USE_NVIDIA_CCCL
 #include <cublas_v2.h>
 
 /**
@@ -3110,6 +3318,12 @@ class unified_array {
 template <typename>
 struct dependent_false : std::false_type {};
 
+void cublas_check(cublasStatus_t status) {
+    if (status == CUBLAS_STATUS_SUCCESS) return;
+    throw std::runtime_error(std::string("cuBLAS error: ") + cublasGetStatusName(status) + " - " +
+                             cublasGetStatusString(status));
+}
+
 template <typename input_scalar_type_, typename output_scalar_type_ = input_scalar_type_>
 static void cublas_tops(bm::State &state) {
     // Matrix size and leading dimensions
@@ -3128,42 +3342,42 @@ static void cublas_tops(bm::State &state) {
 
     // cuBLAS handle
     cublasHandle_t handle;
-    cublasCreate(&handle);
+    cublas_check(cublasCreate(&handle));
 
     // Perform the GEMM operation
     // https://docs.nvidia.com/cuda/cublas/#cublas-t-gemm
     for (auto _ : state) {
         if constexpr (std::is_same_v<input_scalar_type_, float> && same_type) {
             input_scalar_type_ alpha = 1, beta = 0;
-            cublasSgemm(                                   //
+            cublas_check(cublasSgemm(                      //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
-                &beta, c.begin(), ldc);
+                &beta, c.begin(), ldc));
         }
         else if constexpr (std::is_same_v<input_scalar_type_, double> && same_type) {
             input_scalar_type_ alpha = 1, beta = 0;
-            cublasDgemm(                                   //
+            cublas_check(cublasDgemm(                      //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
-                &beta, c.begin(), ldc);
+                &beta, c.begin(), ldc));
         }
         else if constexpr (std::is_same_v<input_scalar_type_, __half> && same_type) {
             input_scalar_type_ alpha = 1, beta = 0;
-            cublasHgemm(                                   //
+            cublas_check(cublasHgemm(                      //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha, a.begin(), lda, b.begin(), ldb,    //
-                &beta, c.begin(), ldc);
+                &beta, c.begin(), ldc));
         }
         else if constexpr (std::is_same_v<input_scalar_type_, int8_t> && std::is_same_v<output_scalar_type_, int32_t>) {
             // Scaling factors must correspond to the accumulator type
             // https://docs.nvidia.com/cuda/cublas/#cublasgemmex
             int32_t alpha_int = 1, beta_int = 0;
-            cublasGemmEx(                                  //
+            cublas_check(cublasGemmEx(                     //
                 handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, //
                 &alpha_int, a.begin(), CUDA_R_8I, lda,     //
                 b.begin(), CUDA_R_8I, ldb,                 //
                 &beta_int, c.begin(), CUDA_R_32I, ldc,     //
-                CUDA_R_32I, CUBLAS_GEMM_DEFAULT);
+                CUDA_R_32I, CUBLAS_GEMM_DEFAULT));
         }
         // Trigger a compile-time error for unsupported type combinations
         else {
@@ -3181,14 +3395,169 @@ static void cublas_tops(bm::State &state) {
     state.SetComplexityN(n);
 
     // Cleanup
-    cublasDestroy(handle);
+    cublas_check(cublasDestroy(handle));
 }
 
-// Register benchmarks
 BENCHMARK(cublas_tops<float>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 BENCHMARK(cublas_tops<double>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 BENCHMARK(cublas_tops<__half>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
 BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Complexity(benchmark::oNCubed);
+
+/**
+ *  To use newer numeric types, cuBLAS API isn't enough. "cuBLASLt" provides a more flexible interface.
+ *  One of its' major changes is allowing input "scaling factors". Since SM89 one can provide a `CUDA_R_32F`
+ *  multiplier scalar for all of `CUDA_R_8F_E4M3` and `CUDA_R_8F_E5M2` inputs and since SM100 black-scaling
+ *  with different factors is also supported - a common technique used in extreme quantization both on
+ *  CPUs and GPUs.
+ *
+ *  ! Both "A" and "B" inputs can't be `e5m2`, it's either `e4m3 * e4m3` or `e5m2 * e4m3`.
+ *  ! Even if `e4m3 * e4m3` scheme is used, very specific set of "C" and "D" types can be used.
+ *  ! The "A" matrix must be transposed on Ada, Hopper, and Blackwell!
+ *  ! For `FP4`, similarly the only consistently used configuration is `e2m1 * e2m1`.
+ *  ! The compute type must be `CUBLAS_COMPUTE_32F` for both single- and half-precision outputs.
+ *
+ *  @see    "Using the cuBLASLt API" docs: https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api
+ *  @note   To avoid including the `<cuda_fp8.h>` header, we define alternatives to `__nv_fp8_e4m3` & `__nv_fp8_e5m2`.
+ */
+#include <cublasLt.h>
+
+enum fp8_e4m3_t : unsigned char {};
+enum fp8_e5m2_t : unsigned char {};
+enum fp4_e2m1_t : unsigned char {};
+static_assert(!std::is_same_v<fp8_e4m3_t, fp8_e5m2_t>);
+
+template <typename scalar_type_>
+cudaDataType_t to_cuda_data_type() {
+    if constexpr (std::is_same_v<scalar_type_, fp8_e4m3_t>) return CUDA_R_8F_E4M3;
+    if constexpr (std::is_same_v<scalar_type_, fp8_e5m2_t>) return CUDA_R_8F_E5M2;
+    if constexpr (std::is_same_v<scalar_type_, fp4_e2m1_t>) return CUDA_R_4F_E2M1;
+    if constexpr (std::is_same_v<scalar_type_, float>) return CUDA_R_32F;
+    if constexpr (std::is_same_v<scalar_type_, __half>) return CUDA_R_16F;
+    if constexpr (std::is_same_v<scalar_type_, std::int8_t>) return CUDA_R_8I;
+    if constexpr (std::is_same_v<scalar_type_, std::uint8_t>) return CUDA_R_8U;
+    throw std::invalid_argument("Unknown CUDA type");
+}
+
+template <typename scalar_type_>
+cublasComputeType_t to_cublas_compute_type() {
+    if constexpr (std::is_same_v<scalar_type_, double>) return CUBLAS_COMPUTE_64F;
+    if constexpr (std::is_same_v<scalar_type_, float>) return CUBLAS_COMPUTE_32F;
+    if constexpr (std::is_same_v<scalar_type_, __half>) return CUBLAS_COMPUTE_16F;
+    if constexpr (std::is_same_v<scalar_type_, std::int32_t>) return CUBLAS_COMPUTE_32I;
+    throw std::invalid_argument("Unknown CUDA type");
+}
+
+template <typename input_scalar_type_, typename output_scalar_type_ = input_scalar_type_>
+static void cublaslt_tops(bm::State &state) {
+
+    // Matrix size and leading dimensions
+    std::size_t n = static_cast<std::size_t>(state.range(0));
+    // To use tensor- or block-scaled FP8 kernels, all matrix dimensions must meet the optimal
+    // requirements listed in Tensor Core Usage (i.e. pointers and matrix dimension must support
+    // 16-byte alignment).
+    if (n % 16 != 0) throw std::invalid_argument("Tensor side not properly aligned.");
+    int lda = static_cast<int>(n), ldb = static_cast<int>(n), ldc = static_cast<int>(n), ldd = static_cast<int>(n);
+
+    // "A" must be transposed and "B" non-transposed (The "TN" format) on Ada (compute capability 8.9),
+    // Hopper (compute capability 9.0), and Blackwell GeForce (compute capability 12.x) GPUs.
+    cublasOperation_t const a_transpose = CUBLAS_OP_T;
+    cublasOperation_t const b_transpose = CUBLAS_OP_N;
+
+    // Unified memory for large matrices
+    unified_array<input_scalar_type_> a(n * n), b(n * n);
+    unified_array<output_scalar_type_> c(n * n), d(n * n);
+
+    // With unified memory, we don't even need Thrust to initialize the data,
+    // but we can't use `std::iota` with `enum` types, as they don't provide
+    // an implicit conversion operator, so let's use a `std::transform` with
+    // a mutable lambda state:
+    {
+        std::uint64_t counter;
+        auto iota_lambda = [&counter](auto) mutable { return static_cast<input_scalar_type_>(counter++); };
+        counter = 0, std::transform(a.begin(), a.end(), a.begin(), iota_lambda);
+        counter = 0, std::transform(b.begin(), b.end(), b.begin(), iota_lambda);
+    }
+    std::fill(c.begin(), c.end(), 0);
+    std::fill(d.begin(), d.end(), 0);
+
+    cublasLtHandle_t handle;
+    cublas_check(cublasLtCreate(&handle));
+
+    // Create the matmul descriptor.
+    cublasLtMatmulDesc_t descriptor = nullptr;
+    cublas_check(cublasLtMatmulDescCreate(&descriptor, to_cublas_compute_type<float>(),
+                                          to_cuda_data_type<output_scalar_type_>()));
+    cublas_check(
+        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_TRANSA, &a_transpose, sizeof(a_transpose)));
+    cublas_check(
+        cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_TRANSB, &b_transpose, sizeof(b_transpose)));
+
+    // We can also set the per-tensor scaling attributes, but they must be pre-allocated in the device memory!
+    // If not specified, or set to NULL, the scaling factor is assumed to be 1.
+    //
+    //      float a_scale = 1.0f, b_scale = 1.0f, c_scale = 1.0f, d_scale = 1.0f; //! Can't be on the host like this
+    //      cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &a_scale, sizeof(a_scale));
+    //      cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &b_scale, sizeof(b_scale));
+    //      cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_C_SCALE_POINTER, &c_scale, sizeof(c_scale));
+    //      cublasLtMatmulDescSetAttribute(descriptor, CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, &d_scale, sizeof(d_scale));
+    //
+    // Create matrix layout descriptors for A, B, C, and D (output)
+    // https://github.com/NVIDIA/CUDALibrarySamples/blob/master/cuBLASLt/LtFp8Matmul/sample_cublasLt_LtFp8Matmul.cu
+    cublasLtMatrixLayout_t a_descriptor = nullptr, b_descriptor = nullptr, c_descriptor = nullptr,
+                           d_descriptor = nullptr;
+    cublas_check(cublasLtMatrixLayoutCreate(&a_descriptor, to_cuda_data_type<input_scalar_type_>(), n, n, lda));
+    cublas_check(cublasLtMatrixLayoutCreate(&b_descriptor, to_cuda_data_type<input_scalar_type_>(), n, n, ldb));
+    cublas_check(cublasLtMatrixLayoutCreate(&c_descriptor, to_cuda_data_type<output_scalar_type_>(), n, n, ldc));
+    cublas_check(cublasLtMatrixLayoutCreate(&d_descriptor, to_cuda_data_type<output_scalar_type_>(), n, n, ldd));
+
+    // Create a preference handle and set workspace limit (0 in this example).
+    cublasLtMatmulPreference_t preference = nullptr;
+    cublas_check(cublasLtMatmulPreferenceCreate(&preference));
+    std::size_t workspace_size = 0;
+    cublas_check(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                                      &workspace_size, sizeof(workspace_size)));
+
+    // Query the heuristic for the best available algorithm.
+    int heuristics_count = 0;
+    cublasLtMatmulHeuristicResult_t heuristic_result = {};
+    cublas_check(cublasLtMatmulAlgoGetHeuristic(handle, descriptor, a_descriptor, b_descriptor, c_descriptor,
+                                                d_descriptor, preference, 1, &heuristic_result, &heuristics_count));
+    if (heuristics_count == 0) throw std::runtime_error("No suitable heuristic found for cuBLASLt matmul");
+
+    // Define scaling factors (using FP32 scalars)
+    float alpha = 1.0f;
+    float beta = 0.0f; // Can be non-zero only starting with 12.0
+
+    for (auto _ : state) {
+
+        cublasLtMatmul(                                       //
+            handle, descriptor,                               //
+            &alpha,                                           //
+            a.begin(), a_descriptor, b.begin(), b_descriptor, //
+            &beta,                                            //
+            c.begin(), c_descriptor, d.begin(), d_descriptor, //
+            &heuristic_result.algo, nullptr, 0,               // No workspace
+            nullptr);                                         // Default stream
+
+        // Synchronize to ensure that the GEMM call completes before timing stops.
+        // Otherwise 10'000 calls will be scheduled and we will block forever until all complete!
+        cudaDeviceSynchronize();
+    }
+
+    std::size_t tops_per_cycle = n * n * (n /* multiplications */ + (n - 1) /* additions */);
+    state.counters["TOP"] = bm::Counter(state.iterations() * tops_per_cycle, bm::Counter::kIsRate);
+    state.SetComplexityN(n);
+
+    // Cleanup
+    cublas_check(cublasLtMatrixLayoutDestroy(a_descriptor));
+    cublas_check(cublasLtMatrixLayoutDestroy(b_descriptor));
+    cublas_check(cublasLtMatrixLayoutDestroy(c_descriptor));
+    cublas_check(cublasLtMatrixLayoutDestroy(d_descriptor));
+    cublas_check(cublasLtMatmulDescDestroy(descriptor));
+    cublas_check(cublasLtDestroy(handle));
+}
+
+BENCHMARK(cublaslt_tops<fp8_e4m3_t, float>)->RangeMultiplier(2)->Range(256, 16384)->Complexity(benchmark::oNCubed);
 
 /**
  *  Here are the numbers one can expect on a Nvidia H200 GPUs:
@@ -3201,6 +3570,7 @@ BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Co
  *  - `bf16`          @b 1'000 T   @b 1'047 T   -
  *  - `f16`           @b 1'000 T   @b 1'056 T   @b 764 T
  *  - `i8` & `u8`     @b 2'000 T   -            @b 122 T
+ *  - `e4m3`          @b 2'000 T   -            @b 1'338 T
  *  - `b1` XOR-based  -            @b 79 T      -
  *  - `b1` AND-based  -            @b 8'439 T   -
  *
@@ -3217,7 +3587,7 @@ BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Co
  *  - 10 P for `i8` matrix multiplications into `i32`.
  */
 
-#endif // _LESS_SLOW_WITH_CUDA
+#endif // USE_NVIDIA_CCCL
 
 #pragma endregion // Memory Bound Linear Algebra
 
@@ -4910,6 +5280,124 @@ BENCHMARK(json_nlohmann<arena_json, exception_handling_t::noexcept_k>)
     ->Threads(physical_cores());
 
 /**
+ *  simdjson is designed for high-performance JSON parsing using SIMD instructions.
+ *  It provides On-Demand parsing which is particularly efficient for selective data extraction.
+ */
+#include <simdjson.h>
+
+bool contains_xss_in_simdjson_ondemand(simdjson::ondemand::value element) noexcept {
+
+    // Handle objects
+    if (element.type() == simdjson::ondemand::json_type::object) {
+        simdjson::ondemand::object obj;
+        if (element.get_object().get(obj) == simdjson::SUCCESS) {
+            for (auto sub : obj) {
+                simdjson::ondemand::value val;
+                if (sub.value().get(val) == simdjson::SUCCESS)
+                    if (contains_xss_in_simdjson_ondemand(val)) return true;
+            }
+        }
+        return false;
+    }
+    // Handle arrays
+    else if (element.type() == simdjson::ondemand::json_type::array) {
+        simdjson::ondemand::array arr;
+        if (element.get_array().get(arr) == simdjson::SUCCESS) {
+            for (auto sub : arr) {
+                simdjson::ondemand::value val;
+                if (sub.get(val) == simdjson::SUCCESS)
+                    if (contains_xss_in_simdjson_ondemand(val)) return true;
+            }
+        }
+        return false;
+    }
+    // Handle strings
+    else if (element.type() == simdjson::ondemand::json_type::string) {
+        std::string_view str;
+        if (element.get_string().get(str) == simdjson::SUCCESS)
+            return str.find("<script>alert('XSS')</script>") != std::string_view::npos;
+    }
+    return false;
+}
+
+bool contains_xss_in_simdjson_dom(simdjson::dom::element element) noexcept {
+    if (element.is_object()) {
+        for (auto [key, val] : element.get_object())
+            if (contains_xss_in_simdjson_dom(val)) return true;
+    }
+    else if (element.is_array()) {
+        for (auto val : element.get_array())
+            if (contains_xss_in_simdjson_dom(val)) return true;
+    }
+    else if (element.is_string()) {
+        std::string_view str = element.get_string();
+        return str.find("<script>alert('XSS')</script>") != std::string_view::npos;
+    }
+    return false;
+}
+
+static void json_simdjson_ondemand(bm::State &state) {
+    std::size_t bytes_processed = 0;
+    std::size_t iteration = 0;
+
+    // Pre-allocate padded strings outside the hot path
+    simdjson::padded_string padded_strings[3] = {
+        simdjson::padded_string(packets_json[0]),
+        simdjson::padded_string(packets_json[1]),
+        simdjson::padded_string(packets_json[2]),
+    };
+
+    // On-demand parser reuses internal buffers
+    simdjson::ondemand::parser parser;
+    simdjson::ondemand::document doc;
+
+    for (auto _ : state) {
+        std::size_t const packet_index = iteration++ % 3;
+        bytes_processed += packets_json[packet_index].size();
+
+        auto error = parser.iterate(padded_strings[packet_index]).get(doc);
+        if (error == simdjson::SUCCESS) {
+            simdjson::ondemand::value root;
+            if (doc.get_value().get(root) == simdjson::SUCCESS)
+                bm::DoNotOptimize(contains_xss_in_simdjson_ondemand(root));
+        }
+    }
+
+    state.SetBytesProcessed(bytes_processed);
+}
+
+static void json_simdjson_dom(bm::State &state) {
+    std::size_t bytes_processed = 0;
+    std::size_t iteration = 0;
+
+    // Pre-allocate padded strings outside the hot path
+    simdjson::padded_string padded_strings[3] = {
+        simdjson::padded_string(packets_json[0]),
+        simdjson::padded_string(packets_json[1]),
+        simdjson::padded_string(packets_json[2]),
+    };
+
+    // Reuse the state
+    simdjson::dom::parser parser;
+    simdjson::dom::element doc;
+
+    for (auto _ : state) {
+        std::size_t const packet_index = iteration++ % 3;
+        bytes_processed += packets_json[packet_index].size();
+
+        auto error = parser.parse(padded_strings[packet_index]).get(doc);
+        if (error == simdjson::SUCCESS) bm::DoNotOptimize(contains_xss_in_simdjson_dom(doc));
+    }
+
+    state.SetBytesProcessed(bytes_processed);
+}
+
+BENCHMARK(json_simdjson_ondemand)->MinTime(10)->Name("json_simdjson<ondemand>");
+BENCHMARK(json_simdjson_dom)->MinTime(10)->Name("json_simdjson<dom>");
+BENCHMARK(json_simdjson_ondemand)->MinTime(10)->Name("json_simdjson<ondemand>")->Threads(physical_cores());
+BENCHMARK(json_simdjson_dom)->MinTime(10)->Name("json_simdjson<dom>")->Threads(physical_cores());
+
+/**
  *  The results for the single-threaded case and the multi-threaded case without
  *  Simultaneous Multi-Threading @b (SMT), with 96 threads on 96 Sapphire Rapids
  *  cores, are as follows:
@@ -5902,7 +6390,7 @@ struct log_printf_t {
         // `std::chrono::high_resolution_clock` is usually just an alias to either `system_clock` or
         // `steady_clock`. There is debate on whether using it is a good idea at all.
         // https://en.cppreference.com/w/cpp/chrono/high_resolution_clock
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) || defined(__APPLE__)
         auto now = std::chrono::system_clock::now();
 #else
         auto now = std::chrono::high_resolution_clock::now();
@@ -5933,7 +6421,10 @@ struct log_printf_t {
 
 BENCHMARK(logging<log_printf_t>)->Name("log_printf")->MinTime(2);
 
-#if !defined(_MSC_VER)
+/**
+ *  Formatting `std::chrono` with `std::format` fails on both Windows and MacOS.
+ */
+#if !defined(_MSC_VER) && !defined(__APPLE__)
 #if defined(__cpp_lib_format)
 #include <format> // `std::format_to_n`
 
