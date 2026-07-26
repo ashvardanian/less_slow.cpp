@@ -1954,7 +1954,8 @@ static void theoretic_tops(                        //
     // Each kernel returns the number of TOPS.
     std::size_t tops = 0;
     for (auto _ : state) bm::DoNotOptimize(tops = theoretic_tops_kernel());
-    state.counters["TOP"] = bm::Counter(tops * state.iterations() * state.threads() * 1.0, bm::Counter::kIsRate);
+    //! Benchmark already sums this across threads; scaling by `state.threads()` would double-count.
+    state.counters["TOP"] = bm::Counter(tops * state.iterations() * 1.0, bm::Counter::kIsRate);
 }
 
 /**
