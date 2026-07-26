@@ -1226,10 +1226,10 @@ heavy_t make_named_heavy_object() {
 
 heavy_t make_conditional_heavy_object() {
     heavy_t x;
-    heavy_t &x1 = x;
+    heavy_t &x1 = x; //! Both alias `x`, but the compiler must pick at runtime...
     heavy_t &x2 = x;
-    static std::size_t counter = 0; //! Condition prevents RVO
-    if (counter++ % 2 == 0) { return x1; }
+    static std::size_t counter = 0;
+    if (counter++ % 2 == 0) { return x1; } //! ...so it can't elide, and copies
     else { return x2; }
 }
 
@@ -1250,8 +1250,20 @@ BENCHMARK(rvo_likely);
 BENCHMARK(rvo_banned);
 
 /**
- *  Despite intuition, marking a local object as `const` hurts our performance.
- *  The RVO-friendly version takes 21ns, while the second one takes 36ns, @b 70% longer!
+ *  The caller hands the callee a hidden pointer to the storage the result will
+ *  occupy, so the callee can construct the object @b directly there — no copy, no
+ *  move, no temporary to destroy. That's RVO, and `const` doesn't disable it: the
+ *  first two variants cost one default construction and never reach either sleep.
+ *
+ *  Elision needs the compiler to know, at the `return`, which object already sits
+ *  in that slot. `make_conditional_heavy_object` picks a reference at runtime, so
+ *  it can't — it builds `x` somewhere else and copies it out. The @b copy, not the
+ *  move: returning a reference forfeits the implicit move a plain local would get,
+ *  so it pays the 2ms constructor rather than the 1ms one.
+ *
+ *      rvo_trivial                      0.598 ns
+ *      rvo_likely                       0.593 ns
+ *      rvo_banned                 2097151.000 ns
  */
 
 #pragma endregion // Return Value Optimization
