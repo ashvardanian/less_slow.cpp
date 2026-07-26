@@ -4043,13 +4043,18 @@ BENCHMARK(pipeline_cpp20_std_ranges);
  *  lazy and don't need to capture anything. On the practical side, when implementing
  *  ranges, make sure to avoid branching even more than with regular code.
  *
+ *  Meta's `libunifex` expresses the same pipeline as a chain of "streams" — the
+ *  asynchronous cousin of ranges, and an ancestor of C++26 senders. It lands between
+ *  ranges and coroutines, being lazy and stack-allocated, with no type erasure and no
+ *  per-stage allocation. Its conventions differ from ours in three ways that each
+ *  yield a wrong answer rather than a compile error, marked inline below.
+ *
  *  @see "Standard Ranges" by Eric Niebler: https://ericniebler.com/2018/12/05/standard-ranges/
  *  @see "Should we stop writing functions?"" by Jonathan Müller:
  *       https://www.think-cell.com/en/career/devblog/should-we-stop-writing-functions
  *  @see "Lambdas, Nested Functions, and Blocks, oh my!" by JeanHeyd Meneide:
  *       https://thephd.dev/lambdas-nested-functions-block-expressions-oh-my
  */
-#if 0 // TODO: UnifEx needs more work
 #include <unifex/adapt_stream.hpp>
 #include <unifex/filter_stream.hpp>
 #include <unifex/range_stream.hpp>
@@ -4061,22 +4066,21 @@ static void pipeline_unifex(bm::State &state) {
     using sum_and_count_t = std::pair<std::uint64_t, std::uint64_t>;
     std::uint64_t sum = 0, count = 0;
     for (auto _ : state) {
-        auto range = unifex::range_stream(pipe_start, pipe_end);
-        auto filtered_twos = unifex::filter_stream(std::move(range), &is_power_of_two);
-        auto filtered_threes = unifex::filter_stream(std::move(filtered_twos), &is_power_of_three);
+        auto range = unifex::range_stream(pipe_start, pipe_end + 1); //! Half-open, unlike our other pipelines
+        //! Inverted: `filter_stream` keeps what the predicate accepts
+        auto filtered_twos = unifex::filter_stream(std::move(range), std::not_fn(&is_power_of_two));
+        auto filtered_threes = unifex::filter_stream(std::move(filtered_twos), std::not_fn(&is_power_of_three));
 
-        // TODO: There must be a better way to do this!
         auto factors = unifex::transform_stream(std::move(filtered_threes), [](std::uint64_t x) -> sum_and_count_t {
             sum_and_count_t local(0ull, 0ull);
             for (auto factor : prime_factors_view(x)) local.first += factor, local.second += 1;
             return local;
         });
-        auto pipeline = unifex::reduce_stream(
-            std::move(factors),
+        auto pipeline = unifex::reduce_stream( //! State comes before the reducer
+            std::move(factors), sum_and_count_t(0ull, 0ull),
             [](sum_and_count_t total, sum_and_count_t local) -> sum_and_count_t {
                 return sum_and_count_t(total.first + local.first, total.second + local.second);
-            },
-            sum_and_count_t(0ull, 0ull));
+            });
 
         // Execute the pipeline
         std::optional<sum_and_count_t> sum_and_count = unifex::sync_wait(std::move(pipeline));
@@ -4087,7 +4091,6 @@ static void pipeline_unifex(bm::State &state) {
 }
 
 BENCHMARK(pipeline_unifex);
-#endif            // TODO: UnifEx needs more work
 #pragma endregion // Ranges and Iterators
 
 #pragma region Virtual Functions and Polymorphism
