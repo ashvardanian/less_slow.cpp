@@ -1934,10 +1934,25 @@ static void theoretic_tops(                        //
     state.counters["TOP"] = bm::Counter(tops * state.iterations() * state.threads() * 1.0, bm::Counter::kIsRate);
 }
 
+/**
+ *  Denormals are the single biggest confounder in these kernels. They never
+ *  load their inputs, operating on whatever the caller left in the registers,
+ *  and a stray denormal drags the whole loop into microcode assists. On
+ *  Sapphire Rapids `tops_f64_avx512fma` reports @b 2.7 GFLOP/s with the flags
+ *  below cleared, against @b 68 with them set — a 25x swing that has nothing
+ *  to do with the instruction under test.
+ */
 #if defined(__AVX512F__) || defined(__AVX2__)
 void configure_x86_denormals(void) {
     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);         // Flush results to zero
     _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON); // Treat denormal inputs as zero
+}
+#elif defined(__aarch64__) && !defined(_MSC_VER)
+void configure_arm_denormals(void) {
+    std::uint64_t flags;
+    asm volatile("mrs %0, fpcr" : "=r"(flags));
+    flags |= (1ull << 24) | (1ull << 19); // `FZ` for f32 and f64, `FZ16` for f16
+    asm volatile("msr fpcr, %0" ::"r"(flags));
 }
 #endif
 
@@ -2036,32 +2051,44 @@ BENCHMARK_CAPTURE(theoretic_tops, f32_avx2fma, tops_f32_avx2fma_asm_kernel, conf
 
 #if defined(__ARM_NEON)
 extern "C" std::uint32_t tops_f64_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f64_neon, tops_f64_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f64_neon, tops_f64_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f64_neon, tops_f64_neon_asm_kernel, configure_arm_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f64_neon, tops_f64_neon_asm_kernel, configure_arm_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 extern "C" std::uint32_t tops_f32_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel, configure_arm_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f32_neon, tops_f32_neon_asm_kernel, configure_arm_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__ARM_NEON)
 
 #if defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
 extern "C" std::uint32_t tops_f16_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, f16_neon, tops_f16_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, f16_neon, tops_f16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, f16_neon, tops_f16_neon_asm_kernel, configure_arm_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, f16_neon, tops_f16_neon_asm_kernel, configure_arm_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
 
 #if defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
 extern "C" std::uint32_t tops_bf16_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, bf16_neon, tops_bf16_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, bf16_neon, tops_bf16_neon_asm_kernel, configure_arm_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, bf16_neon, tops_bf16_neon_asm_kernel, configure_arm_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
 
 #if defined(__ARM_FEATURE_DOTPROD)
 extern "C" std::uint32_t tops_i8_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, i8_neon, tops_i8_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, i8_neon, tops_i8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, i8_neon, tops_i8_neon_asm_kernel, configure_arm_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, i8_neon, tops_i8_neon_asm_kernel, configure_arm_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 extern "C" std::uint32_t tops_u8_neon_asm_kernel(void);
-BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10);
-BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel)->MinTime(10)->Threads(physical_cores());
+BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel, configure_arm_denormals)->MinTime(10);
+BENCHMARK_CAPTURE(theoretic_tops, u8_neon, tops_u8_neon_asm_kernel, configure_arm_denormals)
+    ->MinTime(10)
+    ->Threads(physical_cores());
 #endif // defined(__ARM_FEATURE_DOTPROD)
 #endif // !defined(_MSC_VER)
 
