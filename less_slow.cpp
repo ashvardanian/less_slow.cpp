@@ -1375,6 +1375,25 @@ BENCHMARK(f64_sin_maclaurin_powless)->Iterations(1e7);
  *  long chains of arithmetic operations, with a arguments significantly
  *  differing in magnitude, you may get highly inaccurate results.
  *
+ *  Worse, it isn't only the numbers that change — your @b checks disappear.
+ *  `-ffast-math` implies `-ffinite-math-only`, which lets the compiler assume
+ *  no NaN or infinity can arise, so `std::isnan(x) || std::isinf(x)` folds to
+ *  a constant `false`. GCC emits `xor eax, eax; ret` for that guard, while the
+ *  value it was meant to catch is still infinite.
+ *
+ *  The danger and the speed live in different flags. Summing 2^20 `float`s,
+ *  where the win comes from vectorizing a reduction that strict ordering
+ *  forbids, on one Sapphire Rapids core:
+ *
+ *      - `-O2`:                         @b 3.32us, guard works
+ *      - `-ffast-math`:                 @b 1.49us, guard @b deleted
+ *      - `-funsafe-math-optimizations`: @b 1.26us, guard works
+ *      - `-ffinite-math-only`:          @b 3.46us, guard @b deleted
+ *
+ *  Reassociation is the whole win, and it keeps your guards. `-ffinite-math-only`
+ *  buys nothing and silently removes them — it even makes `-ffast-math` slower
+ *  here than the safe subset alone.
+ *
  *  @see "Beware of fast-math" by Simon Byrne: https://simonbyrne.github.io/notes/fastmath/
  */
 #if defined(__GNUC__)
