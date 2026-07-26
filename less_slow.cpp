@@ -2176,14 +2176,14 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *    @b FMA in AVX-512 & NEON:
  *    - `f64`:                  @b 1.2-76 G ¹    @b 58 G          @b 31 G
  *    - `f32`:                  @b 3.1-135 G ¹   @b 117 G         @b 63 G
- *    - `bf16`:                 @b 121 G         @b 235 G         @b 101 G
+ *    - `bf16`:                 @b 121 G         @b 235 G         @b 202 G ³
  *    - `f16`:                  @b 286 G 🤯🤯     -                @b 116 G
  *    - `i16`:                  @b 342 G 🤯🤯     -                -
  *    - `i7`: ²                 @b 678 G         @b 470 G 🤯🤯     -
  *    - `i8`, `u8`:             -                -                @b 1.1 T
  *    @b Mat-Mul in AMX & SME:
- *    - `bf16`:                 @b 3.6 T         -                -
- *    - `i8`, `u8`:             @b 7.2 T 🤯🤯🤯   -                -
+ *    - `bf16`:                 @b 3.7 T         -                -
+ *    - `i8`, `u8`:             @b 7.3 T 🤯🤯🤯   -                -
  *
  *  On a high-end dual-socket system, comparing `c7i.metal-48xl` to `c7a.metal-48xl`
  *  and `c8g.metal-48xl` 192-core instances on AWS, this scales to:
@@ -2192,14 +2192,14 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *    @b FMA in AVX-512 & NEON:
  *    - `f64`:                  @b 0.2-8.2 T ¹   @b 9.3 T         @b 4.2 T
  *    - `f32`:                  @b 0.6-15.1 T ¹  @b 20.1 T        @b 8.4 T
- *    - `bf16`:                 @b 9.8 T         @b 41.8 T        @b 20.1 T
+ *    - `bf16`:                 @b 9.8 T         @b 41.8 T        @b 40.2 T ³
  *    - `f16`:                  @b 35.4 T        -                @b 16.8 T
  *    - `i16`:                  @b 34.3 T        -                -
  *    - `i7`:                   @b 76 T          @b 81.3 T        -
  *    - `i8`, `u8`:             -                -                @b 38.2 T
  *    @b Mat-Mul in AMX & SME:
- *    - `bf16`:                 @b 301 T         -                -
- *    - `i8`, `u8`:             @b 683 T 🤯🤯🤯   -                -
+ *    - `bf16`:                 @b 306 T         -                -
+ *    - `i8`, `u8`:             @b 688 T 🤯🤯🤯   -                -
  *
  *  > ¹ The FMA throughput on Intel can be insanely low for denormal numbers!
  *  > ² AVX-512's `i8` by `u8` multiplication instructions look unusable for real
@@ -2209,6 +2209,9 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *      and `SUM b` is a property of `b` alone — precompute it once per vector.
  *      @see NumKong's `nk_dot_i8_icelake`:
  *      https://github.com/ashvardanian/NumKong/blob/a35ddcdeefa511d34838b04134080e6a416ffacf/include/numkong/dot/icelake.h#L99-L156
+ *  > ³ `BFMMLA` is a 2x4 by 4x2 matrix product, so it retires twice the work a
+ *      lane-wise `FMLA` reading of it suggests. The rest of the Graviton column
+ *      predates the `FPCR.FZ` fix and is worth re-measuring.
  *
  *  The Fused-Multiply-Add performance should be higher than separate Multiply
  *  and Add operations. Moreover, there is no direct support for `bf16` math

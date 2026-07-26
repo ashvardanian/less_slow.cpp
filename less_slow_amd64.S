@@ -186,25 +186,25 @@ tops_f32_avx2fma_asm_kernel:
 # https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#amxtechs=AMX_BF16,AMX_INT8,AMX_FP16
 
 tops_bf16_amx_asm_kernel:
-    # Each line performs a 16x32x16 matrix multiplication.
-    # That's 16x32x16 scalar multiplications and 16x31x16 scalar additions.
-    # That's 16,128 scalar operations per line or 64,512 scalar operations total.
+    # Each line performs a 16x32x16 matrix multiplication. That's 16x32x16
+    # scalar multiplications, each paired with an addition into the accumulator,
+    # exactly like the FMA kernels above count theirs.
+    # That's 16,384 scalar operations per line or 65,536 in total.
     tdpbf16ps %tmm7, %tmm0, %tmm1
     tdpbf16ps %tmm6, %tmm2, %tmm3
     tdpbf16ps %tmm5, %tmm0, %tmm2
     tdpbf16ps %tmm4, %tmm1, %tmm3
-    movabsq $64512, %rax
+    movabsq $65536, %rax
     ret
 
 tops_u8_amx_asm_kernel:
     # Each line performs a 16x64x16 matrix multiplication.
-    # That's 16x64x16 scalar multiplications and 16x63x16 scalar additions.
-    # That's 32,512 scalar operations per line or 130,048 scalar operations total.
+    # That's 32,768 scalar operations per line or 131,072 in total.
     tdpbuud %tmm7, %tmm0, %tmm1
     tdpbuud %tmm6, %tmm2, %tmm3
     tdpbuud %tmm5, %tmm0, %tmm2
     tdpbuud %tmm4, %tmm1, %tmm3
-    movabsq $130048, %rax
+    movabsq $131072, %rax
     ret
 
 tops_i8_amx_asm_kernel:
@@ -212,7 +212,7 @@ tops_i8_amx_asm_kernel:
     tdpbssd %tmm6, %tmm2, %tmm3
     tdpbssd %tmm5, %tmm0, %tmm2
     tdpbssd %tmm4, %tmm1, %tmm3
-    movabsq $130048, %rax
+    movabsq $131072, %rax
     ret
 
 # Mixed kernels that combine AMX and AVX-512 instructions, hiding the latency
@@ -268,7 +268,8 @@ tops_i7_amx_avx512fma_asm_kernel:
     vpdpbusd %zmm24, %zmm25, %zmm26
     vpdpbusd %zmm27, %zmm28, %zmm29
 
-    movabsq $135168, %rax
+    # 4 tiles at 32,768 operations each, plus 40 dot-products at 128.
+    movabsq $136192, %rax
     ret
 
 

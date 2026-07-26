@@ -88,8 +88,10 @@ SYMBOL_NAME(tops_f16_neon_asm_kernel):
 
 # bf16 micro-kernel:
 # Requires Armv8.6 BF16 instructions (BFMMLA, etc.).
-# bfmmla  vD.4s, vN.8h, vM.8h => 8 multiplies + 8 adds = 16 FLOPs.
-# We'll do 10 instructions => 160 FLOPs total, returning 160 in W0.
+# Unlike FMLA this one is a matrix op: vN.8h holds a 2x4 block, vM.8h a 4x2
+# one, and vD.4s a 2x2 accumulator. Each of the 4 outputs sums 4 products, so
+# bfmmla => 16 multiplies + 16 adds = 32 FLOPs.
+# We'll do 10 instructions => 320 FLOPs total, returning 320 in W0.
 SYMBOL_NAME(tops_bf16_neon_asm_kernel):
     bfmmla  v0.4s,  v18.8h, v19.8h
     bfmmla  v1.4s,  v20.8h, v21.8h
@@ -102,7 +104,7 @@ SYMBOL_NAME(tops_bf16_neon_asm_kernel):
     bfmmla  v16.4s, v22.8h, v24.8h
     bfmmla  v17.4s, v26.8h, v28.8h
 
-    mov     w0, #160
+    mov     w0, #320
     ret
 
 # i8 micro-kernel:
