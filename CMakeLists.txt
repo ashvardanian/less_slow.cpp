@@ -113,6 +113,16 @@ if (USE_BLAS)
     if (LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
         add_definitions(-D LESS_SLOW_HAS_OPENBLAS_SET_NUM_THREADS)
     endif ()
+
+    # `find_package(BLAS)` resolves libraries but not headers: OpenBLAS nests `cblas.h` under `openblas/`, Apple inside
+    # Accelerate's `vecLib` framework.
+    find_path(LESS_SLOW_CBLAS_INCLUDE_DIR cblas.h PATH_SUFFIXES openblas)
+    if (LESS_SLOW_CBLAS_INCLUDE_DIR)
+        message(STATUS "cblas.h found: ${LESS_SLOW_CBLAS_INCLUDE_DIR}")
+    else ()
+        message(WARNING "cblas.h not found, disabling BLAS. Install OpenBLAS to re-enable it.")
+        set(USE_BLAS OFF)
+    endif ()
 endif ()
 
 # GTest (required by Google Benchmark)
@@ -353,20 +363,21 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64|x64")
     set_source_files_properties(less_slow_amd64.S PROPERTIES LANGUAGE ASM)
     target_sources(less_slow PRIVATE less_slow_amd64.S)
 elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64|arm64")
-    if (APPLE)
-        set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -march=armv8.6-a+bf16")
-    endif ()
     set_source_files_properties(less_slow_aarch64.S PROPERTIES LANGUAGE ASM)
     target_sources(less_slow PRIVATE less_slow_aarch64.S)
 endif ()
 
 # Compiler Flags / Options
 
-# Check for compiler support of `-march=native`
+# Check for compiler support of `-march=native`. It reaches both the C++ and the Assembly sources, which must agree: a
+# `.S` kernel assembles only with its feature on, and registers only with the matching `__ARM_FEATURE_*` macro.
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
     target_compile_options(less_slow PRIVATE -xHost)
+elseif (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64|arm64")
+    # Apple's Clang auto-detects only under `-mcpu`; its `-march=native` silently drops `fp16` and `sme`.
+    target_compile_options(less_slow PRIVATE -mcpu=native)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-    # Apple's Clang and MSVC can't auto-detect the highest CPU features
+    # Apple's Clang on x86 and MSVC can't auto-detect the highest CPU features
 else ()
     target_compile_options(less_slow PRIVATE -march=native)
 endif ()
@@ -459,6 +470,11 @@ target_link_libraries(
 
 if (USE_BLAS)
     target_link_libraries(less_slow PRIVATE ${BLAS_LIBRARIES})
+    target_include_directories(less_slow PRIVATE ${LESS_SLOW_CBLAS_INCLUDE_DIR})
+    if (APPLE)
+        # Accelerate's legacy CBLAS prototypes are deprecated since macOS 13.3
+        target_compile_definitions(less_slow PRIVATE ACCELERATE_NEW_LAPACK)
+    endif ()
 endif ()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
