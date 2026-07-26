@@ -6096,9 +6096,10 @@ BENCHMARK(graph_rank<graph_flat_set>)->MinTime(10)->Name("graph_rank<absl::flat_
  *       by Fedor Pikus at CppCon 2017: https://youtu.be/ZQFzMfHIxng
  */
 
-#include <atomic>       // `std::atomic`
-#include <mutex>        // `std::mutex`
-#include <shared_mutex> // `std::shared_mutex`
+#include <atomic>             // `std::atomic`
+#include <condition_variable> // `std::condition_variable`
+#include <mutex>              // `std::mutex`
+#include <shared_mutex>       // `std::shared_mutex`
 
 #pragma endregion // Concurrency
 
@@ -7690,6 +7691,21 @@ BENCHMARK_CAPTURE(rpc_uring60, public, networking_route_t::public_k, 256 /* mess
 #pragma endregion // IO Uring
 
 #pragma region ASIO
+
+/**
+ *  Chris Kohlhoff's ASIO is the reactor most C++ networking is written against, and
+ *  the ancestor of the Networking TS. It trails `io_uring` here, but the dropped
+ *  packets aren't ASIO's doing — they never reach it. A 256 x 1024B batch is 256KB
+ *  against a default `net.core.rmem_max` of 208KB, so the kernel discards the excess
+ *  before any library sees it. Widening that buffer takes the loss to zero with no
+ *  code change at all:
+ *
+ *      $ sudo sysctl -w net.core.rmem_max=8388608 net.core.rmem_default=8388608
+ *
+ *  `io_uring` survives the default because it drains completions faster than the
+ *  buffer fills. Note these are UDP round-trips on a machine you may be sharing, so
+ *  expect the numbers to swing 2-3x between runs.
+ */
 #include <asio.hpp>
 
 class rpc_asio_server {
@@ -7715,7 +7731,10 @@ class rpc_asio_server {
   public:
     rpc_asio_server(std::string const &address, std::uint16_t port, std::size_t max_concurrency)
         : context_(), socket_(context_), buffers_(max_concurrency), clients_(max_concurrency),
-          work_guard_(asio::make_work_guard(context_)) {
+          //! `std::atomic_bool` has a trivial default constructor, so omitting it here
+          //! leaves the flag holding whatever was on the stack. If it happens to read
+          //! `true`, `reuse_buffer` stops re-arming and the server goes silently deaf.
+          should_stop_(false), work_guard_(asio::make_work_guard(context_)) {
         // Use your helper function to create and bind the native socket.
         auto server = rpc_server_socket(port, address);
         // Now assign the native socket to the ASIO socket.
@@ -7760,17 +7779,25 @@ class rpc_asio_client {
     asio::ip::udp::endpoint server_;
     std::thread context_thread_;
 
-    /// @brief Buffers, one per concurrent request
+    /// @brief Outgoing buffers, one per concurrent request
     std::vector<rpc_buffer_t> buffers_;
+    /// @brief Incoming buffers — separate, or a response would land on a payload still in flight
+    std::vector<rpc_buffer_t> receive_buffers_;
     /// @brief Track the send timestamps for each slot to measure latency
     std::vector<std::chrono::steady_clock::time_point> send_times_;
-    // Work guard to keep the io_context running.
+    /// @brief Where each response came from — one per slot, never shared
+    std::vector<asio::ip::udp::endpoint> response_sources_;
+    /// @brief Guards the batch counters written from the `io_context` thread
+    std::mutex batch_mutex_;
+    /// @brief Signalled once the last outstanding receive has been accounted for
+    std::condition_variable batch_finished_;
+    /// @brief Keeps the `io_context` from running out of work and exiting
     asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
 
   public:
     rpc_asio_client(std::string const &server_addr, std::uint16_t port, std::size_t concurrency)
-        : context_(), socket_(context_), buffers_(concurrency), send_times_(concurrency),
-          work_guard_(asio::make_work_guard(context_)) {
+        : context_(), socket_(context_), buffers_(concurrency), receive_buffers_(concurrency), send_times_(concurrency),
+          response_sources_(concurrency), work_guard_(asio::make_work_guard(context_)) {
 
         // Use the helper function to create the native client socket.
         auto client = rpc_client_socket(server_addr, port);
@@ -7799,35 +7826,45 @@ class rpc_asio_client {
     rpc_batch_result one_batch() {
         rpc_batch_result result;
 
-        // For per-operation cancellations we could use the `asio::cancellation_signal`,
-        // but this is the simple lucky case when we only want to cancel all the outstanding
-        // transfers at once.
-        std::atomic<std::size_t> remaining = 0;
-        for (std::size_t job = 0; job < buffers_.size(); ++job, ++remaining) {
-            send_times_[job] = std::chrono::steady_clock::now();
-            auto finalize = [this, job, &result, &remaining](std::error_code error, std::size_t) {
-                remaining--;
-                if (error) return;
+        // Counts outstanding receives. Every handler decrements exactly once, so zero
+        // means no handler can still reach the locals of this frame.
+        std::size_t remaining = buffers_.size();
 
-                // Measure latency
-                auto response_time = std::chrono::steady_clock::now();
-                auto diff = response_time - send_times_[job];
-                result.batch_latency += diff;
-                result.max_packet_latency = std::max(result.max_packet_latency, diff);
-                result.received_packets++;
+        auto on_response = [&](std::size_t job) {
+            return [this, job, &result, &remaining](std::error_code error, std::size_t) {
+                std::lock_guard<std::mutex> lock(batch_mutex_); //! Written from the `io_context` thread
+                if (!error) {
+                    auto const latency = std::chrono::steady_clock::now() - send_times_[job];
+                    result.batch_latency += latency;
+                    result.max_packet_latency = std::max(result.max_packet_latency, latency);
+                    result.received_packets++;
+                }
+                if (--remaining == 0) batch_finished_.notify_one();
             };
-            auto receive = [this, job, finalize, &remaining](std::error_code error, std::size_t bytes) {
-                if (error) { remaining--; }
-                else { socket_.async_receive_from(asio::buffer(buffers_[job], bytes), server_, finalize); }
-            };
-            socket_.async_send_to(asio::buffer(buffers_[job]), server_, receive);
+        };
+
+        //! Arm every receive before sending. A reply that arrives while its slot has no
+        //! receive posted has nowhere to go but the socket buffer. Each slot also needs
+        //! its own endpoint and buffer — sharing them races on the reactor thread.
+        for (std::size_t job = 0; job != buffers_.size(); ++job)
+            socket_.async_receive_from(asio::buffer(receive_buffers_[job]), response_sources_[job], on_response(job));
+
+        for (std::size_t job = 0; job != buffers_.size(); ++job) {
+            send_times_[job] = std::chrono::steady_clock::now();
+            socket_.async_send_to(asio::buffer(buffers_[job]), server_, [](std::error_code, std::size_t) noexcept {});
             result.sent_packets++;
         }
 
-        std::chrono::steady_clock::time_point expiry = std::chrono::steady_clock::now() + rpc_batch_timeout_k;
-        asio::steady_timer timer(context_, expiry);
-        timer.wait();
-        if (remaining) socket_.cancel(); // Forcibly abort all ops on this socket
+        //! Return as soon as the last reply lands. On timeout we cancel, but `cancel()`
+        //! only requests it and the aborted handlers still run holding references to
+        //! `result` and `remaining`, so drain to zero before unwinding into a dead frame.
+        std::unique_lock<std::mutex> lock(batch_mutex_);
+        if (!batch_finished_.wait_for(lock, rpc_batch_timeout_k, [&] { return remaining == 0; })) {
+            lock.unlock();
+            socket_.cancel();
+            lock.lock();
+            batch_finished_.wait(lock, [&] { return remaining == 0; });
+        }
         return result;
     }
 };
