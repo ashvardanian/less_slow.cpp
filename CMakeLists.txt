@@ -105,7 +105,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
 # Sadly, OpenBLAS compilation fails on some platforms
 #
 # ~~~
-# FetchContent_Declare( OpenBLAS GIT_REPOSITORY https://github.com/xianyi/OpenBLAS.git GIT_TAG v0.3.29 )
+# FetchContent_Declare( OpenBLAS GIT_REPOSITORY https://github.com/xianyi/OpenBLAS.git GIT_TAG v0.3.34 )
 # set(NOFORTRAN ON CACHE BOOL "Disable Fortran" FORCE)
 # set(BUILD_WITHOUT_LAPACK ON CACHE BOOL "Build without LAPACK" FORCE)
 # set(USE_THREAD ON CACHE BOOL "Use threading" FORCE)
@@ -135,7 +135,7 @@ FetchContent_MakeAvailable(GoogleTest)
 FetchContent_Declare(
     GoogleBenchmark
     GIT_REPOSITORY https://github.com/google/benchmark.git
-    GIT_TAG v1.9.4
+    GIT_TAG v1.9.5
 )
 
 # Suppress building tests/docs/etc. for faster builds:
@@ -227,7 +227,7 @@ endif ()
 # set(CUTLASS_ENABLE_TESTS OFF)
 # set(CUTLASS_ENABLE_TOOLS OFF)
 # set(CUTLASS_NVCC_ARCHS "90a")
-# FetchContent_Declare( NvidiaCUTLASS GIT_REPOSITORY https://github.com/nvidia/cutlass.git GIT_TAG v3.7.0 )
+# FetchContent_Declare( NvidiaCUTLASS GIT_REPOSITORY https://github.com/nvidia/cutlass.git GIT_TAG v4.6.1 )
 # FetchContent_MakeAvailable(NvidiaCUTLASS)
 # ~~~
 
@@ -235,7 +235,7 @@ endif ()
 FetchContent_Declare(
     VictorZverovichFMT
     GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-    GIT_TAG 11.2.0
+    GIT_TAG 12.2.0
 )
 FetchContent_MakeAvailable(VictorZverovichFMT)
 
@@ -271,7 +271,7 @@ FetchContent_MakeAvailable(MetaLibUnifEx)
 FetchContent_Declare(
     AshVardanianStringZilla
     GIT_REPOSITORY https://github.com/ashvardanian/stringzilla
-    GIT_TAG v3.12.6
+    GIT_TAG v5.0.3
 )
 FetchContent_MakeAvailable(AshVardanianStringZilla)
 
@@ -288,7 +288,7 @@ FetchContent_MakeAvailable(HanaDusikovaCTRE)
 FetchContent_Declare(
     GoogleAbseil
     GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
-    GIT_TAG 20250512.1 # LTS version
+    GIT_TAG 20260526.0 # LTS version
 )
 FetchContent_MakeAvailable(GoogleAbseil)
 
@@ -304,7 +304,7 @@ FetchContent_MakeAvailable(NielsLohmannJSON)
 FetchContent_Declare(
     YaoyuanGuoYYJSON
     GIT_REPOSITORY https://github.com/ibireme/yyjson.git
-    GIT_TAG 0.11.1
+    GIT_TAG 0.12.0
 )
 FetchContent_MakeAvailable(YaoyuanGuoYYJSON)
 
@@ -312,7 +312,7 @@ FetchContent_MakeAvailable(YaoyuanGuoYYJSON)
 FetchContent_Declare(
     DanielLemireSimdJSON
     GIT_REPOSITORY https://github.com/simdjson/simdjson.git
-    GIT_TAG v3.13.0
+    GIT_TAG v4.6.4
 )
 FetchContent_MakeAvailable(DanielLemireSimdJSON)
 
@@ -321,7 +321,7 @@ FetchContent_MakeAvailable(DanielLemireSimdJSON)
 FetchContent_Declare(
     ChrisKohlhoffASIO
     GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-    GIT_TAG asio-1-32-0 # Latest docs are for 1.30.2 😭
+    GIT_TAG asio-1-38-2 # Latest docs are for 1.30.2 😭
 )
 FetchContent_MakeAvailable(ChrisKohlhoffASIO)
 add_library(asio INTERFACE)
@@ -455,15 +455,15 @@ target_compile_definitions(less_slow PRIVATE USE_BLAS=$<BOOL:${USE_BLAS}>)
 target_link_libraries(
     less_slow
     PRIVATE Threads::Threads
-            benchmark
+            benchmark::benchmark
             fmt::fmt
-            range-v3
+            range-v3::range-v3
             cppcoro
             unifex
-            stringzilla
+            stringzilla::stringzilla_header
             yyjson
-            simdjson
-            ctre
+            simdjson::simdjson
+            ctre::ctre
             asio
             # There is no `absl` shortcut:
             # https://github.com/abseil/abseil-cpp/blob/master/CMake/README.md#available-abseil-cmake-public-targets

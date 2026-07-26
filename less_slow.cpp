@@ -4440,7 +4440,7 @@ void parse_ranges(bm::State &state, std::string_view config_text) {
 void config_parse_sz(std::string_view config_text, std::vector<std::pair<std::string, std::string>> &settings) {
     namespace sz = ashvardanian::stringzilla;
 
-    auto newlines = sz::char_set("\r\n");
+    auto newlines = sz::byteset({'\r', '\n'});
     auto whitespaces = sz::whitespaces_set();
 
     for (sz::string_view line : sz::string_view {config_text}.split(newlines)) {
