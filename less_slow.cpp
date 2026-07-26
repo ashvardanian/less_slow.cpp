@@ -502,7 +502,7 @@ BENCHMARK_CAPTURE(sorting_with_executors, seq, std::execution::seq)
 /**
  *  Older libstdc++ leaks here, eating RAM within seconds: the PSTL oneTBB backend
  *  freed a task's buffer before decrementing its refcount — @b GCC-PR-117276.
- *  Absent in 13 and 14, present in 15 and 16, so we gate on 15 rather than
+ *  The fix is absent in 13 and 14, present in 15 and 16, so we gate on 15 rather than
  *  permanently clamping to one iteration, which would break the `Complexity` fit.
  *  Distros backport on their own schedule; if 15 still eats RAM, require 16.
  *
@@ -1326,7 +1326,7 @@ BENCHMARK(f64_sin_maclaurin)->Iterations(1e7);
 
 /**
  *  Result: latency reduction from @b 31ns down to @b 21ns on Intel.
- *  But on Apple M2 Pro, the latency grew from @b 4.8ns to @b 15.2ns 🤯
+ *  But on Apple M5 Pro, the latency grew from @b 1.6ns to @b 9.2ns 🤯
  *  Doesn't feel like a win!
  *
  *  The @b `std::pow` function is highly generic and not optimized for small,
@@ -1359,7 +1359,7 @@ BENCHMARK(f64_sin_maclaurin_powless)->Iterations(1e7);
 
 /**
  *  Result: latency reduction to @b 2ns - a @b 15x speedup on Intel.
- *  On Apple M2 Pro, the latency dropped from @b 15.2ns to @b 1.1ns 🚀
+ *  On Apple M5 Pro, the latency dropped from @b 9.2ns to @b 0.66ns 🚀
  *  Now this is a win!
  *
  *  We can force the compiler to bypass IEEE-754 compliance checks using
@@ -1442,7 +1442,7 @@ BENCHMARK(f64_sin_maclaurin_with_horner)->Iterations(1e7);
 
 /**
  *  Result: latency of @b 0.8ns - almost @b 40x faster than the standard
- *  on Intel, but on Arm the result remained unchanged, the same @b 1.1ns.
+ *  on Intel; on Arm it only edges from @b 0.66ns to @b 0.63ns.
  *
  *  Advanced libraries like SimSIMD and SLEEF can achieve even better
  *  performance through SIMD-optimized implementations, sometimes trading
@@ -2223,34 +2223,34 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *  frequency, and has a larger cache, which is crucial for many workloads.
  *  On a single CPU core, we can achieve the following FMA throughput:
  *
- *                              Intel Xeon 4     AMD Zen 4        Graviton 4
+ *                              Intel Xeon 4     AMD Zen 4        Graviton 4       Apple M5 Pro
  *    @b FMA in AVX-512 & NEON:
- *    - `f64`:                  @b 1.2-76 G ¹    @b 58 G          @b 31 G
- *    - `f32`:                  @b 3.1-135 G ¹   @b 117 G         @b 63 G
- *    - `bf16`:                 @b 121 G         @b 235 G         @b 202 G ³
- *    - `f16`:                  @b 286 G 🤯🤯     -                @b 116 G
- *    - `i16`:                  @b 342 G 🤯🤯     -                -
- *    - `i7`: ²                 @b 678 G         @b 470 G 🤯🤯     -
- *    - `i8`, `u8`:             -                -                @b 1.1 T
+ *    - `f64`:                  @b 1.2-76 G ¹    @b 58 G          @b 31 G          @b 42 G
+ *    - `f32`:                  @b 3.1-135 G ¹   @b 117 G         @b 63 G          @b 82 G
+ *    - `bf16`:                 @b 121 G         @b 235 G         @b 202 G ³       @b 68 G ⁴
+ *    - `f16`:                  @b 286 G 🤯🤯     -                @b 116 G         @b 167 G
+ *    - `i16`:                  @b 342 G 🤯🤯     -                -                -
+ *    - `i7`: ²                 @b 678 G         @b 470 G 🤯🤯     -                -
+ *    - `i8`, `u8`:             -                -                @b 1.1 T         @b 340 G
  *    @b Mat-Mul in AMX & SME:
- *    - `bf16`:                 @b 3.7 T         -                -
- *    - `i8`, `u8`:             @b 7.3 T 🤯🤯🤯   -                -
+ *    - `bf16`:                 @b 3.7 T         -                -                -
+ *    - `i8`, `u8`:             @b 7.3 T 🤯🤯🤯   -                -                -
  *
  *  On a high-end dual-socket system, comparing `c7i.metal-48xl` to `c7a.metal-48xl`
- *  and `c8g.metal-48xl` 192-core instances on AWS, this scales to:
+ *  and `c8g.metal-48xl` 192-core instances on AWS, against an 18-core M5 Pro:
  *
- *                              Intel Xeon 4     AMD Zen 4        Graviton 4
+ *                              Intel Xeon 4     AMD Zen 4        Graviton 4       Apple M5 Pro
  *    @b FMA in AVX-512 & NEON:
- *    - `f64`:                  @b 0.2-8.2 T ¹   @b 9.3 T         @b 4.2 T
- *    - `f32`:                  @b 0.6-15.1 T ¹  @b 20.1 T        @b 8.4 T
- *    - `bf16`:                 @b 9.8 T         @b 41.8 T        @b 40.2 T ³
- *    - `f16`:                  @b 35.4 T        -                @b 16.8 T
- *    - `i16`:                  @b 34.3 T        -                -
- *    - `i7`:                   @b 76 T          @b 81.3 T        -
- *    - `i8`, `u8`:             -                -                @b 38.2 T
+ *    - `f64`:                  @b 0.2-8.2 T ¹   @b 9.3 T         @b 4.2 T         @b 646 G
+ *    - `f32`:                  @b 0.6-15.1 T ¹  @b 20.1 T        @b 8.4 T         @b 1.3 T
+ *    - `bf16`:                 @b 9.8 T         @b 41.8 T        @b 40.2 T ³      @b 1.0 T ⁴
+ *    - `f16`:                  @b 35.4 T        -                @b 16.8 T        @b 2.6 T
+ *    - `i16`:                  @b 34.3 T        -                -                -
+ *    - `i7`:                   @b 76 T          @b 81.3 T        -                -
+ *    - `i8`, `u8`:             -                -                @b 38.2 T        @b 5.3 T
  *    @b Mat-Mul in AMX & SME:
- *    - `bf16`:                 @b 306 T         -                -
- *    - `i8`, `u8`:             @b 688 T 🤯🤯🤯   -                -
+ *    - `bf16`:                 @b 306 T         -                -                -
+ *    - `i8`, `u8`:             @b 688 T 🤯🤯🤯   -                -                -
  *
  *  > ¹ The FMA throughput on Intel can be insanely low for denormal numbers!
  *  > ² AVX-512's `i8` by `u8` multiplication instructions look unusable for real
@@ -2263,6 +2263,8 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *  > ³ `BFMMLA` is a 2x4 by 4x2 matrix product, so it retires twice the work a
  *      lane-wise `FMLA` reading of it suggests. The rest of the Graviton column
  *      predates the `FPCR.FZ` fix and is worth re-measuring.
+ *  > ⁴ `BFMMLA` retires the same 32 operations as `SDOT`, yet takes 5x longer per
+ *      instruction on Apple silicon. `SME` is the matrix path there, not NEON.
  *
  *  The Fused-Multiply-Add performance should be higher than separate Multiply
  *  and Add operations. Moreover, there is no direct support for `bf16` math
@@ -2904,7 +2906,7 @@ class strided_ptr {
     strided_ptr(std::byte *data, std::size_t stride_bytes) : data_(data), stride_(stride_bytes) {
         assert(data_ && "Pointer must not be null, as NULL arithmetic is undefined");
     }
-#if defined(__cpp_lib_assume_aligned) // Not available in Apple Clang
+#if defined(__cpp_lib_assume_aligned)
     reference operator*() const noexcept {
         return *std::launder(std::assume_aligned<1>(reinterpret_cast<pointer>(data_)));
     }
@@ -3332,10 +3334,10 @@ BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity
  *
  *  - `f64`           @b 4.1 T (AVX-512)      @b 3.1 T     @b 2.9 T
  *  - `f32`           @b 8.9 T (AVX-512)      @b 6.4 T     @b 7.5 T
- *  - `bf16`          @b 301 T (AMX)          -            -
+ *  - `bf16`          @b 306 T (AMX)          -            -
  *  - `f16`           @b 35.4 T (AVX-512)     -            @b 396 G
  *  - `i16`:          @b 34.3 T (AVX-512)     -            @b 255 G
- *  - `i8` & `u8`     @b 683 T (AMX)          -            @b 182 G
+ *  - `i8` & `u8`     @b 688 T (AMX)          -            @b 182 G
  *
  *  Important to note, for different libraries and data types, the highest
  *  throughput was achieved with different shapes and the best number is shown.
@@ -3346,7 +3348,7 @@ BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity
  *
  *  - `f64`           @b 4.2 T                @b 1.2 T     @b 1.2 T
  *  - `f32`           @b 8.4 T                @b 2.3 T     @b 1.3 T
- *  - `bf16`          @b 20.1 T               -            -
+ *  - `bf16`          @b 40.2 T               -            -
  *  - `f16`           @b 16.8 T               -            @b 660 G
  *  - `i16`:          -                       -            @b 6.5 T
  *  - `i8` & `u8`     @b 38.2 T               -            @b 13.4 T
@@ -3912,10 +3914,11 @@ BENCHMARK(pipeline_cpp20_coroutine<toy_generator_t>);
  *  for compiler support only applies to Clang, so we override it here.
  *
  *  It doesn't pay off at this shape. `recursive_generator` is the @b slowest of the
- *  three at 1554ns, against 1201ns for `cppcoro::generator` and 1102ns for our naive
- *  `toy_generator`, which never hands control off at all. Collapsing nested resumptions
- *  into a tail call needs a @b deep delegation chain to repay its extra indirection,
- *  and this pipeline is four stages pulled one value at a time.
+ *  three at @b 1554ns, against @b 1201ns for `cppcoro::generator` and @b 1102ns for
+ *  our naive `toy_generator`, which never hands control off at all; @b 688ns against
+ *  @b 456ns and @b 422ns on an M5 Pro. Collapsing nested resumptions into a tail call
+ *  needs a @b deep delegation chain to repay its extra indirection, and this pipeline
+ *  is four stages pulled one value at a time.
  *
  *  @see Github issue: https://github.com/ashvardanian/less_slow.cpp/issues/15
  */
@@ -4068,12 +4071,13 @@ BENCHMARK(pipeline_cpp20_std_ranges);
  *      - `pipeline_cpp20_coroutines`:     @b 717ns for toy, over @b 828ns for `cppcoro`
  *      - `pipeline_cpp20_std_ranges`:     @b 247ns
  *
- *  On Apple M2 Pro:
+ *  On Apple M5 Pro:
  *
- *      - `pipeline_cpp11_lambdas`:        @b 114ns
- *      - `pipeline_cpp11_std_function`:   @b 547ns
- *      - `pipeline_cpp20_coroutines`:     @b 705ns for toy
- *      - `pipeline_cpp20_std_ranges`:     @b N/A with Apple Clang
+ *      - `pipeline_cpp11_lambdas`:        @b 55ns
+ *      - `pipeline_cpp11_std_function`:   @b 369ns
+ *      - `pipeline_cpp20_coroutines`:     @b 422ns for toy, @b 456ns for `cppcoro`
+ *      - `pipeline_cpp20_std_ranges`:     @b 244ns
+ *      - `pipeline_unifex`:               @b 232ns
  *
  *  Why is STL slower than C++11 lambdas? STL's `std::function` allocates memory!
  *  Why are coroutines slower than lambdas? Coroutines allocate state and have
@@ -4330,8 +4334,8 @@ static void packaging_stl_tuple(bm::State &state) {
 BENCHMARK(packaging_stl_tuple)->MinTime(2);
 
 /**
- *  Over @b 600 microseconds for STL variants vs @b 488 microseconds for the baseline.
- *  The naive variant, avoiding STL, is faster by @b 20%.
+ *  Over @b 600 microseconds for STL variants vs @b 488 for the naive baseline that
+ *  avoids STL entirely.
  *
  *  Why? With the `std::pair` in its way `std::vector` can't realize that the actual
  *  contents are trivially copyable and can be moved around without any overhead.
@@ -6114,14 +6118,16 @@ BENCHMARK(graph_rank<graph_flat_set>)->MinTime(10)->Name("graph_rank<absl::flat_
  *
  *  1. For graph construction (`graph_make`):
  *     - `std::unordered_map` consistently outperforms other containers, being ~2x faster
- *       than `std::map` on both architectures. This aligns with its O(1) insertion time.
- *     - `absl::flat_hash_set` falls between the two, being ~40% slower than `std::unordered_map`.
+ *       than `std::map` on x86, though only ~1.3x on an M5 Pro. This aligns with its
+ *       O(1) insertion time.
+ *     - `absl::flat_hash_set` falls between the two on x86, ~40% behind `std::unordered_map`,
+ *       but is the slowest of the three to build on an M5 Pro, ~80% behind.
  *
  *  2. For the Page-Rank algorithm (`graph_rank`):
  *     - `absl::flat_hash_set` absolutely dominates, being ~150x faster than `std::unordered_map`
- *       on x86 and ~320x faster on ARM! This validates our custom hash function strategy.
- *     - `std::map` shrinks its gap with `std::unordered_map` during ranking,
- *       likely due to its cache-friendly tree traversal patterns.
+ *       on x86 and ~190x faster on an M5 Pro! This validates our custom hash function strategy.
+ *     - `std::map` shrinks its gap with `std::unordered_map` during ranking, and on the M5 Pro
+ *       overtakes it outright, likely due to its cache-friendly tree traversal patterns.
  *
  *  What we've learned:
  *
@@ -6406,10 +6412,10 @@ BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(
  *  - Returning an STL error code: @b 7ns single-threaded, @b 24ns multi-threaded.
  *  - Returning a custom status code: @b 4ns single-threaded, @b 15ns multi-threaded.
  *
- *  On Apple M2 Pro:
- *  - Throwing an STL exception: @b 728ns single-threaded, @b 837ns multi-threaded.
- *  - Returning an STL error code: @b 12ns single-threaded, @b 13ns multi-threaded.
- *  - Returning a custom status code: @b 7ns single-threaded, @b 7ns multi-threaded.
+ *  On Apple M5 Pro, across 6 performance and 12 efficiency cores:
+ *  - Throwing an STL exception: @b 540ns single-threaded, @b 767ns multi-threaded.
+ *  - Returning an STL error code: @b 6ns single-threaded, @b 8ns multi-threaded.
+ *  - Returning a custom status code: @b 4ns single-threaded, @b 5ns multi-threaded.
  *
  *  Those numbers explain, why over 20% of the industry members explicitly ban exceptions
  *  in their codebases, according to the 2020 Developer Ecosystem Survey by JetBrains.
