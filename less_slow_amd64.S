@@ -21,7 +21,7 @@
     .global tops_bf16_amx_asm_kernel
     .global tops_u8_amx_asm_kernel
     .global tops_i8_amx_asm_kernel
-    
+
     # Latency-hiding mixed kernels
     .global tops_i7_amx_avx512fma_asm_kernel
 
@@ -34,24 +34,27 @@
 
 # Simple function that adds two 32-bit signed integers using System V AMD64.
 # Arguments in 32-bit registers EDI (a) and ESI (b). Return value in EAX.
+    .type   i32_add_asm_kernel, @function
 i32_add_asm_kernel:
-    addl    %esi, %edi      # EDI = EDI + ESI
-    movl    %edi, %eax      # EAX = EDI
+    addl        %esi,   %edi            # EDI = EDI + ESI
+    movl        %edi,   %eax            # EAX = EDI
     ret
+    .size   i32_add_asm_kernel, .-i32_add_asm_kernel
 
 # AVX-512 micro-kernels measuring Tensor Operations Per Second (TOPS)
 # without accounting for memory bandwidth or latency. The following kernels
 # assume presence of 32x 512-bit long registers (ZMM0-ZMM31).
-# Each reports return the aggregate number of floating-point operations - 
+# Each reports return the aggregate number of floating-point operations -
 # multiplications and additions forming the FMA instruction - performed.
 
+    .type   tops_f64_avx512fma_asm_kernel, @function
 tops_f64_avx512fma_asm_kernel:
     # Each vfmadd231pd does: DEST = DEST + (SRC1 * SRC2)
     # That is 8 multiplies + 8 adds = 16 FLOPs per instruction.
     # We'll do 10 instructions below => 10 × 16 = 160 FLOPs total.
-    vfmadd231pd %zmm1, %zmm2, %zmm0     # 1
-    vfmadd231pd %zmm4, %zmm5, %zmm3     # 2
-    vfmadd231pd %zmm7, %zmm8, %zmm6     # 3
+    vfmadd231pd %zmm1,  %zmm2,  %zmm0   # 1
+    vfmadd231pd %zmm4,  %zmm5,  %zmm3   # 2
+    vfmadd231pd %zmm7,  %zmm8,  %zmm6   # 3
     vfmadd231pd %zmm10, %zmm11, %zmm9   # 4
     vfmadd231pd %zmm13, %zmm14, %zmm12  # 5
     vfmadd231pd %zmm16, %zmm17, %zmm15  # 6
@@ -60,43 +63,50 @@ tops_f64_avx512fma_asm_kernel:
     vfmadd231pd %zmm25, %zmm26, %zmm24  # 9
     vfmadd231pd %zmm28, %zmm29, %zmm27  # 10
 
-    # Return value in 64-bit register %rax => 160 TOPs.
-    movabsq $160, %rax
+    # Return value in %eax => 160 TOPs. The C++ prototype returns a `uint32_t`,
+    # so a 5-byte `movl` does the job a 10-byte `movabsq` was doing before.
+    movl        $160,   %eax
     ret
+    .size   tops_f64_avx512fma_asm_kernel, .-tops_f64_avx512fma_asm_kernel
 
+    .type   tops_f64_avx512_x5fma_asm_kernel, @function
 tops_f64_avx512_x5fma_asm_kernel:
     # Each vfmadd231pd does: DEST = DEST + (SRC1 * SRC2)
     # That is 8 multiplies + 8 adds = 16 FLOPs per instruction.
     # We'll do 5 instructions below => 5 × 16 = 80 FLOPs total.
-    vfmadd231pd %zmm1, %zmm2, %zmm0     # 1
-    vfmadd231pd %zmm4, %zmm5, %zmm3     # 2
-    vfmadd231pd %zmm7, %zmm8, %zmm6     # 3
+    vfmadd231pd %zmm1,  %zmm2,  %zmm0   # 1
+    vfmadd231pd %zmm4,  %zmm5,  %zmm3   # 2
+    vfmadd231pd %zmm7,  %zmm8,  %zmm6   # 3
     vfmadd231pd %zmm10, %zmm11, %zmm9   # 4
     vfmadd231pd %zmm13, %zmm14, %zmm12  # 5
 
     # Return value in 64-bit register %rax => 80 TOPs.
-    movabsq $80, %rax
+    movl        $80,    %eax
     ret
+    .size   tops_f64_avx512_x5fma_asm_kernel, .-tops_f64_avx512_x5fma_asm_kernel
 
+    .type   tops_f32_avx512fma_asm_kernel, @function
 tops_f32_avx512fma_asm_kernel:
-    vfmadd231ps %zmm1, %zmm2, %zmm0    # 1
-    vfmadd231ps %zmm4, %zmm5, %zmm3    # 2
-    vfmadd231ps %zmm7, %zmm8, %zmm6    # 3
-    vfmadd231ps %zmm10, %zmm11, %zmm9    # 4
-    vfmadd231ps %zmm13, %zmm14, %zmm12   # 5
-    vfmadd231ps %zmm16, %zmm17, %zmm15   # 6
-    vfmadd231ps %zmm19, %zmm20, %zmm18   # 7
-    vfmadd231ps %zmm22, %zmm23, %zmm21   # 8
-    vfmadd231ps %zmm25, %zmm26, %zmm24   # 9
-    vfmadd231ps %zmm28, %zmm29, %zmm27   # 10
-    movabsq $320, %rax
+    vfmadd231ps %zmm1,  %zmm2,  %zmm0   # 1
+    vfmadd231ps %zmm4,  %zmm5,  %zmm3   # 2
+    vfmadd231ps %zmm7,  %zmm8,  %zmm6   # 3
+    vfmadd231ps %zmm10, %zmm11, %zmm9   # 4
+    vfmadd231ps %zmm13, %zmm14, %zmm12  # 5
+    vfmadd231ps %zmm16, %zmm17, %zmm15  # 6
+    vfmadd231ps %zmm19, %zmm20, %zmm18  # 7
+    vfmadd231ps %zmm22, %zmm23, %zmm21  # 8
+    vfmadd231ps %zmm25, %zmm26, %zmm24  # 9
+    vfmadd231ps %zmm28, %zmm29, %zmm27  # 10
+    movl        $320,   %eax
     ret
+    .size   tops_f32_avx512fma_asm_kernel, .-tops_f32_avx512fma_asm_kernel
 
+    .type   tops_f16_avx512fma_asm_kernel, @function
 tops_f16_avx512fma_asm_kernel:
     # This kernel requires AVX512_FP16 support.
-    vfmadd231ph %zmm1, %zmm2, %zmm0
-    vfmadd231ph %zmm4, %zmm5, %zmm3
-    vfmadd231ph %zmm7, %zmm8, %zmm6
+    vfmadd231ph %zmm1,  %zmm2,  %zmm0
+    vfmadd231ph %zmm4,  %zmm5,  %zmm3
+    vfmadd231ph %zmm7,  %zmm8,  %zmm6
     vfmadd231ph %zmm10, %zmm11, %zmm9
     vfmadd231ph %zmm13, %zmm14, %zmm12
     vfmadd231ph %zmm16, %zmm17, %zmm15
@@ -104,78 +114,88 @@ tops_f16_avx512fma_asm_kernel:
     vfmadd231ph %zmm22, %zmm23, %zmm21
     vfmadd231ph %zmm25, %zmm26, %zmm24
     vfmadd231ph %zmm28, %zmm29, %zmm27
-    movabsq $640, %rax
+    movl        $640,   %eax
     ret
+    .size   tops_f16_avx512fma_asm_kernel, .-tops_f16_avx512fma_asm_kernel
 
+    .type   tops_bf16_avx512fma_asm_kernel, @function
 tops_bf16_avx512fma_asm_kernel:
     # This kernel requires AVX512_BF16 support.
-    vdpbf16ps %zmm0, %zmm1, %zmm2
-    vdpbf16ps %zmm3, %zmm4, %zmm5
-    vdpbf16ps %zmm6, %zmm7, %zmm8
-    vdpbf16ps %zmm9, %zmm10, %zmm11
-    vdpbf16ps %zmm12, %zmm13, %zmm14
-    vdpbf16ps %zmm15, %zmm16, %zmm17
-    vdpbf16ps %zmm18, %zmm19, %zmm20
-    vdpbf16ps %zmm21, %zmm22, %zmm23
-    vdpbf16ps %zmm24, %zmm25, %zmm26
-    vdpbf16ps %zmm27, %zmm28, %zmm29
-    movabsq $640, %rax
+    vdpbf16ps   %zmm0,  %zmm1,  %zmm2
+    vdpbf16ps   %zmm3,  %zmm4,  %zmm5
+    vdpbf16ps   %zmm6,  %zmm7,  %zmm8
+    vdpbf16ps   %zmm9,  %zmm10, %zmm11
+    vdpbf16ps   %zmm12, %zmm13, %zmm14
+    vdpbf16ps   %zmm15, %zmm16, %zmm17
+    vdpbf16ps   %zmm18, %zmm19, %zmm20
+    vdpbf16ps   %zmm21, %zmm22, %zmm23
+    vdpbf16ps   %zmm24, %zmm25, %zmm26
+    vdpbf16ps   %zmm27, %zmm28, %zmm29
+    movl        $640,   %eax
     ret
+    .size   tops_bf16_avx512fma_asm_kernel, .-tops_bf16_avx512fma_asm_kernel
 
+    .type   tops_i16_avx512fma_asm_kernel, @function
 tops_i16_avx512fma_asm_kernel:
     # This kernel requires AVX512_VNNI support.
-    vpdpwssds %zmm0, %zmm1, %zmm2
-    vpdpwssds %zmm3, %zmm4, %zmm5
-    vpdpwssds %zmm6, %zmm7, %zmm8
-    vpdpwssds %zmm9, %zmm10, %zmm11
-    vpdpwssds %zmm12, %zmm13, %zmm14
-    vpdpwssds %zmm15, %zmm16, %zmm17
-    vpdpwssds %zmm18, %zmm19, %zmm20
-    vpdpwssds %zmm21, %zmm22, %zmm23
-    vpdpwssds %zmm24, %zmm25, %zmm26
-    vpdpwssds %zmm27, %zmm28, %zmm29
-    movabsq $640, %rax
+    vpdpwssds   %zmm0,  %zmm1,  %zmm2
+    vpdpwssds   %zmm3,  %zmm4,  %zmm5
+    vpdpwssds   %zmm6,  %zmm7,  %zmm8
+    vpdpwssds   %zmm9,  %zmm10, %zmm11
+    vpdpwssds   %zmm12, %zmm13, %zmm14
+    vpdpwssds   %zmm15, %zmm16, %zmm17
+    vpdpwssds   %zmm18, %zmm19, %zmm20
+    vpdpwssds   %zmm21, %zmm22, %zmm23
+    vpdpwssds   %zmm24, %zmm25, %zmm26
+    vpdpwssds   %zmm27, %zmm28, %zmm29
+    movl        $640,   %eax
     ret
+    .size   tops_i16_avx512fma_asm_kernel, .-tops_i16_avx512fma_asm_kernel
 
-
+    .type   tops_i7_avx512fma_asm_kernel, @function
 tops_i7_avx512fma_asm_kernel:
     # This kernel requires AVX512_VNNI support.
     # This instruction is tricky! It's not strictly `u8` by `u8` to `u32`
     # multiplication, but rather `u8` by `i8` to `i32`! There is a similar
     # `vpdpbusds` instruction, that only differs by its saturation behavior.
-    vpdpbusd %zmm0, %zmm1, %zmm2
-    vpdpbusd %zmm3, %zmm4, %zmm5
-    vpdpbusd %zmm6, %zmm7, %zmm8
-    vpdpbusd %zmm9, %zmm10, %zmm11
-    vpdpbusd %zmm12, %zmm13, %zmm14
-    vpdpbusd %zmm15, %zmm16, %zmm17
-    vpdpbusd %zmm18, %zmm19, %zmm20
-    vpdpbusd %zmm21, %zmm22, %zmm23
-    vpdpbusd %zmm24, %zmm25, %zmm26
-    vpdpbusd %zmm27, %zmm28, %zmm29
-    movabsq $1280, %rax
+    vpdpbusd    %zmm0,  %zmm1,  %zmm2
+    vpdpbusd    %zmm3,  %zmm4,  %zmm5
+    vpdpbusd    %zmm6,  %zmm7,  %zmm8
+    vpdpbusd    %zmm9,  %zmm10, %zmm11
+    vpdpbusd    %zmm12, %zmm13, %zmm14
+    vpdpbusd    %zmm15, %zmm16, %zmm17
+    vpdpbusd    %zmm18, %zmm19, %zmm20
+    vpdpbusd    %zmm21, %zmm22, %zmm23
+    vpdpbusd    %zmm24, %zmm25, %zmm26
+    vpdpbusd    %zmm27, %zmm28, %zmm29
+    movl        $1280,  %eax
     ret
+    .size   tops_i7_avx512fma_asm_kernel, .-tops_i7_avx512fma_asm_kernel
 
 # AVX2 micro-kernels differ from AVX-512 in that they have fewer registers,
 # and those registers are narrower. We have 16x 256-bit YMM registers.
 
+    .type   tops_f64_avx2fma_asm_kernel, @function
 tops_f64_avx2fma_asm_kernel:
-    vfmadd231pd %ymm1, %ymm2, %ymm0
-    vfmadd231pd %ymm4, %ymm5, %ymm3
-    vfmadd231pd %ymm7, %ymm8, %ymm6
-    vfmadd231pd %ymm9, %ymm10, %ymm11
+    vfmadd231pd %ymm1,  %ymm2,  %ymm0
+    vfmadd231pd %ymm4,  %ymm5,  %ymm3
+    vfmadd231pd %ymm7,  %ymm8,  %ymm6
+    vfmadd231pd %ymm9,  %ymm10, %ymm11
     vfmadd231pd %ymm12, %ymm13, %ymm14
-    movabsq $40, %rax
+    movl        $40,    %eax
     ret
+    .size   tops_f64_avx2fma_asm_kernel, .-tops_f64_avx2fma_asm_kernel
 
+    .type   tops_f32_avx2fma_asm_kernel, @function
 tops_f32_avx2fma_asm_kernel:
-    vfmadd231ps %ymm1, %ymm2, %ymm0
-    vfmadd231ps %ymm4, %ymm5, %ymm3
-    vfmadd231ps %ymm7, %ymm8, %ymm6
-    vfmadd231ps %ymm9, %ymm10, %ymm11
+    vfmadd231ps %ymm1,  %ymm2,  %ymm0
+    vfmadd231ps %ymm4,  %ymm5,  %ymm3
+    vfmadd231ps %ymm7,  %ymm8,  %ymm6
+    vfmadd231ps %ymm9,  %ymm10, %ymm11
     vfmadd231ps %ymm12, %ymm13, %ymm14
-    movabsq $80, %rax
+    movl        $80,    %eax
     ret
+    .size   tops_f32_avx2fma_asm_kernel, .-tops_f32_avx2fma_asm_kernel
 
 # AMX is an Intel-specific extension that introduces a new set of registers
 # and instructions for matrix multiplication. Proper usage would require
@@ -185,156 +205,172 @@ tops_f32_avx2fma_asm_kernel:
 #
 # https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#amxtechs=AMX_BF16,AMX_INT8,AMX_FP16
 
+    .type   tops_bf16_amx_asm_kernel, @function
 tops_bf16_amx_asm_kernel:
     # Each line performs a 16x32x16 matrix multiplication. That's 16x32x16
     # scalar multiplications, each paired with an addition into the accumulator,
     # exactly like the FMA kernels above count theirs.
     # That's 16,384 scalar operations per line or 65,536 in total.
-    tdpbf16ps %tmm7, %tmm0, %tmm1
-    tdpbf16ps %tmm6, %tmm2, %tmm3
-    tdpbf16ps %tmm5, %tmm0, %tmm2
-    tdpbf16ps %tmm4, %tmm1, %tmm3
-    movabsq $65536, %rax
+    tdpbf16ps   %tmm7,  %tmm0,  %tmm1
+    tdpbf16ps   %tmm6,  %tmm2,  %tmm3
+    tdpbf16ps   %tmm5,  %tmm0,  %tmm2
+    tdpbf16ps   %tmm4,  %tmm1,  %tmm3
+    movl        $65536, %eax
     ret
+    .size   tops_bf16_amx_asm_kernel, .-tops_bf16_amx_asm_kernel
 
+    .type   tops_u8_amx_asm_kernel, @function
 tops_u8_amx_asm_kernel:
     # Each line performs a 16x64x16 matrix multiplication.
     # That's 32,768 scalar operations per line or 131,072 in total.
-    tdpbuud %tmm7, %tmm0, %tmm1
-    tdpbuud %tmm6, %tmm2, %tmm3
-    tdpbuud %tmm5, %tmm0, %tmm2
-    tdpbuud %tmm4, %tmm1, %tmm3
-    movabsq $131072, %rax
+    tdpbuud     %tmm7,  %tmm0,  %tmm1
+    tdpbuud     %tmm6,  %tmm2,  %tmm3
+    tdpbuud     %tmm5,  %tmm0,  %tmm2
+    tdpbuud     %tmm4,  %tmm1,  %tmm3
+    movl        $131072,%eax
     ret
+    .size   tops_u8_amx_asm_kernel, .-tops_u8_amx_asm_kernel
 
+    .type   tops_i8_amx_asm_kernel, @function
 tops_i8_amx_asm_kernel:
-    tdpbssd %tmm7, %tmm0, %tmm1
-    tdpbssd %tmm6, %tmm2, %tmm3
-    tdpbssd %tmm5, %tmm0, %tmm2
-    tdpbssd %tmm4, %tmm1, %tmm3
-    movabsq $131072, %rax
+    tdpbssd     %tmm7,  %tmm0,  %tmm1
+    tdpbssd     %tmm6,  %tmm2,  %tmm3
+    tdpbssd     %tmm5,  %tmm0,  %tmm2
+    tdpbssd     %tmm4,  %tmm1,  %tmm3
+    movl        $131072,%eax
     ret
+    .size   tops_i8_amx_asm_kernel, .-tops_i8_amx_asm_kernel
 
 # Mixed kernels that combine AMX and AVX-512 instructions, hiding the latency
 # of some instructions by interleaving them with others.
 
+    .type   tops_i7_amx_avx512fma_asm_kernel, @function
 tops_i7_amx_avx512fma_asm_kernel:
 
-    tdpbssd %tmm7, %tmm0, %tmm1
-    vpdpbusd %zmm0, %zmm1, %zmm2
-    vpdpbusd %zmm3, %zmm4, %zmm5
-    vpdpbusd %zmm6, %zmm7, %zmm8
-    vpdpbusd %zmm9, %zmm10, %zmm11
-    vpdpbusd %zmm12, %zmm13, %zmm14
-    vpdpbusd %zmm15, %zmm16, %zmm17
-    vpdpbusd %zmm18, %zmm19, %zmm20
-    vpdpbusd %zmm21, %zmm22, %zmm23
-    vpdpbusd %zmm24, %zmm25, %zmm26
-    vpdpbusd %zmm27, %zmm28, %zmm29
+    tdpbssd     %tmm7,  %tmm0,  %tmm1
+    vpdpbusd    %zmm0,  %zmm1,  %zmm2
+    vpdpbusd    %zmm3,  %zmm4,  %zmm5
+    vpdpbusd    %zmm6,  %zmm7,  %zmm8
+    vpdpbusd    %zmm9,  %zmm10, %zmm11
+    vpdpbusd    %zmm12, %zmm13, %zmm14
+    vpdpbusd    %zmm15, %zmm16, %zmm17
+    vpdpbusd    %zmm18, %zmm19, %zmm20
+    vpdpbusd    %zmm21, %zmm22, %zmm23
+    vpdpbusd    %zmm24, %zmm25, %zmm26
+    vpdpbusd    %zmm27, %zmm28, %zmm29
 
-    tdpbssd %tmm6, %tmm2, %tmm3
-    vpdpbusd %zmm0, %zmm1, %zmm2
-    vpdpbusd %zmm3, %zmm4, %zmm5
-    vpdpbusd %zmm6, %zmm7, %zmm8
-    vpdpbusd %zmm9, %zmm10, %zmm11
-    vpdpbusd %zmm12, %zmm13, %zmm14
-    vpdpbusd %zmm15, %zmm16, %zmm17
-    vpdpbusd %zmm18, %zmm19, %zmm20
-    vpdpbusd %zmm21, %zmm22, %zmm23
-    vpdpbusd %zmm24, %zmm25, %zmm26
-    vpdpbusd %zmm27, %zmm28, %zmm29
+    tdpbssd     %tmm6,  %tmm2,  %tmm3
+    vpdpbusd    %zmm0,  %zmm1,  %zmm2
+    vpdpbusd    %zmm3,  %zmm4,  %zmm5
+    vpdpbusd    %zmm6,  %zmm7,  %zmm8
+    vpdpbusd    %zmm9,  %zmm10, %zmm11
+    vpdpbusd    %zmm12, %zmm13, %zmm14
+    vpdpbusd    %zmm15, %zmm16, %zmm17
+    vpdpbusd    %zmm18, %zmm19, %zmm20
+    vpdpbusd    %zmm21, %zmm22, %zmm23
+    vpdpbusd    %zmm24, %zmm25, %zmm26
+    vpdpbusd    %zmm27, %zmm28, %zmm29
 
-    tdpbssd %tmm5, %tmm0, %tmm2
-    vpdpbusd %zmm0, %zmm1, %zmm2
-    vpdpbusd %zmm3, %zmm4, %zmm5
-    vpdpbusd %zmm6, %zmm7, %zmm8
-    vpdpbusd %zmm9, %zmm10, %zmm11
-    vpdpbusd %zmm12, %zmm13, %zmm14
-    vpdpbusd %zmm15, %zmm16, %zmm17
-    vpdpbusd %zmm18, %zmm19, %zmm20
-    vpdpbusd %zmm21, %zmm22, %zmm23
-    vpdpbusd %zmm24, %zmm25, %zmm26
-    vpdpbusd %zmm27, %zmm28, %zmm29
-    
-    tdpbssd %tmm4, %tmm1, %tmm3
-    vpdpbusd %zmm0, %zmm1, %zmm2
-    vpdpbusd %zmm3, %zmm4, %zmm5
-    vpdpbusd %zmm6, %zmm7, %zmm8
-    vpdpbusd %zmm9, %zmm10, %zmm11
-    vpdpbusd %zmm12, %zmm13, %zmm14
-    vpdpbusd %zmm15, %zmm16, %zmm17
-    vpdpbusd %zmm18, %zmm19, %zmm20
-    vpdpbusd %zmm21, %zmm22, %zmm23
-    vpdpbusd %zmm24, %zmm25, %zmm26
-    vpdpbusd %zmm27, %zmm28, %zmm29
+    tdpbssd     %tmm5,  %tmm0,  %tmm2
+    vpdpbusd    %zmm0,  %zmm1,  %zmm2
+    vpdpbusd    %zmm3,  %zmm4,  %zmm5
+    vpdpbusd    %zmm6,  %zmm7,  %zmm8
+    vpdpbusd    %zmm9,  %zmm10, %zmm11
+    vpdpbusd    %zmm12, %zmm13, %zmm14
+    vpdpbusd    %zmm15, %zmm16, %zmm17
+    vpdpbusd    %zmm18, %zmm19, %zmm20
+    vpdpbusd    %zmm21, %zmm22, %zmm23
+    vpdpbusd    %zmm24, %zmm25, %zmm26
+    vpdpbusd    %zmm27, %zmm28, %zmm29
+
+    tdpbssd     %tmm4,  %tmm1,  %tmm3
+    vpdpbusd    %zmm0,  %zmm1,  %zmm2
+    vpdpbusd    %zmm3,  %zmm4,  %zmm5
+    vpdpbusd    %zmm6,  %zmm7,  %zmm8
+    vpdpbusd    %zmm9,  %zmm10, %zmm11
+    vpdpbusd    %zmm12, %zmm13, %zmm14
+    vpdpbusd    %zmm15, %zmm16, %zmm17
+    vpdpbusd    %zmm18, %zmm19, %zmm20
+    vpdpbusd    %zmm21, %zmm22, %zmm23
+    vpdpbusd    %zmm24, %zmm25, %zmm26
+    vpdpbusd    %zmm27, %zmm28, %zmm29
 
     # 4 tiles at 32,768 operations each, plus 40 dot-products at 128.
-    movabsq $136192, %rax
+    movl        $136192,%eax
     ret
+    .size   tops_i7_amx_avx512fma_asm_kernel, .-tops_i7_amx_avx512fma_asm_kernel
 
-
-
+    .type   tops_f64_avx512ma_asm_kernel, @function
 tops_f64_avx512ma_asm_kernel:
     # Each multiply-add pair does 8 multiplies + 8 adds = 16 FLOPs.
     # We'll do 5 such pairs => 80 FLOPs total.
-    vmulpd  %zmm1,  %zmm2,  %zmm0      # Pair #1 multiply => 8 ops
-    vaddpd  %zmm3,  %zmm4,  %zmm5      # Pair #1 add      => 8 ops
-    vmulpd  %zmm6,  %zmm7,  %zmm8      # Pair #2 multiply
-    vaddpd  %zmm9,  %zmm10, %zmm11     # Pair #2 add
-    vmulpd  %zmm12, %zmm13, %zmm14     # Pair #3 multiply
-    vaddpd  %zmm15, %zmm16, %zmm17     # Pair #3 add
-    vmulpd  %zmm18, %zmm19, %zmm20     # Pair #4 multiply
-    vaddpd  %zmm21, %zmm22, %zmm23     # Pair #4 add
-    vmulpd  %zmm24, %zmm25, %zmm26     # Pair #5 multiply
-    vaddpd  %zmm27, %zmm28, %zmm29     # Pair #5 add
-    movabsq $80, %rax
+    vmulpd      %zmm1,  %zmm2,  %zmm0   # Pair #1 multiply => 8 ops
+    vaddpd      %zmm3,  %zmm4,  %zmm5   # Pair #1 add      => 8 ops
+    vmulpd      %zmm6,  %zmm7,  %zmm8   # Pair #2 multiply
+    vaddpd      %zmm9,  %zmm10, %zmm11  # Pair #2 add
+    vmulpd      %zmm12, %zmm13, %zmm14  # Pair #3 multiply
+    vaddpd      %zmm15, %zmm16, %zmm17  # Pair #3 add
+    vmulpd      %zmm18, %zmm19, %zmm20  # Pair #4 multiply
+    vaddpd      %zmm21, %zmm22, %zmm23  # Pair #4 add
+    vmulpd      %zmm24, %zmm25, %zmm26  # Pair #5 multiply
+    vaddpd      %zmm27, %zmm28, %zmm29  # Pair #5 add
+    movl        $80,    %eax
     ret
+    .size   tops_f64_avx512ma_asm_kernel, .-tops_f64_avx512ma_asm_kernel
 
+    .type   tops_f32_avx512ma_asm_kernel, @function
 tops_f32_avx512ma_asm_kernel:
-    vmulps  %zmm1,  %zmm2,  %zmm0      
-    vaddps  %zmm3,  %zmm4,  %zmm5      
-    vmulps  %zmm6,  %zmm7,  %zmm8      
-    vaddps  %zmm9,  %zmm10, %zmm11     
-    vmulps  %zmm12, %zmm13, %zmm14     
-    vaddps  %zmm15, %zmm16, %zmm17     
-    vmulps  %zmm18, %zmm19, %zmm20     
-    vaddps  %zmm21, %zmm22, %zmm23     
-    vmulps  %zmm24, %zmm25, %zmm26     
-    vaddps  %zmm27, %zmm28, %zmm29     
-    movabsq $160, %rax
+    vmulps      %zmm1,  %zmm2,  %zmm0
+    vaddps      %zmm3,  %zmm4,  %zmm5
+    vmulps      %zmm6,  %zmm7,  %zmm8
+    vaddps      %zmm9,  %zmm10, %zmm11
+    vmulps      %zmm12, %zmm13, %zmm14
+    vaddps      %zmm15, %zmm16, %zmm17
+    vmulps      %zmm18, %zmm19, %zmm20
+    vaddps      %zmm21, %zmm22, %zmm23
+    vmulps      %zmm24, %zmm25, %zmm26
+    vaddps      %zmm27, %zmm28, %zmm29
+    movl        $160,   %eax
     ret
+    .size   tops_f32_avx512ma_asm_kernel, .-tops_f32_avx512ma_asm_kernel
 
+    .type   tops_f16_avx512ma_asm_kernel, @function
 tops_f16_avx512ma_asm_kernel:
-    vmulph  %zmm1,  %zmm2,  %zmm0      
-    vaddph  %zmm3,  %zmm4,  %zmm5      
-    vmulph  %zmm6,  %zmm7,  %zmm8      
-    vaddph  %zmm9,  %zmm10, %zmm11     
-    vmulph  %zmm12, %zmm13, %zmm14     
-    vaddph  %zmm15, %zmm16, %zmm17     
-    vmulph  %zmm18, %zmm19, %zmm20     
-    vaddph  %zmm21, %zmm22, %zmm23     
-    vmulph  %zmm24, %zmm25, %zmm26     
-    vaddph  %zmm27, %zmm28, %zmm29     
-    movabsq $320, %rax
+    vmulph      %zmm1,  %zmm2,  %zmm0
+    vaddph      %zmm3,  %zmm4,  %zmm5
+    vmulph      %zmm6,  %zmm7,  %zmm8
+    vaddph      %zmm9,  %zmm10, %zmm11
+    vmulph      %zmm12, %zmm13, %zmm14
+    vaddph      %zmm15, %zmm16, %zmm17
+    vmulph      %zmm18, %zmm19, %zmm20
+    vaddph      %zmm21, %zmm22, %zmm23
+    vmulph      %zmm24, %zmm25, %zmm26
+    vaddph      %zmm27, %zmm28, %zmm29
+    movl        $320,   %eax
     ret
+    .size   tops_f16_avx512ma_asm_kernel, .-tops_f16_avx512ma_asm_kernel
 
+    .type   tops_f64_avx2ma_asm_kernel, @function
 tops_f64_avx2ma_asm_kernel:
-    vmulpd  %ymm1,  %ymm2,  %ymm0
-    vaddpd  %ymm3,  %ymm4,  %ymm5
-    vmulpd  %ymm6,  %ymm7,  %ymm8
-    vaddpd  %ymm9,  %ymm10, %ymm11
-    vmulpd  %ymm12, %ymm13, %ymm14
-    movabsq $20, %rax
+    vmulpd      %ymm1,  %ymm2,  %ymm0
+    vaddpd      %ymm3,  %ymm4,  %ymm5
+    vmulpd      %ymm6,  %ymm7,  %ymm8
+    vaddpd      %ymm9,  %ymm10, %ymm11
+    vmulpd      %ymm12, %ymm13, %ymm14
+    movl        $20,    %eax
     ret
+    .size   tops_f64_avx2ma_asm_kernel, .-tops_f64_avx2ma_asm_kernel
 
+    .type   tops_f32_avx2ma_asm_kernel, @function
 tops_f32_avx2ma_asm_kernel:
-    vmulps  %ymm1,  %ymm2,  %ymm0
-    vaddps  %ymm3,  %ymm4,  %ymm5
-    vmulps  %ymm6,  %ymm7,  %ymm8
-    vaddps  %ymm9,  %ymm10, %ymm11
-    vmulps  %ymm12, %ymm13, %ymm14
-    movabsq $40, %rax
+    vmulps      %ymm1,  %ymm2,  %ymm0
+    vaddps      %ymm3,  %ymm4,  %ymm5
+    vmulps      %ymm6,  %ymm7,  %ymm8
+    vaddps      %ymm9,  %ymm10, %ymm11
+    vmulps      %ymm12, %ymm13, %ymm14
+    movl        $40,    %eax
     ret
+    .size   tops_f32_avx2ma_asm_kernel, .-tops_f32_avx2ma_asm_kernel
 
 # Tell the linker/assembler that we do NOT need an executable stack:
     .section .note.GNU-stack, "", @progbits
