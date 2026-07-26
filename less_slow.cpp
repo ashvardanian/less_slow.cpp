@@ -3856,6 +3856,14 @@ BENCHMARK(pipeline_cpp20_coroutine<toy_generator_t>);
  *  the transfer of control between co-routines. This requires compiler support for tail
  *  calls, that isn't universally available. Moreover, the current logic of checking
  *  for compiler support only applies to Clang, so we override it here.
+ *
+ *  It doesn't pay off at this shape. `recursive_generator` is the @b slowest of the
+ *  three at 1554ns, against 1201ns for `cppcoro::generator` and 1102ns for our naive
+ *  `toy_generator`, which never hands control off at all. Collapsing nested resumptions
+ *  into a tail call needs a @b deep delegation chain to repay its extra indirection,
+ *  and this pipeline is four stages pulled one value at a time.
+ *
+ *  @see Github issue: https://github.com/ashvardanian/less_slow.cpp/issues/15
  */
 #define CPPCORO_COMPILER_SUPPORTS_SYMMETRIC_TRANSFER 1
 #include <cppcoro/generator.hpp>
