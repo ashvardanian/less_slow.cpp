@@ -6096,10 +6096,10 @@ BENCHMARK(graph_rank<graph_flat_set>)->MinTime(10)->Name("graph_rank<absl::flat_
  *       by Fedor Pikus at CppCon 2017: https://youtu.be/ZQFzMfHIxng
  */
 
-#include <atomic>             // `std::atomic`
-#include <condition_variable> // `std::condition_variable`
-#include <mutex>              // `std::mutex`
-#include <shared_mutex>       // `std::shared_mutex`
+#include <atomic>       // `std::atomic`
+#include <mutex>        // `std::mutex`
+#include <future>       // `std::promise`
+#include <shared_mutex> // `std::shared_mutex`
 
 #pragma endregion // Concurrency
 
@@ -7787,10 +7787,6 @@ class rpc_asio_client {
     std::vector<std::chrono::steady_clock::time_point> send_times_;
     /// @brief Where each response came from — one per slot, never shared
     std::vector<asio::ip::udp::endpoint> response_sources_;
-    /// @brief Guards the batch counters written from the `io_context` thread
-    std::mutex batch_mutex_;
-    /// @brief Signalled once the last outstanding receive has been accounted for
-    std::condition_variable batch_finished_;
     /// @brief Keeps the `io_context` from running out of work and exiting
     asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
 
@@ -7826,20 +7822,23 @@ class rpc_asio_client {
     rpc_batch_result one_batch() {
         rpc_batch_result result;
 
-        // Counts outstanding receives. Every handler decrements exactly once, so zero
-        // means no handler can still reach the locals of this frame.
+        //! Only one thread ever calls `context_.run()`, so ASIO runs every handler on
+        //! that thread alone. They can't race each other and `result` needs no lock —
+        //! the only edge that crosses threads is the handoff back to us, which the
+        //! promise already orders — `set_value` happens-before the `wait` returns.
         std::size_t remaining = buffers_.size();
+        std::promise<void> batch_finished;
+        std::future<void> batch_finished_future = batch_finished.get_future();
 
         auto on_response = [&](std::size_t job) {
-            return [this, job, &result, &remaining](std::error_code error, std::size_t) {
-                std::lock_guard<std::mutex> lock(batch_mutex_); //! Written from the `io_context` thread
+            return [this, job, &result, &remaining, &batch_finished](std::error_code error, std::size_t) {
                 if (!error) {
                     auto const latency = std::chrono::steady_clock::now() - send_times_[job];
                     result.batch_latency += latency;
                     result.max_packet_latency = std::max(result.max_packet_latency, latency);
                     result.received_packets++;
                 }
-                if (--remaining == 0) batch_finished_.notify_one();
+                if (--remaining == 0) batch_finished.set_value();
             };
         };
 
@@ -7857,13 +7856,10 @@ class rpc_asio_client {
 
         //! Return as soon as the last reply lands. On timeout we cancel, but `cancel()`
         //! only requests it and the aborted handlers still run holding references to
-        //! `result` and `remaining`, so drain to zero before unwinding into a dead frame.
-        std::unique_lock<std::mutex> lock(batch_mutex_);
-        if (!batch_finished_.wait_for(lock, rpc_batch_timeout_k, [&] { return remaining == 0; })) {
-            lock.unlock();
+        //! this frame, so wait for the drain before unwinding out from under them.
+        if (batch_finished_future.wait_for(rpc_batch_timeout_k) != std::future_status::ready) {
             socket_.cancel();
-            lock.lock();
-            batch_finished_.wait(lock, [&] { return remaining == 0; });
+            batch_finished_future.wait();
         }
         return result;
     }
