@@ -500,20 +500,28 @@ BENCHMARK_CAPTURE(sorting_with_executors, seq, std::execution::seq)
     ->UseRealTime();
 
 /**
- *  Memory leak observed in libstdc++ using oneTBB under specific conditions:
+ *  Older libstdc++ leaks here, eating RAM within seconds: the PSTL oneTBB backend
+ *  freed a task's buffer before decrementing its refcount — @b GCC-PR-117276.
+ *  Absent in 13 and 14, present in 15 and 16, so we gate on 15 rather than
+ *  permanently clamping to one iteration, which would break the `Complexity` fit.
+ *  Distros backport on their own schedule; if 15 still eats RAM, require 16.
+ *
  *  @see Github issue: https://github.com/ashvardanian/less_slow.cpp/issues/17
- *
- *  A workaround is implemented by limiting the number of iterations
- *  for this benchmark to a single run.
- *
- *  This adjustment is applied to the benchmark below:
  */
+#if defined(__GLIBCXX__) && _GLIBCXX_RELEASE < 15
+#define LESS_SLOW_PAR_UNSEQ_LEAKS 1
+#else
+#define LESS_SLOW_PAR_UNSEQ_LEAKS 0
+#endif
+
 BENCHMARK_CAPTURE(sorting_with_executors, par_unseq, std::execution::par_unseq)
     ->RangeMultiplier(4)
     ->Range(1l << 20, 1l << 28)
-    //! Revert from `Iterations` to `MinTime` once the leak is resolved!
-    //! ->MinTime(10)
-    ->Iterations(1)
+#if LESS_SLOW_PAR_UNSEQ_LEAKS
+    ->Iterations(1) //! Enough to time the sort, few enough to survive the leak
+#else
+    ->MinTime(10)
+#endif
     ->Complexity(bm::oNLogN)
     ->UseRealTime();
 
