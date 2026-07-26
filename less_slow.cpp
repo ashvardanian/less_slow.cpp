@@ -7419,10 +7419,20 @@ BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* mess
  *
  *  Let's add all of those!
  *
- *  - `IORING_SETUP_COOP_TASKRUN` doesn't work
- *  - `IORING_SETUP_SINGLE_ISSUER` doesn't help
- *  - `IORING_SETUP_SUBMIT_ALL` - core dumped :O
- *  - `IORING_OP_SEND_ZC` - core dumped :O
+ *  Those flags looked broken for years, but none of it was a kernel bug — all of them
+ *  predate this region's own `KERNEL_VERSION(6, 0, 0)` guard. We were violating
+ *  documented behavior: `SINGLE_ISSUER` binds the ring to the task that @b created it,
+ *  and this server built its ring on the benchmark thread while submitting from its
+ *  own worker, so the kernel answered @b EEXIST.
+ *
+ *  Creating it where it is used fixes that, and buys nothing measurable — 1578us
+ *  either way. The locking these flags remove is not this benchmark's bottleneck.
+ *
+ *  Probe, don't guess: `io_uring_queue_init_params` returns @b -EINVAL for unsupported
+ *  flags, so a fall-back needs no `/proc` parsing. Note `LINUX_VERSION_CODE` below
+ *  reads the @b build headers rather than the running kernel — the wrong axis.
+ *
+ *  @see `io_uring_setup(2)`: https://man7.org/linux/man-pages/man2/io_uring_setup.2.html
  */
 
 #pragma region IO Uring for Linux Kernel 6.0
@@ -7443,7 +7453,9 @@ class rpc_uring60_server {
     int socket_descriptor_;
     sockaddr_in server_address_;
     std::atomic_bool should_stop_;
-    io_uring ring_;
+    io_uring ring_ {}; //! Zeroed, so `ring_fd` alone says whether it is live
+    /// @brief Built in the constructor, so `init_ring` allocates nothing
+    std::vector<struct iovec> registered_iovecs_;
 
     // Pre-allocated resources
     mmap_array<message_t> messages_;
@@ -7464,14 +7476,6 @@ class rpc_uring60_server {
         if (setsockopt(socket_descriptor_, SOL_SOCKET, SO_ZEROCOPY, &one, sizeof(one)) < 0)
             raise_system_error("Failed to enable zero-copy on socket");
 
-        // Initialize `io_uring` with one slot for each receive/send operation
-        // TODO: |= IORING_SETUP_COOP_TASKRUN | IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_SUBMIT_ALL
-        auto io_uring_setup_flags = 0;
-        if (io_uring_queue_init(max_concurrency * 2, &ring_, io_uring_setup_flags) < 0)
-            raise_system_error("Failed to initialize io_uring 6.0 server");
-        if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
-            raise_system_error("Failed to register file descriptor with io_uring 6.0 server");
-
         // Initialize message resources
         for (message_t &message : messages_) {
             memset(&message.header, 0, sizeof(message.header));
@@ -7486,22 +7490,43 @@ class rpc_uring60_server {
             message.status = status_t::pending_k;
         }
 
-        // Let's register all of those with `IORING_REGISTER_BUFFERS`
-        std::vector<struct iovec> iovecs_to_register;
-        for (message_t &message : messages_) iovecs_to_register.push_back(message.io_vec);
-        if (io_uring_register_buffers(&ring_, iovecs_to_register.data(), iovecs_to_register.size()) < 0)
-            raise_system_error("Failed to register buffers with io_uring 6.0 server");
+        registered_iovecs_.reserve(messages_.size());
+        for (message_t &message : messages_) registered_iovecs_.push_back(message.io_vec);
     }
 
     ~rpc_uring60_server() noexcept {}
     void close() noexcept {
         ::close(socket_descriptor_);
-        io_uring_queue_exit(&ring_);
+        if (ring_.ring_fd) io_uring_queue_exit(&ring_);
     }
+
+  private:
+    /**
+     *  @brief Builds the ring on the calling thread, so `SINGLE_ISSUER` binds here.
+     *
+     *  `IORING_SETUP_R_DISABLED` is the alternative: create early, enable from the
+     *  worker. Reports failure by return value because this runs inside a `noexcept`
+     *  thread body, where an escaping exception would call `std::terminate`.
+     */
+    [[nodiscard]] bool init_ring() noexcept {
+        io_uring_params parameters;
+        memset(&parameters, 0, sizeof(parameters));
+        parameters.flags = IORING_SETUP_COOP_TASKRUN | IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_SUBMIT_ALL;
+        //! Reports failure instead of throwing — this runs inside a `noexcept` thread
+        //! body, where an escaping exception would call `std::terminate`.
+        if (io_uring_queue_init_params(max_concurrency_ * 2, &ring_, &parameters) < 0) return false;
+        if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0) return false;
+        return io_uring_register_buffers(&ring_, registered_iovecs_.data(), registered_iovecs_.size()) >= 0;
+    }
+
+  public:
 
     void stop() noexcept { should_stop_.store(true, std::memory_order_seq_cst); }
 
     void operator()() noexcept {
+        //! Built on this thread so `SINGLE_ISSUER` binds to the right task. On failure
+        //! the server stays silent, which the harness surfaces as a 100% drop rate.
+        if (!init_ring()) return;
         // Submit the initial receive operation
         {
             message_t &message = *messages_.begin();
@@ -7584,8 +7609,12 @@ class rpc_uring60_client {
         // Initialize io_uring with one slot for each send/receive/timeout operation,
         // as well as a batch-level timeout operation and a cancel operation for the
         // batch-level timeout.
-        auto io_uring_setup_flags = 0;
-        if (io_uring_queue_init(concurrency * 3 + 1 + 1, &ring_, io_uring_setup_flags) < 0)
+        //! Unlike the server, the client is constructed and driven from the same
+        //! thread, so `SINGLE_ISSUER` binds correctly without deferring setup.
+        io_uring_params parameters;
+        memset(&parameters, 0, sizeof(parameters));
+        parameters.flags = IORING_SETUP_COOP_TASKRUN | IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_SUBMIT_ALL;
+        if (io_uring_queue_init_params(concurrency * 3 + 1 + 1, &ring_, &parameters) < 0)
             raise_system_error("Failed to initialize io_uring 6.0 client");
         if (io_uring_register_files(&ring_, &socket_descriptor_, 1) < 0)
             raise_system_error("Failed to register file descriptor with io_uring 6.0 client");
