@@ -80,7 +80,7 @@ BENCHMARK(i32_addition);
  *  interleaving it with the higher-level C++ code:
  */
 
-#if defined(__GNUC__) && !defined(__clang__) //! GCC and Clang support inline assembly, MSVC doesn't!
+#if !defined(_MSC_VER) //! GCC and Clang support GNU-style inline assembly, MSVC doesn't!
 
 #if defined(__x86_64__) || defined(__i386__) //? Works for both 64-bit and 32-bit x86 architectures
 
@@ -137,7 +137,7 @@ BENCHMARK(i32_addition_inline_asm);
 
 #endif // defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
 
-#endif // defined(__GNUC__) && !defined(__clang__)
+#endif // !defined(_MSC_VER)
 
 /**
  *  We can also put the assembly kernels into separate `.S` files and link them
@@ -995,8 +995,8 @@ static void branch_cost(bm::State &state) {
     for (auto _ : state) {
         std::int32_t random = random_values[(++iteration) & (count - 1)];
         bm::DoNotOptimize( //
-            variable =     // ! Fun fact: multiplication compiles to a jump,
-            (random & 1)   // ! but replacing with a bitwise operation results in a conditional move.
+            variable =     // ! Whether this becomes a branch or a conditional
+            (random & 1)   // ! move is entirely up to the compiler's mood.
                 ? (variable + random)
                 : (variable ^ random));
     }
@@ -1008,7 +1008,7 @@ BENCHMARK(branch_cost)->RangeMultiplier(4)->Range(256, 32 * 1024);
  *  It's hard to reason if the above code should compile into a conditional move or a jump,
  *  so let's define explicit inline assembly kernels and compare both.
  */
-#if defined(__GNUC__) && !defined(__clang__) //! GCC/Clang inline asm note in your code, keep MSVC out
+#if !defined(_MSC_VER) //! GCC and Clang support GNU-style inline assembly, MSVC doesn't!
 
 #if defined(__x86_64__) || defined(__i386__)
 
@@ -1023,10 +1023,14 @@ static void branch_cost_cmov(bm::State &state) {
         std::int32_t const random = random_values[(++iteration) & (count - 1)];
         std::int32_t sum; // early-clobber temp for LEA result
 
-        asm volatile(                            //
-            "leal (%[var],%[rnd],1), %[sum]\n\t" // sum := variable + random
-            "xorl %[rnd], %[var]\n\t"            // var := variable ^ random
-            "testl $1, %[rnd]\n\t"               // if (random & 1) var := sum
+        // The `q` modifier names the 64-bit halves of our 32-bit operands. Spelling
+        // them as `%[var]` would make the `leal` below use a 32-bit address and pay
+        // for an `0x67` prefix. It truncates to 32 bits either way, so the garbage
+        // in the upper halves can never reach the result.
+        asm volatile(                              //
+            "leal (%q[var],%q[rnd],1), %[sum]\n\t" // sum := variable + random
+            "xorl %[rnd], %[var]\n\t"              // var := variable ^ random
+            "testl $1, %[rnd]\n\t"                 // if (random & 1) var := sum
             "cmovne %[sum], %[var]\n\t"
             : [var] "+r"(variable), [sum] "=&r"(sum)
             : [rnd] "r"(random)
@@ -1118,7 +1122,7 @@ BENCHMARK(branch_cost_branch)->RangeMultiplier(4)->Range(256, 32 * 1024);
 
 #endif
 
-#endif // __GNUC__ && !__clang__
+#endif // !defined(_MSC_VER)
 
 /**
  *  Results are quite interesting. On Intel:
