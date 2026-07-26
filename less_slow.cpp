@@ -2202,9 +2202,13 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *    - `i8`, `u8`:             @b 683 T 🤯🤯🤯   -                -
  *
  *  > ¹ The FMA throughput on Intel can be insanely low for denormal numbers!
- *  > ² AVX-512 has weird `i8` by `u8` multiplication instructions, which don't
- *      seem useful for any 8-bit problems I've encountered, but are handy for
- *      7-bit representations.
+ *  > ² AVX-512's `i8` by `u8` multiplication instructions look unusable for real
+ *      8-bit problems, and are obviously handy for 7-bit representations. Algebra
+ *      makes them general: `a XOR 0x80` reinterprets a signed operand as unsigned,
+ *      so `SUM a[i] * b[i]` becomes `SUM (a[i] + 128) * b[i] - 128 * SUM b[i]`,
+ *      and `SUM b` is a property of `b` alone — precompute it once per vector.
+ *      @see NumKong's `nk_dot_i8_icelake`:
+ *      https://github.com/ashvardanian/NumKong/blob/a35ddcdeefa511d34838b04134080e6a416ffacf/include/numkong/dot/icelake.h#L99-L156
  *
  *  The Fused-Multiply-Add performance should be higher than separate Multiply
  *  and Add operations. Moreover, there is no direct support for `bf16` math
