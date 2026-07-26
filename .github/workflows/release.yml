@@ -33,6 +33,7 @@ jobs:
           version-file: "VERSION"
           update-version-in: |
             CMakeLists.txt:^\s*VERSION (\d+\.\d+\.\d+)
+            CITATION.cff:^version: (\d+\.\d+\.\d+)
           dry-run: "false"
           push: "true"
           create-release: "true"

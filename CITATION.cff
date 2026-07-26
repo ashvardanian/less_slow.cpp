@@ -1,0 +1,112 @@
+cff-version: 1.2.0
+title: "less_slow.cpp: Less Slow Coding Practices in C++ 20, C, CUDA, PTX, & Assembly, from Numerics & SIMD to Coroutines, Ranges, Exception Handling, Networking, & User-Space IO"
+message: "If you use this software, please cite it as below."
+type: software
+license: Apache-2.0
+version: 0.11.1
+repository-code: https://github.com/ashvardanian/less_slow.cpp
+url: https://ashvardanian.com/tags/less-slow/
+doi: 10.5281/zenodo.21612057
+abstract: >-
+  Educational micro-benchmarks for building a performance-first mindset in
+  C++20, C, CUDA, PTX, and Assembly, measuring the real cost of abstractions
+  from a few nanoseconds upward. It spans numerics and approximate math,
+  SIMD kernels for AVX-2, AVX-512, and AMX on x86 alongside NEON, SVE, and
+  SVE2 on Arm, branch prediction and pipeline effects, memory allocators and
+  cache-friendly data layouts, coroutines, ranges, senders, and executors,
+  string splitting, regular expressions, and JSON parsing, trees, graphs, and
+  structure packing, plus user-space networking with io_uring and ASIO. On
+  GPUs it covers Tensor Core generations from Volta SM70 and Ampere SM80
+  through Hopper SM90a, including hand-written PTX, WGMMA, and DPX kernels
+  for dynamic-programming workloads.
+
+authors:
+  - family-names: Vardanian
+    given-names: Ash
+    alias: ashvardanian
+    orcid: https://orcid.org/0000-0002-4882-1815
+
+keywords:
+  - benchmarking
+  - performance-engineering
+  - cpp20
+  - cuda
+  - ptx
+  - assembly
+  - simd
+  - avx512
+  - tensor-cores
+  - coroutines
+  - io-uring
+
+references:
+  - type: article
+    title: "Mastering C++ with Google Benchmark"
+    url: https://ashvardanian.com/posts/google-benchmark/
+    date-published: 2022-03-04
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
+  - type: article
+    title: "Hiding x86 Port Latency for 330 GB/s/core Reductions"
+    url: https://ashvardanian.com/posts/cpu-ports/
+    date-published: 2025-01-19
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
+  - type: article
+    title: "Beyond OpenMP in C++ & Rust: Taskflow, Rayon, Fork Union"
+    url: https://ashvardanian.com/posts/beyond-openmp-in-cpp-rust/
+    date-published: 2025-05-20
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
+  - type: article
+    title: "Parsing JSON in C & C++: Singleton Tax"
+    url: https://ashvardanian.com/posts/parsing-json-with-allocators-cpp/
+    date-published: 2025-01-07
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
+  - type: article
+    title: "10x Faster C++ String Split, 16 Years Later"
+    url: https://ashvardanian.com/posts/splitting-strings-cpp/
+    date-published: 2025-01-02
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
+  - type: article
+    title: "Understanding SIMD: Infinite Complexity of Trivial Problems"
+    url: https://ashvardanian.com/posts/understanding-simd-complexity/
+    date-published: 2024-11-25
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
+  - type: article
+    title: "The Painful Pitfalls of C++ STL Strings"
+    url: https://ashvardanian.com/posts/painful-strings/
+    date-published: 2024-02-12
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
+  - type: article
+    title: "Crushing CPUs with 879 GB/s Reductions in CUDA"
+    url: https://ashvardanian.com/posts/cuda-parallel-reductions/
+    date-published: 2022-01-28
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
+  - type: article
+    title: "Failing to Reach DDR4 Bandwidth"
+    url: https://ashvardanian.com/posts/ddr4-bandwidth/
+    date-published: 2022-01-29
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
+  - type: article
+    title: "Only 1% of Software Benefits from SIMD Instructions"
+    url: https://ashvardanian.com/posts/simd-popularity/
+    date-published: 2021-11-21
+    authors:
+      - family-names: Vardanian
+        given-names: Ash

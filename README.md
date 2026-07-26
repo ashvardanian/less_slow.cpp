@@ -190,3 +190,17 @@ If you write a lot of benchmarks and avoid going to the full [User Guide](https:
 - `->Unit(kMicrosecond)` - Set time unit for reporting
 - `->UseRealTime()` - Measure real time instead of CPU time
 - `->UseManualTime()` - To feed custom timings for GPU and IO benchmarks
+
+## Citation
+
+If this repository helps your research, teaching, or product, please cite it:
+
+```bibtex
+@software{Vardanian_less_slow_cpp,
+  author = {Vardanian, Ash},
+  title = {{less_slow.cpp: Less Slow Coding Practices in C++ 20, C, CUDA, PTX, & Assembly}},
+  doi = {10.5281/zenodo.21612057},
+  url = {https://github.com/ashvardanian/less_slow.cpp},
+  license = {Apache-2.0}
+}
+```
