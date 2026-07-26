@@ -1,7 +1,5 @@
-# ----------------------------------------------------------------------------
 # less_slow_aarch64.asm
 # Micro-kernels for building a performance-first mindset for 64-bit ARM (NEON).
-# ----------------------------------------------------------------------------
 
 #ifdef __APPLE__
     #define SYMBOL_NAME(name) _##name  // Add underscore on macOS
@@ -19,19 +17,15 @@
     .global SYMBOL_NAME(tops_i8_neon_asm_kernel)
     .global SYMBOL_NAME(tops_u8_neon_asm_kernel)
 
-# ----------------------------------------------------------------------------
 # Simple function that adds two 32-bit integers. 
 # AArch64 ABI: W0 = 'a', W1 = 'b'. Return in W0.
-# ----------------------------------------------------------------------------
 SYMBOL_NAME(i32_add_asm_kernel):
     add     w0, w0, w1
     ret
 
-# ----------------------------------------------------------------------------
 # f64 micro-kernel:
 # Each FMLA vD.2d, vN.2d, vM.2d => 2 multiplies + 2 adds = 4 FLOPs.
 # We'll do 10 instructions => 10 × 4 = 40 FLOPs total, returning 40 in W0.
-# ----------------------------------------------------------------------------
 SYMBOL_NAME(tops_f64_neon_asm_kernel):
     fmla    v0.2d,  v1.2d,  v2.2d
     fmla    v3.2d,  v4.2d,  v5.2d
@@ -47,12 +41,10 @@ SYMBOL_NAME(tops_f64_neon_asm_kernel):
     mov     w0, #40
     ret
 
-# ----------------------------------------------------------------------------
 # f32 micro-kernel maximizing FLOPs:
 # Each FMLA vD.4s, vN.4s, vM.4s => 4 multiplies + 4 adds = 8 FLOPs.
 # Let's do 10 instructions => 10 × 8 = 80 FLOPs total.
 # Return 80 in W0.
-# ----------------------------------------------------------------------------
 SYMBOL_NAME(tops_f32_neon_asm_kernel):
     fmla    v0.4s,  v1.4s,  v2.4s
     fmla    v3.4s,  v4.4s,  v5.4s
@@ -68,12 +60,10 @@ SYMBOL_NAME(tops_f32_neon_asm_kernel):
     mov     w0, #80
     ret
 
-# ----------------------------------------------------------------------------
 # f16 micro-kernel:
 # Requires Armv8.2 half-precision vector arithmetic.
 # Each FMLA vD.8h, vN.8h, vM.8h => 8 multiplies + 8 adds = 16 FLOPs.
 # We'll do 10 instructions => 160 FLOPs total, returning 160 in W0.
-# ----------------------------------------------------------------------------
 SYMBOL_NAME(tops_f16_neon_asm_kernel):
     fmla    v0.8h,  v1.8h,  v2.8h
     fmla    v3.8h,  v4.8h,  v5.8h
@@ -89,12 +79,10 @@ SYMBOL_NAME(tops_f16_neon_asm_kernel):
     mov     w0, #160
     ret
 
-# ----------------------------------------------------------------------------
 # bf16 micro-kernel:
 # Requires Armv8.6 BF16 instructions (BFMMLA, etc.).
 # bfmmla  vD.4s, vN.8h, vM.8h => 8 multiplies + 8 adds = 16 FLOPs.
 # We'll do 10 instructions => 160 FLOPs total, returning 160 in W0.
-# ----------------------------------------------------------------------------
 SYMBOL_NAME(tops_bf16_neon_asm_kernel):
     bfmmla  v0.4s,  v1.8h,  v2.8h
     bfmmla  v3.4s,  v4.8h,  v5.8h
@@ -110,12 +98,10 @@ SYMBOL_NAME(tops_bf16_neon_asm_kernel):
     mov     w0, #160
     ret
 
-# ----------------------------------------------------------------------------
 # i8 micro-kernel:
 # Requires Armv8.4 sdot or i8mm extension.
 # sdot vD.4s, vN.16b, vM.16b => 16 multiplies + 16 adds = 32 FLOPs.
 # We'll do 10 instructions => 320 FLOPs total, returning 320 in W0.
-# ----------------------------------------------------------------------------
 SYMBOL_NAME(tops_i8_neon_asm_kernel):
     sdot    v0.4s,  v1.16b,  v2.16b
     sdot    v3.4s,  v4.16b,  v5.16b
@@ -131,12 +117,10 @@ SYMBOL_NAME(tops_i8_neon_asm_kernel):
     mov     w0, #320
     ret
 
-# ----------------------------------------------------------------------------
 # u8 micro-kernel:
 # Requires Armv8.4 i8mm extension.
 # udot vD.4s, vN.16b, vM.16b => 16 multiplies + 16 adds = 32 FLOPs.
 # We'll do 10 instructions => 320 FLOPs total, returning 320 in W0.
-# ----------------------------------------------------------------------------
 SYMBOL_NAME(tops_u8_neon_asm_kernel):
     udot    v0.4s,  v1.16b,  v2.16b
     udot    v3.4s,  v4.16b,  v5.16b
@@ -152,9 +136,7 @@ SYMBOL_NAME(tops_u8_neon_asm_kernel):
     mov     w0, #320
     ret
 
-# ----------------------------------------------------------------------------
 # Tell the linker/assembler that we do NOT need an executable stack:
 #ifdef __linux__
     .section .note.GNU-stack, "", @progbits
 #endif
-# ----------------------------------------------------------------------------

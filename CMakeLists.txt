@@ -2,9 +2,7 @@
 # Ubuntu 24.04 comes with 3.28!
 cmake_minimum_required(VERSION 3.25.2 FATAL_ERROR)
 
-# ------------------------------------------------------------------------------
 # Project Setup
-# ------------------------------------------------------------------------------
 project(
     less_slow
     VERSION 0.11.1
@@ -41,9 +39,7 @@ if (NOT DEFINED CMAKE_BUILD_PARALLEL_LEVEL)
     )
 endif ()
 
-# ------------------------------------------------------------------------------
 # Detect CUDA Support
-# ------------------------------------------------------------------------------
 set(_SUPPORTS_CUDA OFF)
 include(CheckLanguage)
 check_language(CUDA)
@@ -56,9 +52,7 @@ else ()
     message(STATUS "CUDA not detected. Skipping CUDA-specific builds.")
 endif ()
 
-# ------------------------------------------------------------------------------
 # Options
-# ------------------------------------------------------------------------------
 
 # Enable or disable options based on system and CUDA support
 if (_SUPPORTS_CUDA)
@@ -89,9 +83,7 @@ message(STATUS "USE_INTEL_TBB: ${USE_INTEL_TBB}")
 message(STATUS "USE_NVIDIA_CCCL: ${USE_NVIDIA_CCCL}")
 message(STATUS "USE_BLAS: ${USE_BLAS}")
 
-# ------------------------------------------------------------------------------
 # Dependencies
-# ------------------------------------------------------------------------------
 find_package(Threads REQUIRED)
 find_package(OpenMP QUIET)
 
@@ -197,9 +189,8 @@ if (USE_INTEL_TBB)
     )
     FetchContent_MakeAvailable(IntelTBB)
 
-    # ------------------------------------------------------------------------------
     # TBB fix for -Wstringop-overflow warnings treated as errors
-    # ------------------------------------------------------------------------------
+
     # The TBB library target is typically called "tbb". We can explicitly disable the `stringop-overflow` warning for
     # TBB only:
     if (TARGET tbb)
@@ -353,9 +344,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(LibEigenEigen)
 
-# ------------------------------------------------------------------------------
 # Main Executable
-# ------------------------------------------------------------------------------
 add_executable(less_slow less_slow.cpp)
 set_target_properties(less_slow PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -371,9 +360,7 @@ elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64|arm64")
     target_sources(less_slow PRIVATE less_slow_aarch64.S)
 endif ()
 
-# ------------------------------------------------------------------------------
 # Compiler Flags / Options
-# ------------------------------------------------------------------------------
 
 # Check for compiler support of `-march=native`
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
@@ -446,9 +433,7 @@ elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     endif ()
 endif ()
 
-# ------------------------------------------------------------------------------
 # Link Libraries
-# ------------------------------------------------------------------------------
 target_compile_definitions(less_slow PRIVATE USE_NVIDIA_CCCL=$<BOOL:${USE_NVIDIA_CCCL}>)
 target_compile_definitions(less_slow PRIVATE USE_INTEL_TBB=$<BOOL:${USE_INTEL_TBB}>)
 target_compile_definitions(less_slow PRIVATE USE_BLAS=$<BOOL:${USE_BLAS}>)

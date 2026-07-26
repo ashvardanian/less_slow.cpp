@@ -1,6 +1,6 @@
 /**
- *  @brief  Low-level CUDA kernels for building a performance-first mindset.
- *  @file   less_slow.cuh
+ *  @brief Low-level CUDA kernels for building a performance-first mindset.
+ *  @file less_slow.cuh
  *  @author Ash Vardanian
  *
  *  The contents of this file complement the contents of the `less_slow.cpp`
@@ -122,7 +122,7 @@ void reverse_and_sort_with_cub(std::uint32_t *device_pointer, std::size_t array_
 #pragma region Scalar Operations
 
 /**
- *  @brief  On-device @b Fused-Multiply-Add operator, that for most numeric
+ *  @brief On-device @b Fused-Multiply-Add operator, that for most numeric
  *          types will be replaced by a single PTX instruction on most GPUs.
  */
 struct fma_t {
@@ -359,7 +359,7 @@ __global__ void tops_i32i32_sm90dpx_16x16x16_loop128_smith_waterman_cuda_kernel(
 #include <mma.h> // `mma::` intrinsics
 
 /**
- *  @brief  A CUDA kernel that @b repeatedly computes the product of two small
+ *  @brief A CUDA kernel that @b repeatedly computes the product of two small
  *          matrices of size MxN and NxK using Tensor Cores.
  */
 template <typename input_type_, typename output_type_, int m_, int n_, int k_, int repetitions_ = 128>

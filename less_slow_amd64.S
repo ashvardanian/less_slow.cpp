@@ -1,7 +1,6 @@
-# ----------------------------------------------------------------------------
 # less_slow_amd64.asm
 # Micro-kernels for building a performance-first mindset for 64-bit x86.
-# ----------------------------------------------------------------------------
+
 # Export symbols so linkers can find them:
 
     .section .text
@@ -33,22 +32,18 @@
     .global tops_f64_avx2ma_asm_kernel
     .global tops_f32_avx2ma_asm_kernel
 
-# ----------------------------------------------------------------------------
 # Simple function that adds two 32-bit signed integers using System V AMD64.
 # Arguments in 32-bit registers EDI (a) and ESI (b). Return value in EAX.
-# ----------------------------------------------------------------------------
 i32_add_asm_kernel:
     addl    %esi, %edi      # EDI = EDI + ESI
     movl    %edi, %eax      # EAX = EDI
     ret
 
-# ----------------------------------------------------------------------------
 # AVX-512 micro-kernels measuring Tensor Operations Per Second (TOPS)
 # without accounting for memory bandwidth or latency. The following kernels
 # assume presence of 32x 512-bit long registers (ZMM0-ZMM31).
 # Each reports return the aggregate number of floating-point operations - 
 # multiplications and additions forming the FMA instruction - performed.
-# ----------------------------------------------------------------------------
 
 tops_f64_avx512fma_asm_kernel:
     # Each vfmadd231pd does: DEST = DEST + (SRC1 * SRC2)
@@ -161,10 +156,8 @@ tops_i7_avx512fma_asm_kernel:
     movabsq $1280, %rax
     ret
 
-# ----------------------------------------------------------------------------
 # AVX2 micro-kernels differ from AVX-512 in that they have fewer registers,
 # and those registers are narrower. We have 16x 256-bit YMM registers.
-# ----------------------------------------------------------------------------
 
 tops_f64_avx2fma_asm_kernel:
     vfmadd231pd %ymm1, %ymm2, %ymm0
@@ -184,7 +177,6 @@ tops_f32_avx2fma_asm_kernel:
     movabsq $80, %rax
     ret
 
-# ----------------------------------------------------------------------------
 # AMX is an Intel-specific extension that introduces a new set of registers
 # and instructions for matrix multiplication. Proper usage would require
 # loading the tile configuration file, setting up the tile registers, loading
@@ -192,7 +184,6 @@ tops_f32_avx2fma_asm_kernel:
 # putting back. We will avoid most of those steps!
 #
 # https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#amxtechs=AMX_BF16,AMX_INT8,AMX_FP16
-# ----------------------------------------------------------------------------
 
 tops_bf16_amx_asm_kernel:
     # Each line performs a 16x32x16 matrix multiplication.
@@ -224,10 +215,8 @@ tops_i8_amx_asm_kernel:
     movabsq $130048, %rax
     ret
 
-# ----------------------------------------------------------------------------
 # Mixed kernels that combine AMX and AVX-512 instructions, hiding the latency
 # of some instructions by interleaving them with others.
-# ----------------------------------------------------------------------------
 
 tops_i7_amx_avx512fma_asm_kernel:
 
@@ -282,7 +271,6 @@ tops_i7_amx_avx512fma_asm_kernel:
     movabsq $135168, %rax
     ret
 
-# ----------------------------------------------------------------------------
 
 
 tops_f64_avx512ma_asm_kernel:
@@ -347,7 +335,5 @@ tops_f32_avx2ma_asm_kernel:
     movabsq $40, %rax
     ret
 
-# ----------------------------------------------------------------------------
 # Tell the linker/assembler that we do NOT need an executable stack:
     .section .note.GNU-stack, "", @progbits
-# ----------------------------------------------------------------------------

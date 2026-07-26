@@ -1,6 +1,6 @@
 /**
- *  @brief  Low-level micro-benchmarks for building a performance-first mindset.
- *  @file   less_slow.cpp
+ *  @brief Low-level micro-benchmarks for building a performance-first mindset.
+ *  @file less_slow.cpp
  *  @author Ash Vardanian
  *
  *  There's no Easter bunny, no tooth fairy... and no free abstractions!
@@ -284,8 +284,8 @@ BENCHMARK(i32_addition_randomly_initialized);
 #endif
 
 /**
- *  @brief  Returns the number of physical cores available on the system,
- *          as opposed to the logical cores, which include hyper-threading.
+ *  @brief Returns the number of physical cores available on the system,
+ *      as opposed to the logical cores, which include hyper-threading.
  */
 std::size_t physical_cores() {
 #if defined(__linux__)
@@ -389,9 +389,9 @@ BENCHMARK(i32_addition_randomly_initialized)->Threads(physical_cores());
 #include <numeric>   // `std::iota`
 
 /**
- *  @brief  A minimalistic `std::vector` replacement, wrapping an aligned
- *          allocation similar to `std::unique_ptr`.
- *  @see    https://stackoverflow.com/a/79363156/2766161
+ *  @brief A minimalistic `std::vector` replacement, wrapping an aligned
+ *      allocation similar to `std::unique_ptr`.
+ *  @see https://stackoverflow.com/a/79363156/2766161
  */
 template <typename type_>
 class aligned_array {
@@ -664,8 +664,8 @@ BENCHMARK(sorting_with_openmp)
 using namespace std::string_literals; // For `""s` literals
 
 /**
- *  @brief  Reverses the array and sorts it with Nvidia's Thrust from CCCL.
- *  @see    Declared in `less_slow.cpp`, but defined in @b `less_slow.cu`!
+ *  @brief Reverses the array and sorts it with Nvidia's Thrust from CCCL.
+ *  @see Declared in `less_slow.cpp`, but defined in @b `less_slow.cu`!
  */
 extern void reverse_and_sort_with_thrust(std::uint32_t *device_pointer, std::size_t array_length);
 
@@ -828,8 +828,8 @@ BENCHMARK(sorting_with_cub)
 #include <utility> // `std::swap`
 
 /**
- *  @brief  Quick-Sort helper function for array partitioning, reused by both
- *          recursive and iterative implementations.
+ *  @brief Quick-Sort helper function for array partitioning, reused by both
+ *      recursive and iterative implementations.
  */
 template <typename element_type_>
 struct quick_sort_partition {
@@ -849,8 +849,8 @@ struct quick_sort_partition {
 };
 
 /**
- *  @brief  Quick-Sort implementation as a C++ function object, using recursion.
- *          Note, recursion and @b inlining are not compatible.
+ *  @brief Quick-Sort implementation as a C++ function object, using recursion.
+ *      Note, recursion and @b inlining are not compatible.
  */
 template <typename element_type_>
 struct quick_sort_recurse {
@@ -867,8 +867,8 @@ struct quick_sort_recurse {
 };
 
 /**
- *  @brief  Quick-Sort implementation as a C++ function object, with iterative
- *          deepening using a "stack" data-structure.
+ *  @brief Quick-Sort implementation as a C++ function object, with iterative
+ *      deepening using a "stack" data-structure.
  *
  *  Note, this implementation can be inlined, but can't be @b `noexcept`, due to
  *  a potential memory allocation in the `std::vector::resize` function.
@@ -2708,7 +2708,7 @@ BENCHMARK_CAPTURE(                                                              
 #endif
 
 /**
- *  @brief  Checks if a number is a power of two.
+ *  @brief Checks if a number is a power of two.
  *
  *  An unsigned integer is a power of two if and only if it has exactly one
  *  bit set. This can be checked by using the bitwise AND operator with the
@@ -2754,7 +2754,7 @@ LESS_SLOW_ALWAYS_INLINE bool is_power_of_two(std::uint64_t x) noexcept { return 
 #include <fstream>  // `std::ifstream`
 
 /**
- *  @brief  Reads the contents of a file from the specified path into a string.
+ *  @brief Reads the contents of a file from the specified path into a string.
  */
 std::string read_file_contents(std::string const &path) {
     std::ifstream file(path);
@@ -2766,8 +2766,8 @@ std::string read_file_contents(std::string const &path) {
 }
 
 /**
- *  @brief  Fetches the cache line size using OS-specific APIs.
- *          Supports Linux, macOS, and Windows.
+ *  @brief Fetches the cache line size using OS-specific APIs.
+ *      Supports Linux, macOS, and Windows.
  *
  *  It's easier to use the @b `std::hardware_destructive_interference_size`
  *  in C++ 17 and newer, if the `__cpp_lib_hardware_interference_size` feature
@@ -2809,7 +2809,7 @@ std::size_t fetch_cache_line_width() {
 }
 
 /**
- *  @brief  A minimalistic pointer with non-unit stride/step.
+ *  @brief A minimalistic pointer with non-unit stride/step.
  */
 template <typename value_type_>
 class strided_ptr {
@@ -2860,9 +2860,9 @@ class strided_ptr {
 
 #if defined(__aarch64__)
 /**
- *  @brief  Helper derived from `__aarch64_sync_cache_range` in `libgcc`, used to
- *          @b flush the cache on Arm64, where the x86 `_mm_clflush` intrinsic is not available.
- *  @param  address The address to flush from the cache, must be aligned to the cache line size.
+ *  @brief Helper derived from `__aarch64_sync_cache_range` in `libgcc`, used to
+ *      @b flush the cache on Arm64, where the x86 `_mm_clflush` intrinsic is not available.
+ *  @param address The address to flush from the cache, must be aligned to the cache line size.
  */
 void _mm_clflush(void const *address) { asm volatile("dc\tcvau, %0" : : "r"(address) : "memory"); }
 #endif
@@ -3282,8 +3282,8 @@ BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity
 #include <cublas_v2.h>
 
 /**
- *  @brief  A minimalistic replacement for `std::vector`, wrapping a "Unified
- *          Memory" allocation managed by @b `cudaMallocManaged`.
+ *  @brief A minimalistic replacement for `std::vector`, wrapping a "Unified
+ *      Memory" allocation managed by @b `cudaMallocManaged`.
  *
  *  "Unified Memory" is a single memory space accessible by both the host (CPU)
  *  and some external device (like a GPU). It simplifies memory management by
@@ -3416,8 +3416,8 @@ BENCHMARK(cublas_tops<int8_t, int32_t>)->RangeMultiplier(2)->Range(8, 16384)->Co
  *  ! For `FP4`, similarly the only consistently used configuration is `e2m1 * e2m1`.
  *  ! The compute type must be `CUBLAS_COMPUTE_32F` for both single- and half-precision outputs.
  *
- *  @see    "Using the cuBLASLt API" docs: https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api
- *  @note   To avoid including the `<cuda_fp8.h>` header, we define alternatives to `__nv_fp8_e4m3` & `__nv_fp8_e5m2`.
+ *  @see "Using the cuBLASLt API" docs: https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api
+ *  @note To avoid including the `<cuda_fp8.h>` header, we define alternatives to `__nv_fp8_e4m3` & `__nv_fp8_e5m2`.
  */
 #include <cublasLt.h>
 
@@ -3617,8 +3617,8 @@ constexpr std::uint64_t pipe_start = 3;
 constexpr std::uint64_t pipe_end = 49;
 
 /**
- *  @brief  Checks if a number is a power of three using modulo division.
- *          The largest power of three fitting in a 64-bit integer is 3^40.
+ *  @brief Checks if a number is a power of three using modulo division.
+ *      The largest power of three fitting in a 64-bit integer is 3^40.
  */
 LESS_SLOW_ALWAYS_INLINE bool is_power_of_three(std::uint64_t x) noexcept {
     constexpr std::uint64_t max_power_of_three = 12157665459056928801ull;
@@ -3628,7 +3628,7 @@ LESS_SLOW_ALWAYS_INLINE bool is_power_of_three(std::uint64_t x) noexcept {
 #pragma region Coroutines and Asynchronous Programming
 
 /**
- *  @brief  Supplies the prime factors to a template-based callback.
+ *  @brief Supplies the prime factors to a template-based callback.
  */
 template <typename callback_type_>
 LESS_SLOW_ALWAYS_INLINE void prime_factors_lambdas( //
@@ -3942,8 +3942,7 @@ static_assert(std::ranges::view<prime_factors_view>, "The range must model `std:
 static_assert(std::ranges::input_range<prime_factors_view>, "The range must model `std::ranges::input_range`");
 
 /**
- *  @brief  Inverts the output of a boolean-returning function.
- *          Useful for search predicates.
+ *  @brief Inverts the output of a boolean-returning function. Useful for search predicates.
  */
 template <typename function_type_>
 constexpr auto not_fn(function_type_ f) noexcept {
@@ -4745,7 +4744,7 @@ struct arena_t {
 };
 
 /**
- *  @brief  Allocates a new chunk of `size` bytes from the arena.
+ *  @brief Allocates a new chunk of `size` bytes from the arena.
  *  @return The new pointer or `nullptr` if OOM.
  */
 inline std::byte *allocate_from_arena(arena_t &arena, std::size_t size) noexcept {
@@ -4758,8 +4757,8 @@ inline std::byte *allocate_from_arena(arena_t &arena, std::size_t size) noexcept
 }
 
 /**
- *  @brief  Deallocates a chunk of memory previously allocated from the arena.
- *          This implementation does not "reuse" partial free space unless everything is freed.
+ *  @brief Deallocates a chunk of memory previously allocated from the arena.
+ *      This implementation does not "reuse" partial free space unless everything is freed.
  */
 inline void deallocate_from_arena(arena_t &arena, std::byte *ptr, std::size_t size) noexcept {
     // Check if ptr is within the arena
@@ -4773,9 +4772,9 @@ inline void deallocate_from_arena(arena_t &arena, std::byte *ptr, std::size_t si
 }
 
 /**
- *  @brief  Reallocates `ptr` to have `new_size` bytes. The old size was `old_size`.
- *          If `ptr` is the last chunk allocated, and there's room to grow in place, just expands.
- *          Otherwise, do allocates, copies, and frees.
+ *  @brief Reallocates `ptr` to have `new_size` bytes. The old size was `old_size`.
+ *      If `ptr` is the last chunk allocated, and there's room to grow in place, just expands.
+ *      Otherwise, do allocates, copies, and frees.
  *  @return The new pointer or `nullptr` if OOM.
  */
 inline std::byte *reallocate_from_arena( //
@@ -5838,8 +5837,8 @@ enum class execution_mode_t { serial_k, parallel_k };
 #include <span>    // `std::span`
 
 /**
- *  @brief  Generates a Watts-Strogatz small-world graph forming a ring lattice
- *          with `k` neighbors per vertex and rewiring probability `p`.
+ *  @brief Generates a Watts-Strogatz small-world graph forming a ring lattice
+ *      with `k` neighbors per vertex and rewiring probability `p`.
  *
  *  @param[out] graph The graph to be generated.
  *  @param[inout] generator Random number generator to be used.
@@ -5896,7 +5895,7 @@ void watts_strogatz(                                //
 }
 
 /**
- *  @brief  Produces a non-repeating sorted (monotonically increasing) sequence of vertex IDs.
+ *  @brief Produces a non-repeating sorted (monotonically increasing) sequence of vertex IDs.
  *  @param[in] size The number of unique vertex IDs to generate.
  */
 std::vector<vertex_id_t> make_vertex_ids(std::mt19937_64 &generator, std::size_t size) noexcept(false) {
@@ -5938,7 +5937,7 @@ void page_rank(                                                        //
 }
 
 /**
- *  @brief  Benchmarks building a Watts-Strogatz small-world graph.
+ *  @brief Benchmarks building a Watts-Strogatz small-world graph.
  *
  *  @tparam allocation_mode_ Do we allocate from the default global allocator or an arena?
  *  @tparam compaction_mode_ Do we compact the graph after construction or not?
@@ -6701,12 +6700,12 @@ struct addressed_socket_t {
 };
 
 /**
- *  @brief  Opens the socket and binds it to the specified address and port.
- *  @param  port The port to bind to.
- *  @param  address The address to bind to. If "0.0.0.0" for IPv4 (or "::" for IPv6),
- *          we bind to all interfaces, meaning we can receive packets from any network
- *          interface. Binding to "127.0.0.1" (or "::1" for IPv6) will only allow
- *          packets from the loopback interface, which can be handy for testing.
+ *  @brief Opens the socket and binds it to the specified address and port.
+ *  @param port The port to bind to.
+ *  @param address The address to bind to. If "0.0.0.0" for IPv4 (or "::" for IPv6),
+ *      we bind to all interfaces, meaning we can receive packets from any network
+ *      interface. Binding to "127.0.0.1" (or "::1" for IPv6) will only allow
+ *      packets from the loopback interface, which can be handy for testing.
  */
 addressed_socket_t rpc_server_socket(std::uint16_t port, std::string const &address = "0.0.0.0") {
     addressed_socket_t server;
@@ -6730,9 +6729,9 @@ addressed_socket_t rpc_server_socket(std::uint16_t port, std::string const &addr
 }
 
 /**
- *  @brief  Opens the socket and resolves the server address.
- *  @param  port The port to bind to on the server.
- *  @param  address The address to bind to on the server.
+ *  @brief Opens the socket and resolves the server address.
+ *  @param port The port to bind to on the server.
+ *  @param address The address to bind to on the server.
  */
 addressed_socket_t rpc_client_socket(std::string const &server_addr, std::uint16_t port) {
     addressed_socket_t client;
@@ -6748,9 +6747,9 @@ addressed_socket_t rpc_client_socket(std::string const &server_addr, std::uint16
 }
 
 /**
- *  @brief  A minimal RPC @b server using LibC functionality to setup the UDP socket,
- *          and synchronous blocking POSIX calls to receive and send packets -
- *          @b one at a time!
+ *  @brief A minimal RPC @b server using LibC functionality to setup the UDP socket,
+ *      and synchronous blocking POSIX calls to receive and send packets -
+ *      @b one at a time!
  */
 class rpc_libc_server {
     int socket_descriptor_;
@@ -6794,9 +6793,9 @@ class rpc_libc_server {
 };
 
 /**
- *  @brief  A minimal RPC @b client using LibC functionality to setup the UDP socket,
- *          and synchronous blocking POSIX calls to send and receive packets -
- *          @b one at a time!
+ *  @brief A minimal RPC @b client using LibC functionality to setup the UDP socket,
+ *      and synchronous blocking POSIX calls to send and receive packets -
+ *      @b one at a time!
  */
 class rpc_libc_client {
     int socket_descriptor_;
@@ -6959,8 +6958,8 @@ std::pair<int, int> fetch_linux_kernel_version() {
 }
 
 /**
- *  @brief  Memory allocator, sharing the same memory region between the kernel and user-space.
- *  @note   This is essential for `IORING_REGISTER_BUFFERS`.
+ *  @brief Memory allocator, sharing the same memory region between the kernel and user-space.
+ *  @note This is essential for `IORING_REGISTER_BUFFERS`.
  */
 template <typename type_>
 class mmap_array {
@@ -7002,7 +7001,7 @@ class mmap_array {
 };
 
 /**
- *  @brief  Wraps the `rpc_buffer_t` with metadata about the client address.
+ *  @brief Wraps the `rpc_buffer_t` with metadata about the client address.
  *
  *  It's a common pattern in async systems to store request metadata next
  *  to the buffer to locate both with a single pointer.
@@ -7022,8 +7021,8 @@ struct alignas(64) message_t {
 };
 
 /**
- *  @brief  A minimal RPC @b server using @b `io_uring` functionality
- *          to setup the UDP socket, and process many requests concurrently.
+ *  @brief A minimal RPC @b server using @b `io_uring` functionality
+ *      to setup the UDP socket, and process many requests concurrently.
  */
 class rpc_uring55_server {
 
@@ -7125,8 +7124,8 @@ class rpc_uring55_server {
 };
 
 /**
- *  @brief  A minimal RPC @b client using @b `io_uring` functionality
- *          to setup the UDP socket, and process many requests in batches.
+ *  @brief A minimal RPC @b client using @b `io_uring` functionality
+ *      to setup the UDP socket, and process many requests in batches.
  */
 class rpc_uring55_client {
 
@@ -7343,8 +7342,8 @@ BENCHMARK_CAPTURE(rpc_uring55, public, networking_route_t::public_k, 256 /* mess
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 
 /**
- *  @brief  A minimal RPC @b server using @b `io_uring` functionality
- *          to setup the UDP socket, and process many requests concurrently.
+ *  @brief A minimal RPC @b server using @b `io_uring` functionality
+ *      to setup the UDP socket, and process many requests concurrently.
  *
  *  Unlike the `rpc_uring55_server`, this version:
  *  - registers buffers and off-loads buffer selection to the kernel
@@ -7460,8 +7459,8 @@ class rpc_uring60_server {
 };
 
 /**
- *  @brief  A minimal RPC @b client using @b `io_uring` functionality
- *          to setup the UDP socket, and process many requests in batches.
+ *  @brief A minimal RPC @b client using @b `io_uring` functionality
+ *      to setup the UDP socket, and process many requests in batches.
  */
 class rpc_uring60_client {
 
