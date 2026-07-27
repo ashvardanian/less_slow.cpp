@@ -3,7 +3,7 @@ title: "less_slow.cpp: Less Slow Coding Practices in C++ 20, C, CUDA, PTX, & Ass
 message: "If you use this software, please cite it as below."
 type: software
 license: Apache-2.0
-version: 0.11.1
+version: 0.11.2
 repository-code: https://github.com/ashvardanian/less_slow.cpp
 url: https://ashvardanian.com/tags/less-slow/
 doi: 10.5281/zenodo.21612057
