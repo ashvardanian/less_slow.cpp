@@ -22,8 +22,9 @@
  *  @see Rust Benchmarks: https://github.com/ashvardanian/less_slow.rs
  *  @see Python Benchmarks: https://github.com/ashvardanian/less_slow.py
  *
- *  Most measurements were performed on Intel Sapphire Rapids CPUs on AWS,
- *  but the findings match across hardware platforms unless explicitly noted.
+ *  Measurements come from two machines — a 16-core Intel Xeon 4 server
+ *  and an 18-core Apple M5 Pro — and the findings match across both unless
+ *  explicitly noted. Numbers from other hardware are labelled where they appear.
  *
  *  Worth noting, that some examples may seem over-engineered, but they are
  *  no less relevant or impractical. They may be hard to recognize at first,
@@ -1383,7 +1384,7 @@ BENCHMARK(f64_sin_maclaurin_powless)->Iterations(1e7);
  *
  *  The danger and the speed live in different flags. Summing 2^20 `float`s,
  *  where the win comes from vectorizing a reduction that strict ordering
- *  forbids, on one Sapphire Rapids core:
+ *  forbids, on one Intel Xeon 4 core:
  *
  *      - `-O2`:                         @b 3.32us, guard works
  *      - `-ffast-math`:                 @b 1.49us, guard @b deleted
@@ -1909,10 +1910,11 @@ BENCHMARK(f32x4x4_matmul_avx512);
 #endif // defined(__AVX512F__)
 
 /**
- *  The result is @b 2.8ns on Sapphire Rapids—a modest 10% improvement. To
- *  fully leverage AVX-512, we need larger matrices where horizontal reductions
- *  don't dominate latency. For small sizes like 4x4, the wide ZMM registers
- *  aren't fully utilized.
+ *  The result is @b 3.65ns on Intel Xeon 4, against @b 3.68ns for the unrolled
+ *  scalar version — under 1% apart, so AVX-512 buys nothing here. To fully
+ *  leverage it, we need larger matrices where horizontal reductions don't
+ *  dominate latency. For small sizes like 4x4, the wide ZMM registers aren't
+ *  fully utilized.
  *
  *  As an exercise, try implementing matrix multiplication for 3x3 matrices.
  *  Despite requiring fewer operations (27 multiplications and 18 additions
@@ -1962,8 +1964,8 @@ static void theoretic_tops(                        //
  *  Denormals are the single biggest confounder in these kernels. They never
  *  load their inputs, operating on whatever the caller left in the registers,
  *  and a stray denormal drags the whole loop into microcode assists. On
- *  Sapphire Rapids `tops_f64_avx512fma` reports @b 2.7 GFLOP/s with the flags
- *  below cleared, against @b 68 with them set — a 25x swing that has nothing
+ *  Intel Xeon 4 `tops_f64_avx512fma` reports @b 2.7 GFLOP/s with the flags
+ *  below cleared, against @b 66 with them set — a 24x swing that has nothing
  *  to do with the instruction under test.
  */
 #if defined(__AVX512F__) || defined(__AVX2__)
@@ -2223,47 +2225,43 @@ BENCHMARK_CAPTURE(theoretic_tops, i8_amx, tops_i8_amx_asm_kernel, configure_amx)
  *  frequency, and has a larger cache, which is crucial for many workloads.
  *  On a single CPU core, we can achieve the following FMA throughput:
  *
- *                              Intel Xeon 4     AMD Zen 4        Graviton 4       Apple M5 Pro
+ *                              Intel Xeon 4      Apple M5 Pro
  *    @b FMA in AVX-512 & NEON:
- *    - `f64`:                  @b 1.2-76 G ¹    @b 58 G          @b 31 G          @b 42 G
- *    - `f32`:                  @b 3.1-135 G ¹   @b 117 G         @b 63 G          @b 82 G
- *    - `bf16`:                 @b 121 G         @b 235 G         @b 202 G ³       @b 68 G ⁴
- *    - `f16`:                  @b 286 G 🤯🤯     -                @b 116 G         @b 167 G
- *    - `i16`:                  @b 342 G 🤯🤯     -                -                -
- *    - `i7`: ²                 @b 678 G         @b 470 G 🤯🤯     -                -
- *    - `i8`, `u8`:             -                -                @b 1.1 T         @b 340 G
+ *    - `f64`:                  @b 66 G           @b 42 G
+ *    - `f32`:                  @b 129 G          @b 82 G
+ *    - `bf16`:                 @b 95 G           @b 68 G ²
+ *    - `f16`:                  @b 296 G 🤯🤯      @b 167 G
+ *    - `i16`:                  @b 293 G 🤯🤯      -
+ *    - `i7`: ¹                 @b 572 G          -
+ *    - `i8`, `u8`:             -                 @b 340 G
  *    @b Mat-Mul in AMX & SME:
- *    - `bf16`:                 @b 3.7 T         -                -                -
- *    - `i8`, `u8`:             @b 7.3 T 🤯🤯🤯   -                -                -
+ *    - `bf16`:                 @b 3.0 T          -
+ *    - `i8`, `u8`:             @b 6.4 T 🤯🤯🤯    -
  *
- *  On a high-end dual-socket system, comparing `c7i.metal-48xl` to `c7a.metal-48xl`
- *  and `c8g.metal-48xl` 192-core instances on AWS, against an 18-core M5 Pro:
+ *  Across every core of the same machines — 16 Xeon 4 cores against an 18-core
+ *  M5 Pro, 6 performance and 12 efficiency:
  *
- *                              Intel Xeon 4     AMD Zen 4        Graviton 4       Apple M5 Pro
+ *                              Intel Xeon 4      Apple M5 Pro
  *    @b FMA in AVX-512 & NEON:
- *    - `f64`:                  @b 0.2-8.2 T ¹   @b 9.3 T         @b 4.2 T         @b 646 G
- *    - `f32`:                  @b 0.6-15.1 T ¹  @b 20.1 T        @b 8.4 T         @b 1.3 T
- *    - `bf16`:                 @b 9.8 T         @b 41.8 T        @b 40.2 T ³      @b 1.0 T ⁴
- *    - `f16`:                  @b 35.4 T        -                @b 16.8 T        @b 2.6 T
- *    - `i16`:                  @b 34.3 T        -                -                -
- *    - `i7`:                   @b 76 T          @b 81.3 T        -                -
- *    - `i8`, `u8`:             -                -                @b 38.2 T        @b 5.3 T
+ *    - `f64`:                  @b 683 G          @b 646 G
+ *    - `f32`:                  @b 1.4 T          @b 1.3 T
+ *    - `bf16`:                 @b 811 G          @b 1.0 T ²
+ *    - `f16`:                  @b 3.5 T          @b 2.6 T
+ *    - `i16`:                  @b 3.5 T          -
+ *    - `i7`:                   @b 6.8 T          -
+ *    - `i8`, `u8`:             -                 @b 5.3 T
  *    @b Mat-Mul in AMX & SME:
- *    - `bf16`:                 @b 306 T         -                -                -
- *    - `i8`, `u8`:             @b 688 T 🤯🤯🤯   -                -                -
+ *    - `bf16`:                 @b 23.5 T         -
+ *    - `i8`, `u8`:             @b 48.4 T 🤯🤯🤯   -
  *
- *  > ¹ The FMA throughput on Intel can be insanely low for denormal numbers!
- *  > ² AVX-512's `i8` by `u8` multiplication instructions look unusable for real
+ *  > ¹ AVX-512's `i8` by `u8` multiplication instructions look unusable for real
  *      8-bit problems, and are obviously handy for 7-bit representations. Algebra
  *      makes them general: `a XOR 0x80` reinterprets a signed operand as unsigned,
  *      so `SUM a[i] * b[i]` becomes `SUM (a[i] + 128) * b[i] - 128 * SUM b[i]`,
  *      and `SUM b` is a property of `b` alone — precompute it once per vector.
  *      @see NumKong's `nk_dot_i8_icelake`:
  *      https://github.com/ashvardanian/NumKong/blob/a35ddcdeefa511d34838b04134080e6a416ffacf/include/numkong/dot/icelake.h#L99-L156
- *  > ³ `BFMMLA` is a 2x4 by 4x2 matrix product, so it retires twice the work a
- *      lane-wise `FMLA` reading of it suggests. The rest of the Graviton column
- *      predates the `FPCR.FZ` fix and is worth re-measuring.
- *  > ⁴ `BFMMLA` retires the same 32 operations as `SDOT`, yet takes 5x longer per
+ *  > ² `BFMMLA` retires the same 32 operations as `SDOT`, yet takes 5x longer per
  *      instruction on Apple silicon. `SME` is the matrix path there, not NEON.
  *
  *  The Fused-Multiply-Add performance should be higher than separate Multiply
@@ -3171,13 +3169,16 @@ BENCHMARK_CAPTURE(spread_memory, scatter_sve, spread_scatter_sve, max_sve_size_k
  *  in functionality and may have a bigger improvement over scalar code than
  *  AVX-512 on a similar-level x86 platform!
  *
- *  If you are very lucky with your input sizes, on small arrays under 65K
- *  on AWS Graviton, gathers can be up to 4x faster compared to serial code!
- *  On larger sizes, they again start losing to serial code. This makes
- *  their applicability very limited 😡
+ *  Measured on AWS Graviton, the only SVE hardware within reach — Apple exposes
+ *  @b SME rather than SVE, so this whole region is unreachable there:
  *
- *  Vectorized scatters are universally slower than serial code on Graviton
- *  for small inputs, but on larger ones over 1MB start winning up to 50%!
+ *  If you are very lucky with your input sizes, on small arrays under 65K,
+ *  gathers can be up to 4x faster compared to serial code! On larger sizes,
+ *  they again start losing to serial code. This makes their applicability
+ *  very limited 😡
+ *
+ *  Vectorized scatters are universally slower than serial code for small
+ *  inputs, but on larger ones over 1MB start winning up to 50%!
  *  Great way to get everyone confused 🤬
  */
 #endif
@@ -3326,36 +3327,25 @@ BENCHMARK(eigen_tops<_Float16>)->RangeMultiplier(2)->Range(8, 16384)->Complexity
 #endif
 
 /**
- *  Now we can compare the theoretical limits to the actual performance
- *  of Eigen and BLAS libraries. On a dual-socket system, 192-core Intel
- *  Xeon 4 instances on AWS, we can achieve the following FMA throughput:
+ *  Now we can compare the theoretical limits to the actual performance of Eigen
+ *  and BLAS, across the same 16 Intel Xeon 4 cores:
  *
  *                    Theoretical             OpenBLAS     Eigen
  *
- *  - `f64`           @b 4.1 T (AVX-512)      @b 3.1 T     @b 2.9 T
- *  - `f32`           @b 8.9 T (AVX-512)      @b 6.4 T     @b 7.5 T
- *  - `bf16`          @b 306 T (AMX)          -            -
- *  - `f16`           @b 35.4 T (AVX-512)     -            @b 396 G
- *  - `i16`:          @b 34.3 T (AVX-512)     -            @b 255 G
- *  - `i8` & `u8`     @b 688 T (AMX)          -            @b 182 G
+ *  - `f64`           @b 683 G (AVX-512)      @b 472 G     @b 453 G
+ *  - `f32`           @b 1.4 T (AVX-512)      @b 855 G     @b 869 G
+ *  - `bf16`          @b 23.5 T (AMX)         -            -
+ *  - `f16`           @b 3.5 T (AVX-512)      -            @b 44 G
+ *  - `i16`:          @b 3.5 T (AVX-512)      -            @b 142 G
+ *  - `i8` & `u8`     @b 48.4 T (AMX)         -            @b 98 G
  *
  *  Important to note, for different libraries and data types, the highest
  *  throughput was achieved with different shapes and the best number is shown.
  *
- *  Similarly on the dual-socket Graviton 4 instances on AWS, we can achieve:
- *
- *                    Theoretical             OpenBLAS     Eigen
- *
- *  - `f64`           @b 4.2 T                @b 1.2 T     @b 1.2 T
- *  - `f32`           @b 8.4 T                @b 2.3 T     @b 1.3 T
- *  - `bf16`          @b 40.2 T               -            -
- *  - `f16`           @b 16.8 T               -            @b 660 G
- *  - `i16`:          -                       -            @b 6.5 T
- *  - `i8` & `u8`     @b 38.2 T               -            @b 13.4 T
- *
- *  As expected, modern libraries are generally far less optimized for Arm,
- *  but for some applications dealing with 8-bit integers, Eigen can be good
- *  enough.
+ *  Both libraries reach roughly two thirds of the AVX-512 ceiling on `f32` and
+ *  `f64`, and neither touches AMX at all — which is why the 8-bit and `bf16` rows
+ *  sit two to three orders of magnitude below it. The tile instructions are only
+ *  worth their setup cost if something actually issues them.
  */
 
 #if USE_NVIDIA_CCCL
@@ -4064,12 +4054,13 @@ BENCHMARK(pipeline_cpp20_std_ranges);
 #endif // defined(__cpp_lib_ranges)
 
 /**
- *  The results for the input range [3, 49] on Intel Xeon 5 are as follows:
+ *  The results for the input range [3, 49] on one Intel Xeon 4 core are as follows:
  *
- *      - `pipeline_cpp11_lambdas`:        @b 295ns
- *      - `pipeline_cpp11_std_function`:   @b 762ns
- *      - `pipeline_cpp20_coroutines`:     @b 717ns for toy, over @b 828ns for `cppcoro`
- *      - `pipeline_cpp20_std_ranges`:     @b 247ns
+ *      - `pipeline_cpp11_lambdas`:        @b 358ns
+ *      - `pipeline_cpp11_std_function`:   @b 932ns
+ *      - `pipeline_cpp20_coroutines`:     @b 841ns for toy, @b 887ns for `cppcoro`
+ *      - `pipeline_cpp20_std_ranges`:     @b 295ns
+ *      - `pipeline_unifex`:               @b 499ns
  *
  *  On Apple M5 Pro:
  *
@@ -4231,11 +4222,11 @@ BENCHMARK(pipeline_virtual_functions);
  *  Performance-wise, on this specific micro-example, the virtual functions
  *  are somewhere in the middle between C++20 ranges and C++11 STL solution.
  *
- *      - `pipeline_cpp11_lambdas`:      @b 295ns
- *      - `pipeline_cpp11_std_function`: @b 831ns
- *      - `pipeline_cpp20_coroutines`:   @b 708ns
- *      - `pipeline_cpp20_std_ranges`:   @b 216ns
- *      - `pipeline_virtual_functions`:  @b 491ns
+ *      - `pipeline_cpp11_lambdas`:      @b 358ns
+ *      - `pipeline_cpp11_std_function`: @b 932ns
+ *      - `pipeline_cpp20_coroutines`:   @b 841ns
+ *      - `pipeline_cpp20_std_ranges`:   @b 295ns
+ *      - `pipeline_virtual_functions`:  @b 652ns
  *
  *  This code is a hazard for multiple reasons:
  *
@@ -5491,15 +5482,15 @@ BENCHMARK(json_simdjson_dom)->MinTime(10)->Name("json_simdjson<dom>")->Threads(p
 
 /**
  *  The results for the single-threaded case and the multi-threaded case without
- *  Simultaneous Multi-Threading @b (SMT), with 96 threads on 96 Sapphire Rapids
+ *  Simultaneous Multi-Threading @b (SMT), with 16 threads on 16 Intel Xeon 4
  *  cores, are as follows:
  *
- *  - `json_yyjson<malloc>`:                       @b 359 ns       @b 369 ns
- *  - `json_yyjson<arena>`:                        @b 326 ns       @b 326 ns
- *  - `json_nlohmann<std::allocator, throw>`:      @b 6'440 ns     @b 11'821 ns
- *  - `json_nlohmann<arena_allocator, throw>`:     @b 6'041 ns     @b 11'601 ns
- *  - `json_nlohmann<std::allocator, noexcept>`:   @b 4'741 ns     @b 11'512 ns
- *  - `json_nlohmann<arena_allocator, noexcept>`:  @b 4'316 ns     @b 12'209 ns
+ *  - `json_yyjson<malloc>`:                       @b 358 ns       @b 763 ns
+ *  - `json_yyjson<arena>`:                        @b 319 ns       @b 642 ns
+ *  - `json_nlohmann<std::allocator, throw>`:      @b 5'933 ns     @b 11'412 ns
+ *  - `json_nlohmann<arena_allocator, throw>`:     @b 5'266 ns     @b 10'240 ns
+ *  - `json_nlohmann<std::allocator, noexcept>`:   @b 4'251 ns     @b 8'132 ns
+ *  - `json_nlohmann<arena_allocator, noexcept>`:  @b 3'711 ns     @b 7'076 ns
  *
  *  The reason, why `yyjson` numbers are less affected by the allocator change,
  *  is because it doesn't need many dynamic allocations. It manages a linked list
@@ -6407,10 +6398,10 @@ BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(
 BENCHMARK(errors_with_status)->ComputeStatistics("max", get_max_value)->MinTime(2)->Threads(physical_cores());
 
 /**
- *  On Intel Sapphire Rapids:
- *  - Throwing an STL exception: @b 268ns single-threaded, @b 815ns multi-threaded.
- *  - Returning an STL error code: @b 7ns single-threaded, @b 24ns multi-threaded.
- *  - Returning a custom status code: @b 4ns single-threaded, @b 15ns multi-threaded.
+ *  On 16 Intel Xeon 4 cores:
+ *  - Throwing an STL exception: @b 256ns single-threaded, @b 583ns multi-threaded.
+ *  - Returning an STL error code: @b 12ns single-threaded, @b 24ns multi-threaded.
+ *  - Returning a custom status code: @b 7ns single-threaded, @b 15ns multi-threaded.
  *
  *  On Apple M5 Pro, across 6 performance and 12 efficiency cores:
  *  - Throwing an STL exception: @b 540ns single-threaded, @b 767ns multi-threaded.
