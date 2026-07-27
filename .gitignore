@@ -3,6 +3,7 @@ debug/
 build/
 build_debug/
 build_release/
+CMakeUserPresets.json
 .DS_Store
 
 # Temporary binaries
