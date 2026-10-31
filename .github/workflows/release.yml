@@ -1,40 +1,20 @@
 name: Release
 
 on:
-  push:
-    branches: ["main"]
+  release:
+    types: [published]
 
-env:
-  BUILD_TYPE: Release
-  GH_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
-  PYTHONUTF8: 1
-
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
-  contents: write
-  pages: write
-  id-token: write
-  packages: write
+  contents: read
 
 jobs:
-  versioning:
-    name: Update Version
-    runs-on: ubuntu-24.04
+  hooks:
+    name: Check Release Commit
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - name: Run TinySemVer
-        uses: ashvardanian/tinysemver@v3
-        with:
-          verbose: "true"
-          version-file: "VERSION"
-          update-version-in: |
-            CMakeLists.txt:^\s*VERSION (\d+\.\d+\.\d+)
-            CITATION.cff:^version: (\d+\.\d+\.\d+)
-          dry-run: "false"
-          push: "true"
-          create-release: "true"
-          github-token: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+      - name: Check the Release Commit
+        run: .github/scripts/check-release.sh "$GITHUB_REF_NAME"
