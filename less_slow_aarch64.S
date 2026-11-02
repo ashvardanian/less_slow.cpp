@@ -104,6 +104,7 @@ FUNC_SIZE(tops_f16_neon_asm_kernel)
 # one, and vD.4s a 2x2 accumulator. Each of the 4 outputs sums 4 products, so
 # bfmmla => 16 multiplies + 16 adds = 32 FLOPs.
 # We'll do 10 instructions => 320 FLOPs total, returning 320 in W0.
+#if defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
 FUNC_TYPE(tops_bf16_neon_asm_kernel)
 SYMBOL_NAME(tops_bf16_neon_asm_kernel):
     bfmmla  v0.4s,   v18.8h,  v19.8h
@@ -120,6 +121,7 @@ SYMBOL_NAME(tops_bf16_neon_asm_kernel):
     mov     w0, #320
     ret
 FUNC_SIZE(tops_bf16_neon_asm_kernel)
+#endif
 
 # i8 micro-kernel:
 # Requires FEAT_DotProd - optional since Armv8.2, mandatory from Armv8.4.
