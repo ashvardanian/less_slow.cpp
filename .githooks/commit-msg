@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#
+# less_slow.cpp commit-msg hook. Releases are cut by hand with `.github/scripts/mint-release.sh`, so a
+# `Release: vX.Y.Z` commit must carry its version at every site, and no other commit may change VERSION.
+
+set -u
+LC_ALL=C
+
+subject=$(sed -n '1p' "$1")
+
+case "$subject" in
+    "Release:"*)
+        version=$(printf '%s\n' "$subject" | sed -nE 's/^Release: v([0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?)$/\1/p')
+        if [ -z "$version" ]; then
+            echo "commit-msg: a release subject is exactly 'Release: vX.Y.Z' or 'Release: vX.Y.Z-rc.N'." >&2
+            exit 1
+        fi
+        core=${version%%-*}
+        stale=""
+        [ "$(git show :VERSION 2> /dev/null)" = "$version" ] || stale="$stale VERSION"
+        git show :CMakeLists.txt 2> /dev/null | grep -qE "^[[:space:]]+VERSION $core$" || stale="$stale CMakeLists.txt"
+        if [ -n "$stale" ]; then
+            echo "commit-msg: these staged files don't carry $version:$stale" >&2
+            exit 1
+        fi
+        ;;
+    *)
+        if git diff --cached --name-only | grep -qx VERSION; then
+            echo "commit-msg: VERSION only changes in a 'Release: vX.Y.Z' commit." >&2
+            exit 1
+        fi
+        ;;
+esac
+
+if grep -qiE 'co-authored-by:.*(claude|anthropic)|generated with \[?claude|Claude-Session:' "$1"; then
+    echo "commit-msg: assistant attribution must not appear in the message." >&2
+    exit 1
+fi
