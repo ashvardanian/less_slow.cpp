@@ -19,24 +19,9 @@ set(CMAKE_CXX_EXTENSIONS NO)
 set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CUDA_STANDARD_REQUIRED YES)
 
-# Some extra logging for the user:
-message(STATUS "----------------------------------------")
-message(STATUS "CMAKE_SYSTEM_NAME: ${CMAKE_SYSTEM_NAME}")
-message(STATUS "CMAKE_CXX_COMPILER_ID: ${CMAKE_CXX_COMPILER_ID}")
-message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
-message(STATUS "----------------------------------------")
-
 # Default to Release if no build type is set:
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
-endif ()
-
-# Set a default parallel build level if the user hasn't specified one.
-if (NOT DEFINED CMAKE_BUILD_PARALLEL_LEVEL)
-    set(CMAKE_BUILD_PARALLEL_LEVEL
-        16
-        CACHE STRING "Default parallel build level" FORCE
-    )
 endif ()
 
 # Detect CUDA Support

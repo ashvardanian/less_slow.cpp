@@ -1,4 +1,4 @@
-# Playing Around _Less Slow_ Coding Practices for C++, CUDA, and Assembly Code
+# _Less Slow_ C++
 
 > The benchmarks in this repository don't aim to cover every topic entirely, but they help form a mindset and intuition for performance-oriented software design.
 > It also provides an example of using some non-[STL](https://en.wikipedia.org/wiki/Standard_Template_Library) but de facto standard libraries in C++, importing them via CMake and compiling from source.
@@ -198,8 +198,8 @@ If this repository helps your research, teaching, or product, please cite it:
 ```bibtex
 @software{Vardanian_less_slow_cpp,
   author = {Vardanian, Ash},
-  title = {{less_slow.cpp: Less Slow Coding Practices in C++ 20, C, CUDA, PTX, & Assembly}},
-  doi = {10.5281/zenodo.21612057},
+  title = {{less_slow.cpp: Measuring the Real Cost of Abstractions in C++, CUDA, PTX and Assembly}},
+  doi = {10.5281/zenodo.21612056},
   url = {https://github.com/ashvardanian/less_slow.cpp},
   license = {Apache-2.0}
 }

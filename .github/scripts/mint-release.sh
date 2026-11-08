@@ -11,7 +11,6 @@ git diff --quiet HEAD || { echo "mint-release: commit or stash your changes firs
 
 echo "$version" > VERSION
 perl -pi -e 's/^(\s+VERSION )[\d.]+$/$1$ENV{core}/' CMakeLists.txt
-perl -pi -e 's/^version: \S+$/version: $ENV{version}/' CITATION.cff
 git commit -am "Release: v$version"
 .github/scripts/check-release.sh "v$version" # the same check CI runs before publishing
 git tag -a "v$version" -m "Release: v$version"
