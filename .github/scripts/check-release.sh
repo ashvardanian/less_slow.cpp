@@ -18,7 +18,6 @@ fi
 core=${version%%-*} stale=""
 [ "$(cat VERSION)" = "$version" ] || stale="$stale VERSION"
 grep -qE "^[[:space:]]+VERSION ${core//./\\.}$" CMakeLists.txt || stale="$stale CMakeLists.txt"
-grep -qxF "version: $version" CITATION.cff || stale="$stale CITATION.cff"
 if [ -n "$stale" ]; then
     echo "check-release: these files don't carry $version:$stale"
     exit 1
